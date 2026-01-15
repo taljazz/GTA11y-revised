@@ -913,6 +913,26 @@ namespace GrandTheftAccessibility
         public const float AUTOFLY_BLIMP_MAX_SPEED = 25f;     // Blimp max speed (~56 mph)
         public const float AUTOFLY_BLIMP_MIN_SPEED = 8f;      // Blimp min speed (~18 mph)
 
+        // Aircraft type speed caps (m/s) - indexed by AIRCRAFT_TYPE_* constants
+        // Prevents over-speeding based on aircraft capabilities (Grok optimization)
+        public static readonly float[] AIRCRAFT_TYPE_SPEED_CAPS = new float[]
+        {
+            100f,   // 0 - Fixed-wing: ~224 mph
+            60f,    // 1 - Helicopter: ~134 mph
+            60f,    // 2 - VTOL (hover mode): ~134 mph
+            25f     // 3 - Blimp: ~56 mph
+        };
+
+        /// <summary>
+        /// Get maximum safe speed for aircraft type (for AutoFly speed limiting)
+        /// </summary>
+        public static float GetAircraftTypeSpeedCap(int aircraftType)
+        {
+            if (aircraftType >= 0 && aircraftType < AIRCRAFT_TYPE_SPEED_CAPS.Length)
+                return AIRCRAFT_TYPE_SPEED_CAPS[aircraftType];
+            return AUTOFLY_MAX_SPEED;  // Default to general max
+        }
+
         // AutoFly altitude parameters (meters)
         public const float AUTOFLY_DEFAULT_ALTITUDE = 500f;   // ~1640 feet
         public const float AUTOFLY_MIN_ALTITUDE = 100f;       // ~328 feet

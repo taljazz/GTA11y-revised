@@ -31,6 +31,7 @@ public class AutoFlyManager
         private readonly AudioManager _audio;
         private readonly SettingsManager _settings;
         private readonly WeatherManager _weatherManager;  // For weather-based speed adjustments
+        private readonly CollisionDetector _collisionDetector;  // For collision-based speed adjustments (Grok)
 
         // Core state
         private bool _autoFlyActive;
@@ -123,6 +124,7 @@ public class AutoFlyManager
             _audio = audio;
             _settings = settings;
             _weatherManager = new WeatherManager();  // Initialize weather manager for flight speed adjustments
+            _collisionDetector = new CollisionDetector();  // Initialize collision detector (Grok optimization)
 
             // Initialize defaults
             _targetSpeed = Constants.AUTOFLY_DEFAULT_SPEED;
@@ -1535,16 +1537,36 @@ public class AutoFlyManager
         #region Private Methods - Flight Control
 
         /// <summary>
-        /// Get weather-adjusted flight speed (Grok optimization)
-        /// Applies weather multiplier to target speed for realistic flight in bad weather
+        /// Get fully adjusted flight speed (Grok optimization)
+        /// Applies weather multiplier, collision multiplier, and type caps for realistic flight
         /// </summary>
-        private float GetWeatherAdjustedSpeed()
+        private float GetAdjustedFlightSpeed(Vehicle aircraft = null)
         {
+            long currentTick = DateTime.Now.Ticks;
+
             // Update weather state
-            _weatherManager?.Update(DateTime.Now.Ticks, out _, out _);
+            _weatherManager?.Update(currentTick, out _, out _);
 
             float weatherMult = _weatherManager?.SpeedMultiplier ?? 1.0f;
-            return _targetSpeed * weatherMult;
+
+            // Check for nearby aircraft/obstacles (collision avoidance)
+            float collisionMult = 1.0f;
+            if (aircraft != null && _collisionDetector != null)
+            {
+                int followingState = _collisionDetector.CheckFollowingDistance(aircraft, currentTick);
+                // Slow down if close to something ahead
+                if (followingState >= 3) collisionMult = 0.7f;       // Close/dangerous
+                else if (followingState >= 2) collisionMult = 0.85f; // Normal following
+            }
+
+            // Apply weather and collision multipliers
+            float adjustedSpeed = _targetSpeed * weatherMult * collisionMult;
+
+            // Apply aircraft type speed cap
+            float typeCap = Constants.GetAircraftTypeSpeedCap(_aircraftType);
+            adjustedSpeed = Math.Min(adjustedSpeed, typeCap);
+
+            return adjustedSpeed;
         }
 
         private void UpdateFlightSpeed()
@@ -1552,7 +1574,8 @@ public class AutoFlyManager
             try
             {
                 Ped player = Game.Player.Character;
-                float adjustedSpeed = GetWeatherAdjustedSpeed();
+                Vehicle aircraft = player.IsInVehicle() ? player.CurrentVehicle : null;
+                float adjustedSpeed = GetAdjustedFlightSpeed(aircraft);
                 Function.Call(
                     (Hash)Constants.NATIVE_SET_DRIVE_TASK_CRUISE_SPEED,
                     player.Handle, adjustedSpeed);  // Must use .Handle for native calls
@@ -1561,6 +1584,41 @@ public class AutoFlyManager
             {
                 Logger.Exception(ex, "AutoFlyManager.UpdateFlightSpeed");
             }
+        }
+
+        /// <summary>
+        /// Checks if the flight task needs to be re-issued (Grok optimization)
+        /// Ultra-precise: requires ALL THREE conditions (distance deviation + heading deviation + low speed)
+        /// Prevents jerky re-tasking that causes erratic flight behavior
+        /// </summary>
+        private bool NeedsFlightTaskReissue(Vehicle aircraft, Vector3 targetPosition)
+        {
+            if (aircraft == null || !aircraft.Exists())
+                return false;
+
+            float distanceToTarget = (aircraft.Position - targetPosition).Length();
+
+            // Check distance deviation - only consider re-issue if significantly off course
+            if (distanceToTarget <= Constants.TASK_DEVIATION_THRESHOLD)
+                return false;
+
+            // Check heading deviation
+            float targetHeading = (float)SpatialCalculator.CalculateAngle(
+                aircraft.Position.X, aircraft.Position.Y,
+                targetPosition.X, targetPosition.Y);
+            float headingDiff = NormalizeAngleDiff(aircraft.Heading - targetHeading);
+
+            if (Math.Abs(headingDiff) <= Constants.TASK_HEADING_DEVIATION_THRESHOLD)
+                return false;
+
+            // Check speed - only re-issue if aircraft is slow (possibly stuck or stalled)
+            float speed = aircraft.Speed;
+            if (speed >= Constants.STUCK_SPEED_THRESHOLD)
+                return false;
+
+            // All three conditions met - aircraft is off course, deviated, AND slow
+            Logger.Debug($"NeedsFlightTaskReissue: dist={distanceToTarget:F1}m, headingDiff={headingDiff:F1}°, speed={speed:F1}m/s");
+            return true;
         }
 
         private void UpdateFlightAltitude()
