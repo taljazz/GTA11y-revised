@@ -1619,16 +1619,40 @@ public class AutoFlyManager
             return adjustedSpeed;
         }
 
+        /// <summary>
+        /// Updates flight speed by re-issuing the flight task with new speed.
+        /// NOTE: SET_DRIVE_TASK_CRUISE_SPEED only works for driving tasks, not flight tasks!
+        /// For aircraft, we must re-issue the flight task with the new speed parameter.
+        /// </summary>
         private void UpdateFlightSpeed()
         {
             try
             {
                 Ped player = Game.Player.Character;
-                Vehicle aircraft = player.IsInVehicle() ? player.CurrentVehicle : null;
-                float adjustedSpeed = GetAdjustedFlightSpeed(aircraft);
-                Function.Call(
-                    (Hash)Constants.NATIVE_SET_DRIVE_TASK_CRUISE_SPEED,
-                    player.Handle, adjustedSpeed);  // Must use .Handle for native calls
+                if (!player.IsInVehicle())
+                    return;
+
+                Vehicle aircraft = player.CurrentVehicle;
+                if (aircraft == null)
+                    return;
+
+                // Clear current task first to ensure new parameters take effect
+                Function.Call((Hash)Constants.NATIVE_CLEAR_PED_TASKS, player.Handle);
+
+                // Re-issue the appropriate flight task with updated speed
+                switch (_flightMode)
+                {
+                    case Constants.FLIGHT_MODE_CRUISE:
+                        IssueCruiseTask(player, aircraft);
+                        Logger.Debug("UpdateFlightSpeed: Cruise task re-issued with new speed");
+                        break;
+
+                    case Constants.FLIGHT_MODE_WAYPOINT:
+                    case Constants.FLIGHT_MODE_DESTINATION:
+                        IssueNavigationTask(player, aircraft, _destinationPos);
+                        Logger.Debug("UpdateFlightSpeed: Navigation task re-issued with new speed");
+                        break;
+                }
             }
             catch (Exception ex)
             {
@@ -1702,6 +1726,10 @@ public class AutoFlyManager
                 }
 
                 Logger.Debug($"UpdateFlightAltitude: Re-issuing task for flight mode {_flightMode} with altitude {_targetAltitude}m");
+
+                // CRITICAL: Clear current task first to ensure new altitude takes effect
+                // GTA V won't interrupt an ongoing task to start a new one of the same type
+                Function.Call((Hash)Constants.NATIVE_CLEAR_PED_TASKS, player.Handle);
 
                 switch (_flightMode)
                 {
