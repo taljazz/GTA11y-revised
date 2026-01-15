@@ -202,7 +202,7 @@ internal struct OvertakeTrackingInfo
 
         // Driving style
         private int _currentDrivingStyleMode = Constants.DRIVING_STYLE_MODE_NORMAL;
-        private bool _dynamicStyleEnabled = true;  // Auto-adjust style based on road type
+        private bool _dynamicStyleEnabled = Constants.DYNAMIC_STYLE_ENABLED_DEFAULT;  // Auto-adjust style based on road type
         private int _lastDynamicStyleRoadType = -1;  // Track which road type set the current style
         private long _lastDynamicStyleChangeTick;  // Cooldown between style changes
 
@@ -4675,15 +4675,19 @@ internal struct OvertakeTrackingInfo
             while (headingDiff > 180f) headingDiff -= 360f;
             while (headingDiff < -180f) headingDiff += 360f;
 
-            // Only re-issue if heading is significantly off (>45°) AND we're not making progress
-            // This allows the AI to naturally navigate curves without interruption
-            if (Math.Abs(headingDiff) > Constants.TASK_HEADING_DEVIATION_THRESHOLD)
+            // Ultra-precise re-issue logic (Grok optimization):
+            // Only re-issue if ALL THREE conditions are met:
+            // 1. Far from expected path (> TASK_DEVIATION_THRESHOLD)
+            // 2. Heading significantly off (> 45°)
+            // 3. Vehicle is slow/stopped (not just turning)
+            // This prevents unnecessary task interruptions during normal navigation
+            if (distanceToTarget > Constants.TASK_DEVIATION_THRESHOLD &&
+                Math.Abs(headingDiff) > Constants.TASK_HEADING_DEVIATION_THRESHOLD)
             {
-                // Check if we're actually stuck (not just turning)
                 float speed = vehicle.Speed;
                 if (speed < Constants.STUCK_SPEED_THRESHOLD)
                 {
-                    Logger.Debug($"NeedsTaskReissue: heading deviation {headingDiff:F0}° and low speed {speed:F1}");
+                    Logger.Debug($"NeedsTaskReissue: dist={distanceToTarget:F0}m, heading={headingDiff:F0}°, speed={speed:F1}");
                     return true;
                 }
             }

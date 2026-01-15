@@ -306,6 +306,9 @@ namespace GrandTheftAccessibility
         public const int DRIVING_STYLE_MODE_FAST = 2;
         public const int DRIVING_STYLE_MODE_RECKLESS = 3;
 
+        // Dynamic style default (auto-adjust based on road type)
+        public const bool DYNAMIC_STYLE_ENABLED_DEFAULT = true;
+
         // Driving style flag values (optimized for human-like driving)
         // Flag breakdown:
         //   StopForVehicles (1), StopForPeds (2), SwerveAroundAllVehicles (4)

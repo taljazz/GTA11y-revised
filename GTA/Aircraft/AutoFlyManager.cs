@@ -30,6 +30,7 @@ public class AutoFlyManager
         // Dependencies
         private readonly AudioManager _audio;
         private readonly SettingsManager _settings;
+        private readonly WeatherManager _weatherManager;  // For weather-based speed adjustments
 
         // Core state
         private bool _autoFlyActive;
@@ -121,6 +122,7 @@ public class AutoFlyManager
         {
             _audio = audio;
             _settings = settings;
+            _weatherManager = new WeatherManager();  // Initialize weather manager for flight speed adjustments
 
             // Initialize defaults
             _targetSpeed = Constants.AUTOFLY_DEFAULT_SPEED;
@@ -1532,14 +1534,28 @@ public class AutoFlyManager
 
         #region Private Methods - Flight Control
 
+        /// <summary>
+        /// Get weather-adjusted flight speed (Grok optimization)
+        /// Applies weather multiplier to target speed for realistic flight in bad weather
+        /// </summary>
+        private float GetWeatherAdjustedSpeed()
+        {
+            // Update weather state
+            _weatherManager?.Update(DateTime.Now.Ticks, out _, out _);
+
+            float weatherMult = _weatherManager?.SpeedMultiplier ?? 1.0f;
+            return _targetSpeed * weatherMult;
+        }
+
         private void UpdateFlightSpeed()
         {
             try
             {
                 Ped player = Game.Player.Character;
+                float adjustedSpeed = GetWeatherAdjustedSpeed();
                 Function.Call(
                     (Hash)Constants.NATIVE_SET_DRIVE_TASK_CRUISE_SPEED,
-                    player.Handle, _targetSpeed);  // Must use .Handle for native calls
+                    player.Handle, adjustedSpeed);  // Must use .Handle for native calls
             }
             catch (Exception ex)
             {
