@@ -88,6 +88,11 @@ public class AutoFlyManager
         // Waypoint mode state
         private bool _circleModeActive;    // For waypoint mode - circle after arrival
 
+        // Stuck detection (Grok optimization) - for aerial recovery
+        private int _flightStuckCounter;          // Count of consecutive non-progress checks
+        private float _lastProgressDistance;      // Distance to destination at last check
+        private float _lastProgressAltitude;      // Altitude at last check
+
         // Cached ground height at destination (avoid repeated World.GetGroundHeight calls)
         private float _destinationGroundZ;
         private bool _groundHeightCached;
@@ -925,6 +930,48 @@ public class AutoFlyManager
                     catch (Exception ex)
                     {
                         Logger.Exception(ex, "AutoFlyManager.VTOLModeChange");
+                    }
+                }
+            }
+
+            // Stuck detection (Grok optimization) - check if aircraft is making progress
+            // Only apply to waypoint/destination modes where we have a target
+            if (_flightMode == Constants.FLIGHT_MODE_WAYPOINT || _flightMode == Constants.FLIGHT_MODE_DESTINATION)
+            {
+                float currentDistance = (position - _destinationPos).Length();
+                float currentAltitude = position.Z;
+
+                // Check if making progress (closer to destination OR altitude changing significantly)
+                bool isProgressing = currentDistance < _lastProgressDistance - 5f ||  // Getting 5m+ closer
+                                    Math.Abs(currentAltitude - _lastProgressAltitude) > 10f;  // Altitude change
+
+                if (isProgressing)
+                {
+                    _flightStuckCounter = 0;
+                    _lastProgressDistance = currentDistance;
+                    _lastProgressAltitude = currentAltitude;
+                }
+                else
+                {
+                    _flightStuckCounter++;
+
+                    // Stuck threshold reached - announce and attempt recovery
+                    if (_flightStuckCounter >= Constants.FLIGHT_STUCK_THRESHOLD)
+                    {
+                        Logger.Warning($"AutoFlyManager: Flight stuck detected after {_flightStuckCounter} checks");
+                        _audio.Speak("Flight stuck, attempting recovery");
+
+                        // Re-issue the navigation task to attempt unsticking
+                        try
+                        {
+                            Ped pilot = Game.Player.Character;
+                            IssueNavigationTask(pilot, aircraft, _destinationPos);
+                            _flightStuckCounter = 0;  // Reset counter after recovery attempt
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Exception(ex, "AutoFlyManager.StuckRecovery");
+                        }
                     }
                 }
             }
@@ -2249,11 +2296,23 @@ public class AutoFlyManager
                     : Constants.AIRCRAFT_TYPE_VTOL_PLANE;
             }
 
-            // Check vehicle class
+            // Check for helicopter using hash lookup (O(1) - Grok optimization)
+            if (Constants.HELICOPTER_HASHES.Contains(modelHash))
+                return Constants.AIRCRAFT_TYPE_HELICOPTER;
+
+            // Fallback to vehicle class check for any helicopters not in hash list
             if (aircraft.ClassType == VehicleClass.Helicopters)
                 return Constants.AIRCRAFT_TYPE_HELICOPTER;
 
             return Constants.AIRCRAFT_TYPE_FIXED_WING;
+        }
+
+        /// <summary>
+        /// Fast helicopter check using hash lookup (O(1) - Grok optimization)
+        /// </summary>
+        private bool IsHelicopter(int modelHash)
+        {
+            return Constants.HELICOPTER_HASHES.Contains(modelHash);
         }
 
         private float NormalizeAngleDiff(float angle)
@@ -2308,6 +2367,11 @@ public class AutoFlyManager
             _glideslopeTargetAltitude = 0;
             _stableOnGroundCount = 0;
             _lastHeightAboveGround = 0;
+
+            // Reset stuck detection (Grok optimization)
+            _flightStuckCounter = 0;
+            _lastProgressDistance = float.MaxValue;
+            _lastProgressAltitude = 0;
         }
 
         #endregion

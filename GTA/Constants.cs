@@ -159,6 +159,42 @@ namespace GrandTheftAccessibility
             -1093422249   // Blimp3
         };
 
+        // Helicopter vehicle model hashes (use HashSet for O(1) lookup) - Grok optimization
+        // For faster IsHelicopter() checks without needing VehicleClass lookup
+        public static readonly HashSet<int> HELICOPTER_HASHES = new HashSet<int>
+        {
+            // Standard helicopters
+            788747387,    // Buzzard (armed)
+            745926877,    // Buzzard2 (unarmed)
+            -1660661558,  // Savage
+            -1600252419,  // Valkyrie
+            -1660661558,  // Valkyrie2
+            -1216765807,  // Hunter
+            837858166,    // Akula
+            -339587598,   // Annihilator
+            -1628917549,  // Annihilator2
+            -1660537974,  // Cargobob
+            1394036463,   // Cargobob2
+            -50547061,    // Cargobob3
+            -1671539132,  // Cargobob4
+            -1009268949,  // Frogger
+            744705981,    // Frogger2
+            -1575939457,  // Maverick
+            -1207431159,  // Polmav (Police Maverick)
+            -2137348917,  // Swift
+            1075432268,   // Swift2
+            -1620126302,  // Skylift
+            -1845487887,  // Supervolito
+            710198397,    // Supervolito2
+            -1543762099,  // Volatus
+            // Newer DLC helicopters
+            1621617168,   // Havok
+            -1881846085,  // SeaSparrow
+            1229411063,   // SeaSparrow2
+            -782210057,   // Sparrow
+            1824333165    // Conada
+        };
+
         // Native function hash for VTOL nozzle position (not in all SHVDN versions)
         public const ulong NATIVE_GET_VEHICLE_FLIGHT_NOZZLE_POSITION = 0xDA62027C8BDB326E;
 
@@ -571,6 +607,9 @@ namespace GrandTheftAccessibility
         public const float STUCK_SPEED_THRESHOLD = 1f;                    // Less than 1 m/s = very slow/stopped
         public const int STUCK_CHECK_COUNT_THRESHOLD = 5;                 // 5 consecutive checks = stuck (5 seconds - increased from 3)
         public const float STUCK_HEADING_CHANGE_THRESHOLD = 5f;           // Heading change < 5° while stuck = truly stuck
+
+        // Flight stuck detection (Grok optimization) - for aerial recovery
+        public const int FLIGHT_STUCK_THRESHOLD = 50;                     // 50 checks at 0.2s = ~10 seconds not progressing
 
         // Task re-issue thresholds (optimized to reduce jerky movement)
         public const float TASK_DEVIATION_THRESHOLD = 10f;                // Only re-issue task if deviated >10m from path
