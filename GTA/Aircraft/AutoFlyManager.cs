@@ -976,6 +976,9 @@ public class AutoFlyManager
                 }
             }
 
+            // Altitude hold for helicopters (Grok optimization)
+            HoldAltitude(aircraft, position);
+
             // Update based on flight mode
             switch (_flightMode)
             {
@@ -1721,6 +1724,63 @@ public class AutoFlyManager
             catch (Exception ex)
             {
                 Logger.Exception(ex, "AutoFlyManager.UpdateFlightAltitude");
+            }
+        }
+
+        /// <summary>
+        /// Maintains target altitude by adjusting helicopter rotor speed (Grok optimization)
+        /// For helicopters: adjusts blade speed to nudge climb/descent
+        /// For planes: handled by the flight task itself
+        /// </summary>
+        private void HoldAltitude(Vehicle aircraft, Vector3 position)
+        {
+            // Only apply to helicopters and VTOL in hover mode
+            if (_aircraftType != Constants.AIRCRAFT_TYPE_HELICOPTER &&
+                _aircraftType != Constants.AIRCRAFT_TYPE_VTOL_HOVER)
+                return;
+
+            // Don't adjust during landing phases
+            if (_currentPhase >= Constants.PHASE_FINAL)
+                return;
+
+            try
+            {
+                // Get current altitude above ground
+                float groundZ = World.GetGroundHeight(new GTA.Math.Vector2(position.X, position.Y));
+                if (groundZ == 0) groundZ = position.Z - aircraft.HeightAboveGround;
+
+                float currentAGL = position.Z - groundZ;
+                float targetAGL = _targetAltitude - groundZ;
+                float altitudeDiff = targetAGL - currentAGL;
+
+                // Only adjust if significantly off target
+                if (Math.Abs(altitudeDiff) > Constants.ALTITUDE_HOLD_TOLERANCE)
+                {
+                    float bladeSpeed;
+                    if (altitudeDiff > 0)
+                    {
+                        // Need to climb - increase rotor speed
+                        bladeSpeed = Constants.HELI_BLADES_SPEED_CLIMB;
+                    }
+                    else
+                    {
+                        // Need to descend - decrease rotor speed
+                        bladeSpeed = Constants.HELI_BLADES_SPEED_DESCEND;
+                    }
+
+                    Function.Call((Hash)Constants.NATIVE_SET_HELI_BLADES_SPEED,
+                        aircraft.Handle, bladeSpeed);
+                }
+                else
+                {
+                    // Within tolerance - normalize rotor speed
+                    Function.Call((Hash)Constants.NATIVE_SET_HELI_BLADES_SPEED,
+                        aircraft.Handle, Constants.HELI_BLADES_SPEED_NORMAL);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Exception(ex, "AutoFlyManager.HoldAltitude");
             }
         }
 

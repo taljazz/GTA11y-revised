@@ -869,6 +869,13 @@ namespace GrandTheftAccessibility
         public const ulong NATIVE_CONTROL_LANDING_GEAR = 0xCFC8BE9A5E1FE575;
         public const ulong NATIVE_GET_LANDING_GEAR_STATE = 0x9B0F3DCA3DB0F4CD;
         public const ulong NATIVE_IS_VEHICLE_ON_ALL_WHEELS = 0x1F9FB66F3A3842D2;
+        public const ulong NATIVE_SET_HELI_BLADES_SPEED = 0xFD280B4D7F3ABC4D;  // Grok: altitude hold via rotor speed
+
+        // Altitude hold thresholds (Grok optimization)
+        public const float ALTITUDE_HOLD_TOLERANCE = 15f;       // meters - start adjusting if off by more than this
+        public const float HELI_BLADES_SPEED_CLIMB = 1.15f;     // Rotor speed multiplier for climbing
+        public const float HELI_BLADES_SPEED_DESCEND = 0.85f;   // Rotor speed multiplier for descending
+        public const float HELI_BLADES_SPEED_NORMAL = 1.0f;     // Normal rotor speed
 
         // Aircraft mission types (eVehicleMission)
         public const int MISSION_NONE = 0;
