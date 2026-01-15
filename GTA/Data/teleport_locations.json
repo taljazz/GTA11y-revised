@@ -1,0 +1,125 @@
+{
+  "categories": [
+    {
+      "name": "Character Houses",
+      "locations": [
+        { "name": "Michael's House", "x": -852.4, "y": 160.0, "z": 65.6 },
+        { "name": "Franklin's House", "x": 7.9, "y": 548.1, "z": 175.5 },
+        { "name": "Trevor's Trailer", "x": 1985.7, "y": 3812.2, "z": 32.2 },
+        { "name": "Floyd's Apartment", "x": -1157.2, "y": -1520.7, "z": 10.6 },
+        { "name": "Lester's House", "x": 1273.9, "y": -1719.3, "z": 54.8 }
+      ]
+    },
+    {
+      "name": "Airports and Runways",
+      "locations": [
+        { "name": "LSIA Runway 03 South End", "x": -1285.0, "y": -3359.0, "z": 13.9 },
+        { "name": "LSIA Runway 21 North End", "x": -1497.0, "y": -2598.0, "z": 13.9 },
+        { "name": "LSIA Runway 12 West End", "x": -1850.0, "y": -3103.0, "z": 13.9 },
+        { "name": "LSIA Runway 30 East End", "x": -942.0, "y": -2950.0, "z": 13.9 },
+        { "name": "LSIA Main Terminal", "x": -1034.6, "y": -2733.6, "z": 13.8 },
+        { "name": "LSIA Center Field", "x": -1336.0, "y": -3044.0, "z": 13.9 },
+        { "name": "Sandy Shores Airfield Runway", "x": 1747.0, "y": 3273.7, "z": 41.1 },
+        { "name": "McKenzie Airfield Runway", "x": 2121.7, "y": 4796.3, "z": 41.1 },
+        { "name": "Fort Zancudo Runway South", "x": -2285.0, "y": 3162.0, "z": 32.8 },
+        { "name": "Fort Zancudo Runway North", "x": -1813.0, "y": 3086.0, "z": 32.8 },
+        { "name": "Grapeseed Airstrip", "x": 2132.0, "y": 4805.0, "z": 41.2 }
+      ]
+    },
+    {
+      "name": "Sniping Vantage Points",
+      "locations": [
+        { "name": "Maze Bank Tower Roof", "x": -75.015, "y": -818.215, "z": 326.175 },
+        { "name": "FIB Building Roof", "x": 136.0, "y": -749.0, "z": 262.0 },
+        { "name": "IAA Building Roof", "x": 117.22, "y": -620.938, "z": 206.047 },
+        { "name": "Mile High Club Construction", "x": -69.858, "y": -801.687, "z": 243.386 },
+        { "name": "Arcadius Tower Roof", "x": -141.29, "y": -621.15, "z": 168.82 },
+        { "name": "Lombank West Roof", "x": -1581.55, "y": -558.96, "z": 108.52 },
+        { "name": "Galileo Observatory Dome", "x": -425.517, "y": 1123.62, "z": 325.854 },
+        { "name": "Vinewood Sign Top", "x": 711.362, "y": 1198.134, "z": 348.526 },
+        { "name": "Mt Chiliad Summit", "x": 425.4, "y": 5614.3, "z": 766.5 },
+        { "name": "Mt Gordo Lighthouse Area", "x": 3430.155, "y": 5174.196, "z": 41.287 },
+        { "name": "Sandy Shores Water Tower", "x": 1394.481, "y": 3609.423, "z": 39.023 },
+        { "name": "Sandy Shores Crane", "x": 1051.209, "y": 2280.452, "z": 89.727 },
+        { "name": "El Burro Heights Overlook", "x": 1384.0, "y": -2057.1, "z": 52.0 },
+        { "name": "Land Act Dam Overlook", "x": 1660.37, "y": -13.97, "z": 170.62 },
+        { "name": "Paleto Bay Lighthouse", "x": -243.89, "y": 6574.23, "z": 10.58 },
+        { "name": "NOOSE Headquarters Roof", "x": 2535.14, "y": -383.76, "z": 92.99 }
+      ]
+    },
+    {
+      "name": "Military and Restricted",
+      "locations": [
+        { "name": "Fort Zancudo Main Gate", "x": -2047.4, "y": 3132.1, "z": 32.8 },
+        { "name": "Fort Zancudo ATC Tower", "x": -2344.373, "y": 3267.498, "z": 32.811 },
+        { "name": "Fort Zancudo Hangar", "x": -1843.0, "y": 2984.0, "z": 32.8 },
+        { "name": "Humane Labs Entrance", "x": 3619.7, "y": 3731.5, "z": 28.7 },
+        { "name": "NOOSE Headquarters", "x": 2522.98, "y": -384.436, "z": 92.9928 },
+        { "name": "LS Government Facility", "x": 481.0, "y": -998.0, "z": 30.7 }
+      ]
+    },
+    {
+      "name": "Landmarks",
+      "locations": [
+        { "name": "Diamond Casino", "x": 925.329, "y": 46.152, "z": 80.908 },
+        { "name": "Del Perro Ferris Wheel", "x": -1670.7, "y": -1125.0, "z": 13.0 },
+        { "name": "Del Perro Pier Entrance", "x": -1850.12, "y": -1231.82, "z": 13.02 },
+        { "name": "Playboy Mansion", "x": -1475.234, "y": 167.088, "z": 55.841 },
+        { "name": "Kortz Center", "x": -2243.81, "y": 264.76, "z": 174.62 },
+        { "name": "Vanilla Unicorn Club", "x": 96.17191, "y": -1290.668, "z": 29.26874 },
+        { "name": "Union Depository", "x": 2.6, "y": -667.1, "z": 16.1 },
+        { "name": "Pacific Standard Bank", "x": 235.0, "y": 216.0, "z": 106.3 }
+      ]
+    },
+    {
+      "name": "Blaine County",
+      "locations": [
+        { "name": "Sandy Shores Town Center", "x": 1847.0, "y": 3694.0, "z": 34.3 },
+        { "name": "Grapeseed Main Street", "x": 1702.0, "y": 4920.0, "z": 42.1 },
+        { "name": "Paleto Bay Town Center", "x": -379.53, "y": 6118.32, "z": 31.85 },
+        { "name": "Altruist Cult Camp", "x": -1170.841, "y": 4926.646, "z": 224.295 },
+        { "name": "Hippy Camp", "x": 2476.712, "y": 3789.645, "z": 41.226 },
+        { "name": "Ron Alternates Wind Farm", "x": 2354.0, "y": 1830.3, "z": 101.1 },
+        { "name": "Blaine County Savings Bank", "x": -109.299, "y": 6464.035, "z": 31.627 },
+        { "name": "Beaker's Garage", "x": 116.3748, "y": 6621.362, "z": 31.6078 },
+        { "name": "Quarry", "x": 2950.55, "y": 2774.16, "z": 42.34 }
+      ]
+    },
+    {
+      "name": "Coastal and Beaches",
+      "locations": [
+        { "name": "Vespucci Beach", "x": -1334.0, "y": -1545.0, "z": 4.4 },
+        { "name": "Del Perro Beach", "x": -1508.0, "y": -944.0, "z": 10.2 },
+        { "name": "Chumash Beach", "x": -3192.6, "y": 1100.0, "z": 20.2 },
+        { "name": "Paleto Beach", "x": -274.52, "y": 6635.83, "z": 7.39 },
+        { "name": "Elysian Island Port", "x": 338.2, "y": -2715.9, "z": 38.5 },
+        { "name": "Jetsam Terminal", "x": 760.4, "y": -2943.2, "z": 5.8 },
+        { "name": "Pacific Bluffs", "x": -2183.0, "y": -424.0, "z": 13.1 }
+      ]
+    },
+    {
+      "name": "Remote Areas",
+      "locations": [
+        { "name": "Far North San Andreas", "x": 24.775, "y": 7644.102, "z": 19.055 },
+        { "name": "Chiliad Mountain State Wilderness", "x": 2994.917, "y": 2774.16, "z": 42.33663 },
+        { "name": "Raton Canyon", "x": -524.0, "y": 4193.0, "z": 193.7 },
+        { "name": "Tongva Valley", "x": -1871.0, "y": 2062.0, "z": 140.7 },
+        { "name": "Cassidy Creek", "x": -421.0, "y": 4434.0, "z": 42.3 },
+        { "name": "Lago Zancudo Swamp", "x": -1340.0, "y": 2593.0, "z": 1.8 },
+        { "name": "Tataviam Mountains", "x": 1312.0, "y": 2168.0, "z": 101.9 }
+      ]
+    },
+    {
+      "name": "Emergency Services",
+      "locations": [
+        { "name": "Mission Row Police Station", "x": 436.491, "y": -982.172, "z": 30.699 },
+        { "name": "Vinewood Police Station", "x": 638.55, "y": 1.01, "z": 82.79 },
+        { "name": "Paleto Bay Sheriff", "x": -437.12, "y": 6020.56, "z": 31.49 },
+        { "name": "Sandy Shores Sheriff", "x": 1853.18, "y": 3686.63, "z": 34.27 },
+        { "name": "Central LS Medical Center", "x": 297.69, "y": -584.61, "z": 43.26 },
+        { "name": "Pillbox Hill Hospital", "x": 360.97, "y": -585.21, "z": 28.83 },
+        { "name": "Davis Fire Station", "x": 199.83, "y": -1643.38, "z": 29.8 }
+      ]
+    }
+  ]
+}

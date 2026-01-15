@@ -1,0 +1,229 @@
+using System;
+using GTA;
+using GTA.Math;
+using GTA.Native;
+
+namespace GrandTheftAccessibility
+{
+    /// <summary>
+    /// Calculates and announces ETA to waypoint.
+    /// Extracted from AutoDriveManager for separation of concerns.
+    /// </summary>
+    public class ETACalculator
+    {
+        private readonly AudioManager _audio;
+        private readonly AnnouncementQueue _announcementQueue;
+
+        // ETA tracking
+        private float _lastAnnouncedETA;  // seconds
+        private long _lastETAAnnounceTick;
+        private float[] _speedSamples;
+        private int _speedSampleIndex;
+        private float _averageSpeed;
+
+        // Pre-allocated OutputArguments
+        private readonly OutputArgument _roadDistanceArg = new OutputArgument();
+        private readonly OutputArgument _roadDirectionArg1 = new OutputArgument();
+        private readonly OutputArgument _roadDirectionArg2 = new OutputArgument();
+
+        /// <summary>
+        /// Current average speed used for ETA calculation
+        /// </summary>
+        public float AverageSpeed => _averageSpeed;
+
+        /// <summary>
+        /// Last announced ETA in seconds
+        /// </summary>
+        public float LastAnnouncedETA => _lastAnnouncedETA;
+
+        public ETACalculator(AudioManager audio, AnnouncementQueue announcementQueue)
+        {
+            _audio = audio;
+            _announcementQueue = announcementQueue;
+            _speedSamples = new float[Constants.ETA_SPEED_SAMPLES];
+            Reset();
+        }
+
+        /// <summary>
+        /// Reset all state
+        /// </summary>
+        public void Reset()
+        {
+            _lastAnnouncedETA = 0f;
+            _lastETAAnnounceTick = 0;
+            _speedSampleIndex = 0;
+            _averageSpeed = 0f;
+            if (_speedSamples != null)
+            {
+                Array.Clear(_speedSamples, 0, _speedSamples.Length);
+            }
+        }
+
+        /// <summary>
+        /// Update and announce ETA to waypoint
+        /// Uses GENERATE_DIRECTIONS_TO_COORD for accurate road distance estimation
+        /// </summary>
+        /// <param name="vehicle">Current vehicle</param>
+        /// <param name="position">Current position</param>
+        /// <param name="waypointPos">Waypoint position</param>
+        /// <param name="currentTick">Current game tick</param>
+        /// <param name="wanderMode">Whether in wander mode (no ETA in wander)</param>
+        public void UpdateETA(Vehicle vehicle, Vector3 position, Vector3 waypointPos,
+            long currentTick, bool wanderMode)
+        {
+            if (vehicle == null || !vehicle.Exists())
+                return;
+
+            if (wanderMode) return;  // No ETA in wander mode
+
+            // Update speed sample for averaging
+            float currentSpeed = vehicle.Speed;
+            _speedSamples[_speedSampleIndex] = currentSpeed;
+            _speedSampleIndex = (_speedSampleIndex + 1) % Constants.ETA_SPEED_SAMPLES;
+
+            // Calculate average speed
+            float totalSpeed = 0f;
+            int sampleCount = 0;
+            for (int i = 0; i < Constants.ETA_SPEED_SAMPLES; i++)
+            {
+                if (_speedSamples[i] > 0)
+                {
+                    totalSpeed += _speedSamples[i];
+                    sampleCount++;
+                }
+            }
+            _averageSpeed = sampleCount > 0 ? totalSpeed / sampleCount : currentSpeed;
+
+            // Throttle ETA announcements
+            if (currentTick - _lastETAAnnounceTick < Constants.TICK_INTERVAL_ETA_UPDATE)
+                return;
+
+            // Calculate road distance using GENERATE_DIRECTIONS_TO_COORD
+            float roadDistance = GetRoadDistanceToWaypoint(position, waypointPos);
+            if (roadDistance < Constants.ETA_MIN_DISTANCE_FOR_ANNOUNCE)
+                return;
+
+            // Calculate ETA in seconds using road distance
+            float etaSeconds = _averageSpeed > 1f ? roadDistance / _averageSpeed : float.MaxValue;
+
+            // Check if ETA changed significantly
+            float etaChange = Math.Abs(etaSeconds - _lastAnnouncedETA);
+            if (etaChange < Constants.ETA_ANNOUNCE_CHANGE_THRESHOLD && _lastAnnouncedETA > 0)
+                return;
+
+            _lastETAAnnounceTick = currentTick;
+            _lastAnnouncedETA = etaSeconds;
+
+            // Format and announce ETA
+            string etaText = FormatETA(etaSeconds);
+            _announcementQueue.TryAnnounce($"Estimated arrival in {etaText}",
+                Constants.ANNOUNCE_PRIORITY_LOW, currentTick, "announceNavigation");
+        }
+
+        /// <summary>
+        /// Get estimated road distance to waypoint using GENERATE_DIRECTIONS_TO_COORD
+        /// Falls back to straight-line distance with road factor if native fails
+        /// </summary>
+        public float GetRoadDistanceToWaypoint(Vector3 position, Vector3 waypointPos)
+        {
+            try
+            {
+                // Use GENERATE_DIRECTIONS_TO_COORD to get road-aware distance estimate
+                int result = Function.Call<int>(
+                    (Hash)Constants.NATIVE_GENERATE_DIRECTIONS_TO_COORD,
+                    position.X, position.Y, position.Z,
+                    waypointPos.X, waypointPos.Y, waypointPos.Z,
+                    true,                   // p6: unknown, true seems standard
+                    _roadDirectionArg1,     // direction - not needed but must be passed
+                    _roadDirectionArg2,     // p8 - not needed but must be passed
+                    _roadDistanceArg);
+
+                if (result != 0) // 0 = failed, other values = success
+                {
+                    float roadDist = _roadDistanceArg.GetResult<float>();
+                    if (roadDist > 0 && roadDist < Constants.ROAD_DISTANCE_SANITY_MAX)
+                    {
+                        return roadDist;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug($"GENERATE_DIRECTIONS_TO_COORD failed: {ex.Message}");
+            }
+
+            // Fallback: straight-line distance with road factor (roads are ~1.4x longer)
+            float straightLine = (waypointPos - position).Length();
+            return straightLine * Constants.ROAD_DISTANCE_FACTOR;
+        }
+
+        /// <summary>
+        /// Format ETA for speech
+        /// </summary>
+        public static string FormatETA(float seconds)
+        {
+            if (seconds < 60)
+            {
+                return "less than a minute";
+            }
+            else if (seconds < 3600)
+            {
+                int minutes = (int)(seconds / 60);
+                return minutes == 1 ? "1 minute" : $"{minutes} minutes";
+            }
+            else
+            {
+                int hours = (int)(seconds / 3600);
+                int minutes = (int)((seconds % 3600) / 60);
+                if (minutes == 0)
+                    return hours == 1 ? "1 hour" : $"{hours} hours";
+                return hours == 1 ? $"1 hour {minutes} minutes" : $"{hours} hours {minutes} minutes";
+            }
+        }
+
+        /// <summary>
+        /// Format distance for speech in imperial units
+        /// </summary>
+        public static string FormatDistance(float meters)
+        {
+            float feet = meters * Constants.METERS_TO_FEET;
+
+            if (feet < 528) // Less than 0.1 miles
+            {
+                // Round to nearest 50 feet
+                int roundedFeet = ((int)(feet / 50) + 1) * 50;
+                return $"{roundedFeet} feet";
+            }
+            else if (feet < 1320) // 0.1 to 0.25 miles
+            {
+                return "quarter mile";
+            }
+            else if (feet < 2640) // 0.25 to 0.5 miles
+            {
+                return "half mile";
+            }
+            else
+            {
+                float miles = meters * Constants.METERS_TO_MILES;
+                return $"{miles:F1} miles";
+            }
+        }
+
+        /// <summary>
+        /// Get current ETA for status queries (without announcing)
+        /// </summary>
+        /// <param name="position">Current position</param>
+        /// <param name="waypointPos">Waypoint position</param>
+        /// <returns>Formatted ETA string</returns>
+        public string GetCurrentETAText(Vector3 position, Vector3 waypointPos)
+        {
+            float roadDistance = GetRoadDistanceToWaypoint(position, waypointPos);
+            float etaSeconds = _averageSpeed > 1f ? roadDistance / _averageSpeed : float.MaxValue;
+
+            if (etaSeconds == float.MaxValue)
+                return "unknown";
+
+            return FormatETA(etaSeconds);
+        }
+    }
+}
