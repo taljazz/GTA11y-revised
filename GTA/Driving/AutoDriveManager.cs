@@ -202,6 +202,9 @@ internal struct OvertakeTrackingInfo
 
         // Driving style
         private int _currentDrivingStyleMode = Constants.DRIVING_STYLE_MODE_NORMAL;
+        private bool _dynamicStyleEnabled = true;  // Auto-adjust style based on road type
+        private int _lastDynamicStyleRoadType = -1;  // Track which road type set the current style
+        private long _lastDynamicStyleChangeTick;  // Cooldown between style changes
 
         // Dead-end detection and avoidance
         private bool _inDeadEnd;
@@ -271,6 +274,7 @@ internal struct OvertakeTrackingInfo
         public bool IsStuck => _isStuck;
         public bool IsPaused => _pauseState == Constants.PAUSE_STATE_PAUSED;
         public bool IsYieldingToEmergency => _emergencyVehicleHandler?.IsYieldingToEmergency ?? _yieldingToEmergency;
+        public bool IsDynamicStyleEnabled => _dynamicStyleEnabled;
 
         public AutoDriveManager(AudioManager audio, SettingsManager settings)
         {
@@ -1083,6 +1087,9 @@ internal struct OvertakeTrackingInfo
                 _curveSlowdownActive, _arrivalSlowdownActive);
             _roadTypeSpeedMultiplier = _roadTypeManager.RoadTypeSpeedMultiplier;
 
+            // Dynamic driving style based on road type (Grok optimization)
+            UpdateDynamicStyle(_currentRoadType, currentTick);
+
             // === NORMAL OPERATION ===
 
             // Waypoint mode: check for arrival and distance updates (delegated to NavigationManager)
@@ -1446,6 +1453,7 @@ internal struct OvertakeTrackingInfo
 
         /// <summary>
         /// Start proactive slowdown for upcoming curve
+        /// Combines all environmental multipliers for proper speed calculation
         /// </summary>
         private void StartCurveSlowdown(float slowdownFactor, long currentTick)
         {
@@ -1453,8 +1461,13 @@ internal struct OvertakeTrackingInfo
 
             try
             {
-                _originalSpeed = _targetSpeed;
-                _curveSlowdownSpeed = _targetSpeed * slowdownFactor;
+                // Calculate combined environmental multiplier (weather, road type, time of day)
+                float combinedMultiplier = _roadTypeSpeedMultiplier * _weatherSpeedMultiplier * _timeSpeedMultiplier;
+
+                // Apply combined multipliers to base speed, then apply curve slowdown
+                float environmentalSpeed = _targetSpeed * combinedMultiplier;
+                _originalSpeed = environmentalSpeed;
+                _curveSlowdownSpeed = environmentalSpeed * slowdownFactor;
                 _curveSlowdownActive = true;
                 _curveSlowdownEndTick = currentTick + Constants.CURVE_SLOWDOWN_DURATION;
 
@@ -1465,7 +1478,7 @@ internal struct OvertakeTrackingInfo
                     player.Handle,
                     _curveSlowdownSpeed);
 
-                Logger.Debug($"Curve slowdown: {_originalSpeed:F1} -> {_curveSlowdownSpeed:F1} m/s");
+                Logger.Debug($"Curve slowdown: {_originalSpeed:F1} -> {_curveSlowdownSpeed:F1} m/s (combined mult: {combinedMultiplier:P0})");
             }
             catch (Exception ex)
             {
@@ -1765,7 +1778,9 @@ internal struct OvertakeTrackingInfo
                     try
                     {
                         Ped player = Game.Player.Character;
-                        float adjustedSpeed = _targetSpeed * _roadTypeSpeedMultiplier;
+                        // Use combined multipliers (weather, road type, time of day)
+                        float combinedMultiplier = _roadTypeSpeedMultiplier * _weatherSpeedMultiplier * _timeSpeedMultiplier;
+                        float adjustedSpeed = _targetSpeed * combinedMultiplier;
                         Function.Call(
                             (Hash)Constants.NATIVE_SET_DRIVE_TASK_CRUISE_SPEED,
                             player.Handle,  // Must use .Handle for native calls
@@ -1776,7 +1791,7 @@ internal struct OvertakeTrackingInfo
                         TryAnnounce($"Adjusting speed for {roadName}, {mph} miles per hour",
                             Constants.ANNOUNCE_PRIORITY_LOW, currentTick);
 
-                        Logger.Debug($"Road type speed: {roadName} -> {adjustedSpeed:F1} m/s ({_roadTypeSpeedMultiplier:P0})");
+                        Logger.Debug($"Road type speed: {roadName} -> {adjustedSpeed:F1} m/s (combined: {combinedMultiplier:P0})");
                     }
                     catch (Exception ex)
                     {
@@ -4517,10 +4532,17 @@ internal struct OvertakeTrackingInfo
         #region Driving Styles
 
         /// <summary>
-        /// Cycle to next driving style
+        /// Cycle to next driving style (disables dynamic style when manually set)
         /// </summary>
         public void CycleDrivingStyle()
         {
+            // Disable dynamic style when user manually sets a style
+            if (_dynamicStyleEnabled)
+            {
+                _dynamicStyleEnabled = false;
+                _audio.Speak("Dynamic style disabled. ");
+            }
+
             _currentDrivingStyleMode = (_currentDrivingStyleMode + 1) % 4;
 
             // Apply new style if currently driving
@@ -4531,6 +4553,68 @@ internal struct OvertakeTrackingInfo
 
             string styleName = Constants.GetDrivingStyleName(_currentDrivingStyleMode);
             _audio.Speak($"Driving style: {styleName}");
+        }
+
+        /// <summary>
+        /// Toggle dynamic style mode (auto-adjust based on road type)
+        /// </summary>
+        public void ToggleDynamicStyle()
+        {
+            _dynamicStyleEnabled = !_dynamicStyleEnabled;
+
+            if (_dynamicStyleEnabled)
+            {
+                _audio.Speak("Dynamic driving style enabled. Style will auto-adjust based on road type.");
+                _lastDynamicStyleRoadType = -1;  // Force re-evaluation
+            }
+            else
+            {
+                _audio.Speak("Dynamic driving style disabled. Manual style control.");
+            }
+        }
+
+        /// <summary>
+        /// Update driving style based on current road type (called during Update)
+        /// Only changes style if dynamic mode is enabled and road type changed
+        /// </summary>
+        private void UpdateDynamicStyle(int roadType, long currentTick)
+        {
+            if (!_dynamicStyleEnabled) return;
+            if (!_autoDriveActive) return;
+
+            // Don't change style too frequently (5 second cooldown)
+            const long STYLE_CHANGE_COOLDOWN = 50_000_000; // 5 seconds
+            if (currentTick - _lastDynamicStyleChangeTick < STYLE_CHANGE_COOLDOWN)
+                return;
+
+            // Only update if road type changed
+            if (roadType == _lastDynamicStyleRoadType) return;
+
+            // Get suggested style for this road type
+            int suggestedStyle = Constants.GetSuggestedDrivingStyle(roadType);
+
+            // Only change if different from current
+            if (suggestedStyle != _currentDrivingStyleMode)
+            {
+                _currentDrivingStyleMode = suggestedStyle;
+                _lastDynamicStyleRoadType = roadType;
+                _lastDynamicStyleChangeTick = currentTick;
+
+                // Apply new style without re-issuing task
+                ApplyDrivingStyle();
+
+                string styleName = Constants.GetDrivingStyleName(_currentDrivingStyleMode);
+                string roadName = Constants.GetRoadTypeName(roadType);
+                Logger.Debug($"Dynamic style: {roadName} -> {styleName}");
+
+                // Optional: Announce style change (low priority)
+                TryAnnounce($"Adjusting to {styleName} driving for {roadName}",
+                    Constants.ANNOUNCE_PRIORITY_LOW, currentTick);
+            }
+            else
+            {
+                _lastDynamicStyleRoadType = roadType;
+            }
         }
 
         /// <summary>
@@ -4563,6 +4647,48 @@ internal struct OvertakeTrackingInfo
         {
             string styleName = Constants.GetDrivingStyleName(_currentDrivingStyleMode);
             _audio.Speak($"Current driving style: {styleName}");
+        }
+
+        /// <summary>
+        /// Check if task needs re-issuing based on deviation from target
+        /// Returns true only if vehicle has significantly deviated from path
+        /// This prevents jerky movement from unnecessary task re-issues
+        /// </summary>
+        private bool NeedsTaskReissue(Vehicle vehicle, Vector3 targetPosition)
+        {
+            if (vehicle == null || !vehicle.Exists()) return false;
+
+            Vector3 currentPos = vehicle.Position;
+            Vector3 toTarget = targetPosition - currentPos;
+            float distanceToTarget = toTarget.Length();
+
+            // If very close to target, no need to re-issue
+            if (distanceToTarget < Constants.AUTODRIVE_WAYPOINT_ARRIVAL_RADIUS) return false;
+
+            // Check if we've deviated significantly from the path to target
+            // Calculate how far off course we are based on heading vs target direction
+            float targetHeading = (float)(Math.Atan2(toTarget.Y, toTarget.X) * 180.0 / Math.PI);
+            float currentHeading = vehicle.Heading;
+
+            // Normalize heading difference to -180 to 180
+            float headingDiff = targetHeading - currentHeading;
+            while (headingDiff > 180f) headingDiff -= 360f;
+            while (headingDiff < -180f) headingDiff += 360f;
+
+            // Only re-issue if heading is significantly off (>45°) AND we're not making progress
+            // This allows the AI to naturally navigate curves without interruption
+            if (Math.Abs(headingDiff) > Constants.TASK_HEADING_DEVIATION_THRESHOLD)
+            {
+                // Check if we're actually stuck (not just turning)
+                float speed = vehicle.Speed;
+                if (speed < Constants.STUCK_SPEED_THRESHOLD)
+                {
+                    Logger.Debug($"NeedsTaskReissue: heading deviation {headingDiff:F0}° and low speed {speed:F1}");
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         #endregion

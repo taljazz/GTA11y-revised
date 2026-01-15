@@ -467,6 +467,30 @@ namespace GrandTheftAccessibility
             0.7f    // 6 - Tunnel: cautious
         };
 
+        // Road type to driving style mapping (dynamic style switching)
+        // Indexed by ROAD_TYPE_* values, returns DRIVING_STYLE_MODE_* values
+        // Highway → Fast (overtaking), City → Cautious (pedestrians), others → Normal
+        public static readonly int[] ROAD_TYPE_DRIVING_STYLES = new int[]
+        {
+            DRIVING_STYLE_MODE_NORMAL,    // 0 - Unknown: normal driving
+            DRIVING_STYLE_MODE_FAST,      // 1 - Highway: faster, more overtaking
+            DRIVING_STYLE_MODE_CAUTIOUS,  // 2 - City street: careful of pedestrians
+            DRIVING_STYLE_MODE_NORMAL,    // 3 - Suburban: normal driving
+            DRIVING_STYLE_MODE_NORMAL,    // 4 - Rural: normal driving
+            DRIVING_STYLE_MODE_CAUTIOUS,  // 5 - Dirt road: careful of terrain
+            DRIVING_STYLE_MODE_NORMAL     // 6 - Tunnel: normal driving
+        };
+
+        /// <summary>
+        /// Get suggested driving style for a road type (for dynamic style switching)
+        /// </summary>
+        public static int GetSuggestedDrivingStyle(int roadType)
+        {
+            if (roadType >= 0 && roadType < ROAD_TYPE_DRIVING_STYLES.Length)
+                return ROAD_TYPE_DRIVING_STYLES[roadType];
+            return DRIVING_STYLE_MODE_NORMAL;
+        }
+
         // Granular arrival distance announcements (in feet)
         public static readonly int[] ARRIVAL_ANNOUNCEMENT_DISTANCES = new int[]
         {
@@ -539,11 +563,15 @@ namespace GrandTheftAccessibility
         public const long TICK_INTERVAL_STUCK_CHECK = 10_000_000;         // 1.0s between stuck checks
         public const long TICK_INTERVAL_PROGRESS_CHECK = 20_000_000;      // 2.0s between progress checks
 
-        // Stuck detection thresholds
+        // Stuck detection thresholds (optimized per Grok recommendations - 5s threshold)
         public const float STUCK_MOVEMENT_THRESHOLD = 2f;                 // Less than 2m movement = potentially stuck
         public const float STUCK_SPEED_THRESHOLD = 1f;                    // Less than 1 m/s = very slow/stopped
-        public const int STUCK_CHECK_COUNT_THRESHOLD = 3;                 // 3 consecutive checks = stuck (3 seconds)
+        public const int STUCK_CHECK_COUNT_THRESHOLD = 5;                 // 5 consecutive checks = stuck (5 seconds - increased from 3)
         public const float STUCK_HEADING_CHANGE_THRESHOLD = 5f;           // Heading change < 5° while stuck = truly stuck
+
+        // Task re-issue thresholds (optimized to reduce jerky movement)
+        public const float TASK_DEVIATION_THRESHOLD = 10f;                // Only re-issue task if deviated >10m from path
+        public const float TASK_HEADING_DEVIATION_THRESHOLD = 45f;        // Only re-issue if heading differs >45° from target
 
         // Progress timeout (waypoint mode)
         public const long PROGRESS_TIMEOUT_TICKS = 300_000_000;           // 30 seconds without progress = timeout
