@@ -65,6 +65,8 @@ $RECYCLE.BIN/
 
 # Claude Code settings (local to each developer)
 .claude/
+CLAUDE.md
+GrokNotes.txt
 
 # Accidental null files
 [Nn][Uu][Ll]
