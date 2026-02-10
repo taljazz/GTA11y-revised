@@ -46,6 +46,13 @@ namespace GrandTheftAccessibility
         private long _aircraftPitchStopTick;
         private long _aircraftRollStopTick;
 
+        // Landing beacon audio - triangle wave with stereo panning
+        private readonly WaveOutEvent _beaconOut;
+        private readonly SignalGenerator _beaconGenerator;
+        private readonly PanningSampleProvider _beaconPanner;
+        private bool _beaconInitialized;
+        private long _beaconStopTick;
+
         private bool _disposed;
 
         // Tolk state tracking for resilience
@@ -162,6 +169,18 @@ namespace GrandTheftAccessibility
 
             _aircraftPitchInitialized = false;
             _aircraftRollInitialized = false;
+
+            // Landing beacon - triangle wave with stereo panning for 3D navigation
+            _beaconGenerator = new SignalGenerator
+            {
+                Gain = Constants.BEACON_GAIN,
+                Frequency = Constants.BEACON_BASE_FREQUENCY,
+                Type = SignalGeneratorType.Triangle
+            };
+            var beaconMono = new StereoToMonoSampleProvider(_beaconGenerator);
+            _beaconPanner = new PanningSampleProvider(beaconMono);
+            _beaconOut = new WaveOutEvent();
+            _beaconInitialized = false;
         }
 
         /// <summary>
@@ -471,6 +490,55 @@ namespace GrandTheftAccessibility
         }
 
         /// <summary>
+        /// Play a landing beacon pulse with stereo panning and frequency modulation
+        /// Pan encodes horizontal bearing, frequency encodes altitude difference
+        /// </summary>
+        public void PlayBeaconPulse(float pan, float frequency, float gainMultiplier)
+        {
+            if (_disposed || _beaconOut == null || _beaconGenerator == null) return;
+
+            try
+            {
+                _beaconOut.Stop();
+
+                // Update frequency (altitude encoding) - clamp to safe range
+                if (frequency < Constants.BEACON_MIN_FREQUENCY) frequency = Constants.BEACON_MIN_FREQUENCY;
+                else if (frequency > Constants.BEACON_MAX_FREQUENCY) frequency = Constants.BEACON_MAX_FREQUENCY;
+                _beaconGenerator.Frequency = frequency;
+
+                // Update volume (caller provides gain factor: 1.0 = full, BEHIND_GAIN_FACTOR when behind)
+                _beaconGenerator.Gain = Constants.BEACON_GAIN * gainMultiplier;
+
+                // Update pan (bearing encoding): -1 = left, 0 = center, +1 = right
+                // Pan value is pre-clamped by caller
+                _beaconPanner.Pan = pan;
+
+                // Only init once - reuse thereafter
+                if (!_beaconInitialized)
+                {
+                    _beaconOut.Init(_beaconPanner);
+                    _beaconInitialized = true;
+                }
+
+                _beaconOut.Play();
+                _beaconStopTick = DateTime.Now.Ticks + Constants.BEACON_PULSE_DURATION_TICKS;
+            }
+            catch (Exception ex)
+            {
+                Logger.Exception(ex, "AudioManager.PlayBeaconPulse");
+            }
+        }
+
+        /// <summary>
+        /// Stop the landing beacon audio immediately
+        /// </summary>
+        public void StopBeacon()
+        {
+            try { _beaconOut?.Stop(); } catch { /* Expected - audio device may be unavailable */ }
+            _beaconStopTick = 0;
+        }
+
+        /// <summary>
         /// Call this periodically to stop indicator audio after duration
         /// Should be called from OnTick - handles all timed audio stops
         /// </summary>
@@ -510,6 +578,13 @@ namespace GrandTheftAccessibility
                     try { _aircraftRollOut?.Stop(); } catch { /* Expected - audio device may be unavailable */ }
                     _aircraftRollStopTick = 0;
                 }
+
+                // Stop landing beacon pulse after duration
+                if (_beaconStopTick > 0 && currentTick >= _beaconStopTick)
+                {
+                    try { _beaconOut?.Stop(); } catch { /* Expected - audio device may be unavailable */ }
+                    _beaconStopTick = 0;
+                }
             }
             catch (Exception ex)
             {
@@ -531,6 +606,9 @@ namespace GrandTheftAccessibility
             _pitchOut?.Dispose();
             _aircraftPitchOut?.Dispose();
             _aircraftRollOut?.Dispose();
+
+            try { _beaconOut?.Stop(); } catch { /* Expected during disposal */ }
+            _beaconOut?.Dispose();
 
             _pedTargetSound?.Dispose();
             _vehicleTargetSound?.Dispose();

@@ -11,6 +11,9 @@ namespace GrandTheftAccessibility
     /// </summary>
     public class StructureDetector
     {
+        // PERFORMANCE: Pre-cached Hash value to avoid repeated casting
+        private static readonly Hash _getGroundZHash = (Hash)Constants.NATIVE_GET_GROUND_Z_FOR_3D_COORD;
+
         private readonly AudioManager _audio;
         private readonly AnnouncementQueue _announcementQueue;
 
@@ -204,7 +207,7 @@ namespace GrandTheftAccessibility
                 // Check for ceiling above (tunnel/overpass) - result not used but call determines if something is above
                 // Uses pre-allocated OutputArgument to avoid per-tick allocations
                 Function.Call<bool>(
-                    (Hash)Constants.NATIVE_GET_GROUND_Z_FOR_3D_COORD,
+                    _getGroundZHash,
                     position.X, position.Y, position.Z + Constants.STRUCTURE_CHECK_HEIGHT,
                     _structureAboveArg,
                     false);
@@ -219,7 +222,7 @@ namespace GrandTheftAccessibility
                     // Check for ground below (bridge check)
                     // Use pre-allocated OutputArgument to avoid per-tick allocations
                     bool hasBelowGround = Function.Call<bool>(
-                        (Hash)Constants.NATIVE_GET_GROUND_Z_FOR_3D_COORD,
+                        _getGroundZHash,
                         position.X, position.Y, position.Z - 2f,
                         _structureBelowArg,
                         false);

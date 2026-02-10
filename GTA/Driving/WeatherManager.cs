@@ -9,6 +9,9 @@ namespace GrandTheftAccessibility
     /// </summary>
     public class WeatherManager
     {
+        // PERFORMANCE: Pre-cached Hash value to avoid repeated casting
+        private static readonly Hash _getPrevWeatherHash = (Hash)Constants.NATIVE_GET_PREV_WEATHER_TYPE_HASH_NAME;
+
         private int _currentWeatherHash;
         private float _weatherSpeedMultiplier = 1.0f;
         private long _lastWeatherCheckTick;
@@ -54,7 +57,7 @@ namespace GrandTheftAccessibility
             try
             {
                 // Get current weather hash - wrapped in try/catch as native calls can fail
-                int weatherHash = Function.Call<int>((Hash)Constants.NATIVE_GET_PREV_WEATHER_TYPE_HASH_NAME);
+                int weatherHash = Function.Call<int>(_getPrevWeatherHash);
 
                 if (weatherHash == _currentWeatherHash)
                     return false;

@@ -16,6 +16,11 @@ namespace GrandTheftAccessibility
         private readonly AnnouncementQueue _announcementQueue;
         private readonly WeatherManager _weatherManager;
 
+        // PERFORMANCE: Pre-cached Hash values
+        private static readonly Hash _getClosestNodeWithHeadingHash = (Hash)Constants.NATIVE_GET_CLOSEST_VEHICLE_NODE_WITH_HEADING;
+        private static readonly Hash _getVehicleNodePropsHash = (Hash)Constants.NATIVE_GET_VEHICLE_NODE_PROPERTIES;
+        private static readonly Hash _setCruiseSpeedHash = (Hash)Constants.NATIVE_SET_DRIVE_TASK_CRUISE_SPEED;
+
         // Curve detection state
         private long _lastCurveAnnounceTick;
         private long _lastIntersectionAnnounceTick;
@@ -40,6 +45,9 @@ namespace GrandTheftAccessibility
         private readonly OutputArgument _nodeHeading = new OutputArgument();
         private readonly OutputArgument _density = new OutputArgument();
         private readonly OutputArgument _flags = new OutputArgument();
+
+        // PERFORMANCE: Pre-allocated vector to avoid per-frame allocations in loop
+        private Vector3 _lookAheadOffset;
 
         /// <summary>
         /// Whether curve slowdown is currently active
@@ -114,16 +122,21 @@ namespace GrandTheftAccessibility
             long cooldown = CalculateSpeedScaledCooldown(speed);
 
             // Look ahead at multiple distances
+            // PERFORMANCE: Calculate radians once outside the loop, use pre-calculated DEG_TO_RAD
+            float radians = (90f - vehicleHeading) * Constants.DEG_TO_RAD;
+            float cosRadians = (float)Math.Cos(radians);
+            float sinRadians = (float)Math.Sin(radians);
+
             for (float distance = Constants.ROAD_SAMPLE_INTERVAL; distance <= lookaheadDistance; distance += Constants.ROAD_SAMPLE_INTERVAL)
             {
-                float radians = (90f - vehicleHeading) * (float)Math.PI / 180f;
-                Vector3 lookAheadPos = position + new Vector3(
-                    (float)Math.Cos(radians) * distance,
-                    (float)Math.Sin(radians) * distance,
-                    0f);
+                // PERFORMANCE: Reuse pre-allocated vector instead of allocating new one
+                _lookAheadOffset.X = cosRadians * distance;
+                _lookAheadOffset.Y = sinRadians * distance;
+                _lookAheadOffset.Z = 0f;
+                Vector3 lookAheadPos = position + _lookAheadOffset;
 
                 bool found = Function.Call<bool>(
-                    (Hash)Constants.NATIVE_GET_CLOSEST_VEHICLE_NODE_WITH_HEADING,
+                    _getClosestNodeWithHeadingHash,
                     lookAheadPos.X, lookAheadPos.Y, lookAheadPos.Z,
                     _nodePos, _nodeHeading, 1, 3f, 0f);
 
@@ -154,7 +167,7 @@ namespace GrandTheftAccessibility
 
                 Vector3 nodePosition = _nodePos.GetResult<Vector3>();
                 Function.Call(
-                    (Hash)Constants.NATIVE_GET_VEHICLE_NODE_PROPERTIES,
+                    _getVehicleNodePropsHash,
                     nodePosition.X, nodePosition.Y, nodePosition.Z,
                     _density, _flags);
 
@@ -190,7 +203,7 @@ namespace GrandTheftAccessibility
         private void UpdateIntersectionTracking(Vehicle vehicle, Vector3 position, long currentTick)
         {
             Function.Call(
-                (Hash)Constants.NATIVE_GET_VEHICLE_NODE_PROPERTIES,
+                _getVehicleNodePropsHash,
                 position.X, position.Y, position.Z,
                 _density, _flags);
 
@@ -290,11 +303,11 @@ namespace GrandTheftAccessibility
 
                 Ped player = Game.Player.Character;
                 Function.Call(
-                    (Hash)Constants.NATIVE_SET_DRIVE_TASK_CRUISE_SPEED,
+                    _setCruiseSpeedHash,
                     player.Handle,
                     _curveSlowdownSpeed);
 
-                Logger.Debug($"Curve slowdown: {_originalSpeed:F1} -> {_curveSlowdownSpeed:F1} m/s");
+                if (Logger.IsDebugEnabled) Logger.Debug($"Curve slowdown: {_originalSpeed:F1} -> {_curveSlowdownSpeed:F1} m/s");
             }
             catch (Exception ex)
             {
@@ -333,7 +346,8 @@ namespace GrandTheftAccessibility
             if (severity == CurveSeverity.None)
                 return new CurveInfo(severity, CurveDirection.Right, 0, 0, currentSpeed);
 
-            float curveRadius = distance / (float)Math.Tan(absAngle * Math.PI / 180f / 2f);
+            // PERFORMANCE: Use pre-calculated DEG_TO_RAD constant
+            float curveRadius = distance / (float)Math.Tan(absAngle * Constants.DEG_TO_RAD * 0.5f);
             float frictionCoeff = _weatherManager?.GetRoadFrictionCoefficient() ?? 0.8f;
             float safeSpeed = (float)Math.Sqrt(frictionCoeff * 9.81f * curveRadius);
 

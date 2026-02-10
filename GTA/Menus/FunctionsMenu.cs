@@ -36,16 +36,19 @@ namespace GrandTheftAccessibility.Menus
         private readonly List<string> _functions;
         private readonly SettingsManager _settings;
         private readonly Random _random;
+        private readonly TurretCrewManager _turretCrewManager;
         private int _currentIndex;
 
-        public FunctionsMenu(SettingsManager settings)
+        public FunctionsMenu(SettingsManager settings, TurretCrewManager turretCrewManager)
         {
             _settings = settings;
+            _turretCrewManager = turretCrewManager;
             _random = new Random();
 
             _functions = new List<string>
             {
                 "Mark Waypoint to Mission Objective",
+                "Toggle Turret Crew",
                 "Blow up all nearby vehicles",
                 "Make all nearby pedestrians attack each other",
                 "Instantly kill all nearby pedestrians",
@@ -74,6 +77,11 @@ namespace GrandTheftAccessibility.Menus
 
         public string GetCurrentItemText()
         {
+            // For turret crew, show current status
+            if (_currentIndex == 1 && _turretCrewManager != null)
+            {
+                return _turretCrewManager.GetStatusText();
+            }
             return _functions[_currentIndex];
         }
 
@@ -85,20 +93,35 @@ namespace GrandTheftAccessibility.Menus
                     MarkWaypointToMissionObjective();
                     break;
                 case 1:
-                    ExplodeNearbyVehicles();
+                    ToggleTurretCrew();
                     break;
                 case 2:
-                    MakePedsAttackEachOther();
+                    ExplodeNearbyVehicles();
                     break;
                 case 3:
-                    KillAllNearbyPeds();
+                    MakePedsAttackEachOther();
                     break;
                 case 4:
-                    RaiseWantedLevel();
+                    KillAllNearbyPeds();
                     break;
                 case 5:
+                    RaiseWantedLevel();
+                    break;
+                case 6:
                     ClearWantedLevel();
                     break;
+            }
+        }
+
+        private void ToggleTurretCrew()
+        {
+            if (_turretCrewManager != null)
+            {
+                _turretCrewManager.ToggleTurretCrew();
+            }
+            else
+            {
+                Tolk.Speak("Turret crew system unavailable");
             }
         }
 

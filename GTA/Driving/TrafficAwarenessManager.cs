@@ -31,6 +31,10 @@ namespace GrandTheftAccessibility
         private readonly HashSet<int> _visibleHandles = new HashSet<int>();
         private readonly List<int> _handleRemovalList = new List<int>();
 
+        // PERFORMANCE: Pre-allocated vectors to avoid per-frame allocations
+        private Vector3 _cachedForward;
+        private Vector3 _cachedRight;
+
         // Following distance state
         private float _followingTimeGap = float.MaxValue;
         private int _lastFollowingState;
@@ -136,10 +140,14 @@ namespace GrandTheftAccessibility
                 }
 
                 Vector3 movement = position - _laneTrackingPosition;
-                float headingRad = (90f - _laneTrackingHeading) * (float)Math.PI / 180f;
-                Vector3 right = new Vector3((float)Math.Sin(headingRad), -(float)Math.Cos(headingRad), 0f);
 
-                float lateralDistance = Vector3.Dot(movement, right);
+                // OPTIMIZED: Use pre-calculated DEG_TO_RAD constant and reuse vector
+                float headingRad = (90f - _laneTrackingHeading) * Constants.DEG_TO_RAD;
+                _cachedRight.X = (float)Math.Sin(headingRad);
+                _cachedRight.Y = -(float)Math.Cos(headingRad);
+                _cachedRight.Z = 0f;
+
+                float lateralDistance = Vector3.Dot(movement, _cachedRight);
 
                 if (Math.Abs(lateralDistance) >= Constants.LANE_CHANGE_THRESHOLD)
                 {
@@ -205,9 +213,18 @@ namespace GrandTheftAccessibility
                 if (float.IsNaN(ourSpeed) || float.IsNaN(ourHeading))
                     return;
 
-                float headingRad = (90f - ourHeading) * (float)Math.PI / 180f;
-                Vector3 forward = new Vector3((float)Math.Cos(headingRad), (float)Math.Sin(headingRad), 0f);
-                Vector3 right = new Vector3((float)Math.Sin(headingRad), -(float)Math.Cos(headingRad), 0f);
+                // OPTIMIZED: Use pre-calculated DEG_TO_RAD constant and reuse cached vectors
+                float headingRad = (90f - ourHeading) * Constants.DEG_TO_RAD;
+                float cosH = (float)Math.Cos(headingRad);
+                float sinH = (float)Math.Sin(headingRad);
+
+                _cachedForward.X = cosH;
+                _cachedForward.Y = sinH;
+                _cachedForward.Z = 0f;
+
+                _cachedRight.X = sinH;
+                _cachedRight.Y = -cosH;
+                _cachedRight.Z = 0f;
 
                 Vehicle[] nearbyVehicles = World.GetNearbyVehicles(position, Constants.OVERTAKE_DETECTION_RADIUS);
 
@@ -240,8 +257,9 @@ namespace GrandTheftAccessibility
                     if (float.IsNaN(distance))
                         continue;
 
-                    float forwardDist = Vector3.Dot(toVehicle, forward);
-                    float lateralDist = Vector3.Dot(toVehicle, right);
+                    // OPTIMIZED: Use cached vectors instead of allocating new ones
+                    float forwardDist = Vector3.Dot(toVehicle, _cachedForward);
+                    float lateralDist = Vector3.Dot(toVehicle, _cachedRight);
 
                     int newState;
                     if (forwardDist > Constants.OVERTAKE_SIDE_DISTANCE)

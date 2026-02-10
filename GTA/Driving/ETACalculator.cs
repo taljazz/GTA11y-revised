@@ -11,6 +11,9 @@ namespace GrandTheftAccessibility
     /// </summary>
     public class ETACalculator
     {
+        // PERFORMANCE: Pre-cached Hash value to avoid repeated casting
+        private static readonly Hash _generateDirectionsHash = (Hash)Constants.NATIVE_GENERATE_DIRECTIONS_TO_COORD;
+
         private readonly AudioManager _audio;
         private readonly AnnouncementQueue _announcementQueue;
 
@@ -19,6 +22,8 @@ namespace GrandTheftAccessibility
         private long _lastETAAnnounceTick;
         private float[] _speedSamples;
         private int _speedSampleIndex;
+        private int _validSampleCount;     // OPTIMIZED: Track valid samples to avoid iterating whole array
+        private float _runningSpeedTotal;  // OPTIMIZED: Running total for O(1) average calculation
         private float _averageSpeed;
 
         // Pre-allocated OutputArguments
@@ -52,6 +57,8 @@ namespace GrandTheftAccessibility
             _lastAnnouncedETA = 0f;
             _lastETAAnnounceTick = 0;
             _speedSampleIndex = 0;
+            _validSampleCount = 0;
+            _runningSpeedTotal = 0f;
             _averageSpeed = 0f;
             if (_speedSamples != null)
             {
@@ -76,23 +83,28 @@ namespace GrandTheftAccessibility
 
             if (wanderMode) return;  // No ETA in wander mode
 
-            // Update speed sample for averaging
+            // OPTIMIZED: Update speed sample using running total (O(1) instead of O(n))
             float currentSpeed = vehicle.Speed;
+
+            // Subtract old value from running total before overwriting
+            float oldValue = _speedSamples[_speedSampleIndex];
+            if (oldValue > 0)
+            {
+                _runningSpeedTotal -= oldValue;
+            }
+            else if (_validSampleCount < Constants.ETA_SPEED_SAMPLES)
+            {
+                // This is a new slot being filled
+                _validSampleCount++;
+            }
+
+            // Add new value
             _speedSamples[_speedSampleIndex] = currentSpeed;
+            _runningSpeedTotal += currentSpeed;
             _speedSampleIndex = (_speedSampleIndex + 1) % Constants.ETA_SPEED_SAMPLES;
 
-            // Calculate average speed
-            float totalSpeed = 0f;
-            int sampleCount = 0;
-            for (int i = 0; i < Constants.ETA_SPEED_SAMPLES; i++)
-            {
-                if (_speedSamples[i] > 0)
-                {
-                    totalSpeed += _speedSamples[i];
-                    sampleCount++;
-                }
-            }
-            _averageSpeed = sampleCount > 0 ? totalSpeed / sampleCount : currentSpeed;
+            // Calculate average speed - O(1) using running total
+            _averageSpeed = _validSampleCount > 0 ? _runningSpeedTotal / _validSampleCount : currentSpeed;
 
             // Throttle ETA announcements
             if (currentTick - _lastETAAnnounceTick < Constants.TICK_INTERVAL_ETA_UPDATE)
@@ -130,7 +142,7 @@ namespace GrandTheftAccessibility
             {
                 // Use GENERATE_DIRECTIONS_TO_COORD to get road-aware distance estimate
                 int result = Function.Call<int>(
-                    (Hash)Constants.NATIVE_GENERATE_DIRECTIONS_TO_COORD,
+                    _generateDirectionsHash,
                     position.X, position.Y, position.Z,
                     waypointPos.X, waypointPos.Y, waypointPos.Z,
                     true,                   // p6: unknown, true seems standard
@@ -149,7 +161,7 @@ namespace GrandTheftAccessibility
             }
             catch (Exception ex)
             {
-                Logger.Debug($"GENERATE_DIRECTIONS_TO_COORD failed: {ex.Message}");
+                if (Logger.IsDebugEnabled) Logger.Debug($"GENERATE_DIRECTIONS_TO_COORD failed: {ex.Message}");
             }
 
             // Fallback: straight-line distance with road factor (roads are ~1.4x longer)

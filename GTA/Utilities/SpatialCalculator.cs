@@ -44,8 +44,7 @@ namespace GrandTheftAccessibility
         public static string GetDirectionFromHeading(double heading)
         {
             // Normalize heading to 0-360
-            while (heading < 0) heading += 360;
-            while (heading >= 360) heading -= 360;
+            heading = ((heading % 360) + 360) % 360;
 
             // GTA V coordinate system: East/West are swapped compared to standard compass
             if (heading < Constants.NORTH_NORTHEAST) return "north";
@@ -72,8 +71,7 @@ namespace GrandTheftAccessibility
         public static int GetHeadingSlice(double heading)
         {
             // Normalize heading to 0-360
-            while (heading < 0) heading += 360;
-            while (heading >= 360) heading -= 360;
+            heading = ((heading % 360) + 360) % 360;
 
             // Simple division - CPU handles this efficiently
             int slice = (int)(heading / Constants.HEADING_SLICE_DEGREES);
@@ -105,9 +103,9 @@ namespace GrandTheftAccessibility
         /// </summary>
         public static double GetHorizontalDistance(Vector3 pos1, Vector3 pos2)
         {
-            double totalDistance = World.GetDistance(pos1, pos2);
-            double zDiff = Math.Abs(pos1.Z - pos2.Z);
-            return Math.Round(totalDistance - zDiff, 1);
+            double dx = pos1.X - pos2.X;
+            double dy = pos1.Y - pos2.Y;
+            return Math.Round(Math.Sqrt(dx * dx + dy * dy), 1);
         }
 
         /// <summary>

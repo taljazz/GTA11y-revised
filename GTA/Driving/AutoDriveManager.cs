@@ -196,15 +196,15 @@ internal struct OvertakeTrackingInfo
         private int _seekAttempts;    // Track number of scan attempts
         private bool _onDesiredRoadType;
 
+        // PERFORMANCE: Pre-allocated vector for ScanForRoadType to avoid allocations in loop
+        private Vector3 _scanSamplePos;
+
         // Task spam prevention - track last issued task
         private Vector3 _lastIssuedSeekTarget;  // Last target we issued a drive task for
         private bool _lastIssuedTaskWasWander;  // True if last task was wander, false if drive-to-coord
 
         // Driving style
         private int _currentDrivingStyleMode = Constants.DRIVING_STYLE_MODE_NORMAL;
-        private bool _dynamicStyleEnabled = Constants.DYNAMIC_STYLE_ENABLED_DEFAULT;  // Auto-adjust style based on road type
-        private int _lastDynamicStyleRoadType = -1;  // Track which road type set the current style
-        private long _lastDynamicStyleChangeTick;  // Cooldown between style changes
 
         // Dead-end detection and avoidance
         private bool _inDeadEnd;
@@ -238,6 +238,29 @@ internal struct OvertakeTrackingInfo
         private bool _vehicleOnFire;
         private bool _vehicleCriticalDamage;
         private long _lastVehicleStateCheckTick;
+
+        // PERFORMANCE: Pre-cached Hash values to avoid repeated casting in hot paths
+        private static readonly Hash _sirenAudioOnHash = (Hash)Constants.NATIVE_IS_VEHICLE_SIREN_AUDIO_ON;
+        private static readonly Hash _setCruiseSpeedHash = (Hash)Constants.NATIVE_SET_DRIVE_TASK_CRUISE_SPEED;
+        private static readonly Hash _clearPedTasksHash = (Hash)Constants.NATIVE_CLEAR_PED_TASKS;
+        private static readonly Hash _setHandbrakeHash = (Hash)Constants.NATIVE_SET_VEHICLE_HANDBRAKE;
+        private static readonly Hash _getVehicleNodePropsHash = (Hash)Constants.NATIVE_GET_VEHICLE_NODE_PROPERTIES;
+        private static readonly Hash _getClosestNodeWithHeadingHash = (Hash)Constants.NATIVE_GET_CLOSEST_VEHICLE_NODE_WITH_HEADING;
+        private static readonly Hash _taskVehicleDriveWanderHash = (Hash)Constants.NATIVE_TASK_VEHICLE_DRIVE_WANDER;
+        private static readonly Hash _setDriverAbilityHash = (Hash)Constants.NATIVE_SET_DRIVER_ABILITY;
+        private static readonly Hash _setDriverAggressivenessHash = (Hash)Constants.NATIVE_SET_DRIVER_AGGRESSIVENESS;
+        private static readonly Hash _taskDriveToCoordLongrangeHash = (Hash)Constants.NATIVE_TASK_VEHICLE_DRIVE_TO_COORD_LONGRANGE;
+        private static readonly Hash _taskDriveToCoordHash = (Hash)Constants.NATIVE_TASK_VEHICLE_DRIVE_TO_COORD;
+        private static readonly Hash _getPrevWeatherHash = (Hash)Constants.NATIVE_GET_PREV_WEATHER_TYPE_HASH_NAME;
+        private static readonly Hash _setVehicleLightsHash = (Hash)Constants.NATIVE_SET_VEHICLE_LIGHTS;
+        private static readonly Hash _getGroundZHash = (Hash)Constants.NATIVE_GET_GROUND_Z_FOR_3D_COORD;
+        private static readonly Hash _generateDirectionsHash = (Hash)Constants.NATIVE_GENERATE_DIRECTIONS_TO_COORD;
+        private static readonly Hash _getClosestNodeHash = (Hash)Constants.NATIVE_GET_CLOSEST_VEHICLE_NODE;
+        private static readonly Hash _getNthClosestNodeHash = (Hash)Constants.NATIVE_GET_NTH_CLOSEST_VEHICLE_NODE;
+        private static readonly Hash _getSafeCoordForPedHash = (Hash)Constants.NATIVE_GET_SAFE_COORD_FOR_PED;
+        private static readonly Hash _getPointOnRoadSideHash = (Hash)Constants.NATIVE_GET_POINT_ON_ROAD_SIDE;
+        private static readonly Hash _taskVehicleTempActionHash = (Hash)Constants.NATIVE_TASK_VEHICLE_TEMP_ACTION;
+        private static readonly Hash _isEntityInWaterHash = (Hash)Constants.NATIVE_IS_ENTITY_IN_WATER;
 
         // Pre-allocated OutputArguments to avoid allocations
         private readonly OutputArgument _nodePos = new OutputArgument();
@@ -274,7 +297,6 @@ internal struct OvertakeTrackingInfo
         public bool IsStuck => _isStuck;
         public bool IsPaused => _pauseState == Constants.PAUSE_STATE_PAUSED;
         public bool IsYieldingToEmergency => _emergencyVehicleHandler?.IsYieldingToEmergency ?? _yieldingToEmergency;
-        public bool IsDynamicStyleEnabled => _dynamicStyleEnabled;
 
         public AutoDriveManager(AudioManager audio, SettingsManager settings)
         {
@@ -362,25 +384,28 @@ internal struct OvertakeTrackingInfo
 
             try
             {
-                // Get current driving style settings (using safe bounds-checked accessors)
+                // Use the user's selected driving style (not hardcoded CRUISE)
+                // This respects the user's choice when cycling through driving styles
                 int styleValue = Constants.GetDrivingStyleValue(_currentDrivingStyleMode);
                 float ability = Constants.GetDrivingStyleAbility(_currentDrivingStyleMode);
                 float aggressiveness = Constants.GetDrivingStyleAggressiveness(_currentDrivingStyleMode);
 
+                if (Logger.IsDebugEnabled) Logger.Debug($"StartWander: Using style={styleValue} ({Constants.GetDrivingStyleName(_currentDrivingStyleMode)}), ability={ability}, aggression={aggressiveness}");
+
                 // Issue drive task ONCE - this is the key to smooth driving!
                 // Must use .Handle for native calls - SHVDN wrapper objects don't work directly
                 Function.Call(
-                    (Hash)Constants.NATIVE_TASK_VEHICLE_DRIVE_WANDER,
+                    _taskVehicleDriveWanderHash,
                     player.Handle,
                     vehicle.Handle,
                     _targetSpeed,
                     styleValue);
 
-                // Set driver ability based on style
+                // Set driver ability - 1.0 for best vehicle control
                 try
                 {
                     Function.Call(
-                        (Hash)Constants.NATIVE_SET_DRIVER_ABILITY,
+                        _setDriverAbilityHash,
                         player.Handle,
                         ability);
                 }
@@ -389,11 +414,11 @@ internal struct OvertakeTrackingInfo
                     Logger.Exception(ex, "SET_DRIVER_ABILITY failed");
                 }
 
-                // Set aggressiveness based on style
+                // Set aggressiveness - 0.0 for calmest, smoothest driving
                 try
                 {
                     Function.Call(
-                        (Hash)Constants.NATIVE_SET_DRIVER_AGGRESSIVENESS,
+                        _setDriverAggressivenessHash,
                         player.Handle,
                         aggressiveness);
                 }
@@ -571,38 +596,64 @@ internal struct OvertakeTrackingInfo
                     styleValue = Constants.DRIVING_STYLE_NORMAL;
                 }
 
-                // CRITICAL FIX: Use EXACT same pattern as StartWander (which works!)
-                // Use direct native call with INT driving style (already retrieved above)
+                // Calculate distance to waypoint to determine which native to use
+                float distanceToWaypoint = Vector3.Distance(player.Position, safePosition);
+                bool useLongRange = distanceToWaypoint > Constants.AUTODRIVE_LONGRANGE_THRESHOLD;
+
+                // For longrange driving, use optimized style for better pathfinding
+                int effectiveStyleValue = useLongRange ? Constants.DRIVING_STYLE_LONGRANGE : styleValue;
 
                 // Log parameters before issuing task
-                Logger.Info($"StartWaypointInternal: About to issue TASK_VEHICLE_DRIVE_TO_COORD (direct native)");
+                Logger.Info($"StartWaypointInternal: Distance={distanceToWaypoint:F0}m, UseLongRange={useLongRange}");
                 Logger.Info($"  Player Handle: {player.Handle}");
                 Logger.Info($"  Vehicle Handle: {vehicle.Handle}, Model Hash: {vehicleModelHash}");
                 Logger.Info($"  Destination: X={safePosition.X:F2}, Y={safePosition.Y:F2}, Z={safePosition.Z:F2}");
-                Logger.Info($"  Speed: {_targetSpeed:F2} m/s, Style: {styleValue}, Stop Range: {Constants.AUTODRIVE_WAYPOINT_ARRIVAL_RADIUS}");
+                Logger.Info($"  Speed: {_targetSpeed:F2} m/s, Style: {effectiveStyleValue}, Stop Range: {Constants.AUTODRIVE_WAYPOINT_ARRIVAL_RADIUS}");
 
-                // Issue drive task using DIRECT NATIVE CALL (same as StartWander)
+                // Issue drive task - use LONGRANGE for distant waypoints (better pathfinding)
+                // VAutodrive research: LONGRANGE has simpler params and better long-distance pathing
                 try
                 {
-                    Function.Call(
-                        (Hash)Constants.NATIVE_TASK_VEHICLE_DRIVE_TO_COORD,
-                        player.Handle,
-                        vehicle.Handle,
-                        safePosition.X,
-                        safePosition.Y,
-                        safePosition.Z,
-                        _targetSpeed,
-                        0,  // p6 - not used
-                        vehicleModelHash,
-                        styleValue,
-                        Constants.AUTODRIVE_WAYPOINT_ARRIVAL_RADIUS,
-                        0f);  // p10
+                    if (useLongRange)
+                    {
+                        // TASK_VEHICLE_DRIVE_TO_COORD_LONGRANGE: 8 params
+                        // (ped, vehicle, x, y, z, speed, drivingStyle, stopRange)
+                        Function.Call(
+                            _taskDriveToCoordLongrangeHash,
+                            player.Handle,
+                            vehicle.Handle,
+                            safePosition.X,
+                            safePosition.Y,
+                            safePosition.Z,
+                            _targetSpeed,
+                            effectiveStyleValue,
+                            Constants.AUTODRIVE_WAYPOINT_ARRIVAL_RADIUS);
 
-                    Logger.Info("StartWaypointInternal: TASK_VEHICLE_DRIVE_TO_COORD issued successfully");
+                        Logger.Info("StartWaypointInternal: TASK_VEHICLE_DRIVE_TO_COORD_LONGRANGE issued successfully");
+                    }
+                    else
+                    {
+                        // TASK_VEHICLE_DRIVE_TO_COORD: 11 params (for shorter distances)
+                        Function.Call(
+                            _taskDriveToCoordHash,
+                            player.Handle,
+                            vehicle.Handle,
+                            safePosition.X,
+                            safePosition.Y,
+                            safePosition.Z,
+                            _targetSpeed,
+                            0,  // p6 - not used
+                            vehicleModelHash,
+                            effectiveStyleValue,
+                            Constants.AUTODRIVE_WAYPOINT_ARRIVAL_RADIUS,
+                            0f);  // p10
+
+                        Logger.Info("StartWaypointInternal: TASK_VEHICLE_DRIVE_TO_COORD issued successfully");
+                    }
                 }
                 catch (Exception ex)
                 {
-                    Logger.Exception(ex, "StartWaypointInternal: TASK_VEHICLE_DRIVE_TO_COORD failed");
+                    Logger.Exception(ex, $"StartWaypointInternal: Drive task failed (LongRange={useLongRange})");
                     _audio.Speak("Failed to start driving - task error.");
                     return;
                 }
@@ -612,7 +663,7 @@ internal struct OvertakeTrackingInfo
                 try
                 {
                     Function.Call(
-                        (Hash)Constants.NATIVE_SET_DRIVER_ABILITY,
+                        _setDriverAbilityHash,
                         player.Handle,
                         ability);
                     Logger.Info("StartWaypointInternal: SET_DRIVER_ABILITY completed");
@@ -627,7 +678,7 @@ internal struct OvertakeTrackingInfo
                 try
                 {
                     Function.Call(
-                        (Hash)Constants.NATIVE_SET_DRIVER_AGGRESSIVENESS,
+                        _setDriverAggressivenessHash,
                         player.Handle,
                         aggressiveness);
                     Logger.Info("StartWaypointInternal: SET_DRIVER_AGGRESSIVENESS completed");
@@ -699,31 +750,15 @@ internal struct OvertakeTrackingInfo
                     return;
 
                 // Re-issue driving task
-                int styleValue = Constants.GetDrivingStyleValue(_currentDrivingStyleMode);
-
                 if (_wanderMode)
                 {
-                    Function.Call(
-                        (Hash)Constants.NATIVE_TASK_VEHICLE_DRIVE_WANDER,
-                        player.Handle,
-                        vehicle.Handle,
-                        _targetSpeed,
-                        styleValue);
+                    IssueWanderTask(player, vehicle, _targetSpeed);
                 }
                 else
                 {
-                    Vector3 destination = _safeArrivalPosition;
-                    Function.Call(
-                        (Hash)Constants.NATIVE_TASK_VEHICLE_DRIVE_TO_COORD,
-                        player.Handle,
-                        vehicle.Handle,
-                        destination.X, destination.Y, destination.Z,
-                        _targetSpeed,
-                        0f,  // Unused
-                        vehicle.Model.Hash,
-                        styleValue,
-                        Constants.AUTODRIVE_WAYPOINT_ARRIVAL_RADIUS,
-                        10.0f);  // Straightline distance
+                    // Use helper method for LONGRANGE support
+                    IssueDriveToCoordTask(player, vehicle, _safeArrivalPosition, _targetSpeed,
+                        Constants.AUTODRIVE_WAYPOINT_ARRIVAL_RADIUS);
                 }
 
                 _emergencyVehicleHandler.ReleaseHandbrake(vehicle);
@@ -746,7 +781,7 @@ internal struct OvertakeTrackingInfo
                 try
                 {
                     Ped player = Game.Player.Character;
-                    Function.Call((Hash)Constants.NATIVE_CLEAR_PED_TASKS, player.Handle);
+                    Function.Call(_clearPedTasksHash, player.Handle);
                 }
                 catch { /* Expected during stop - player state may be invalid */ }
             }
@@ -840,7 +875,7 @@ internal struct OvertakeTrackingInfo
             {
                 Ped player = Game.Player.Character;
                 Function.Call(
-                    (Hash)Constants.NATIVE_SET_DRIVE_TASK_CRUISE_SPEED,
+                    _setCruiseSpeedHash,
                     player.Handle,
                     _targetSpeed);
             }
@@ -1087,9 +1122,6 @@ internal struct OvertakeTrackingInfo
                 _curveSlowdownActive, _arrivalSlowdownActive);
             _roadTypeSpeedMultiplier = _roadTypeManager.RoadTypeSpeedMultiplier;
 
-            // Dynamic driving style based on road type (Grok optimization)
-            UpdateDynamicStyle(_currentRoadType, currentTick);
-
             // === NORMAL OPERATION ===
 
             // Waypoint mode: check for arrival and distance updates (delegated to NavigationManager)
@@ -1158,12 +1190,12 @@ internal struct OvertakeTrackingInfo
             if (!_inFinalApproach && distance < Constants.AUTODRIVE_FINAL_APPROACH_DISTANCE)
             {
                 _inFinalApproach = true;
-                Logger.Debug($"Entering final approach at {distance:F0}m");
+                if (Logger.IsDebugEnabled) Logger.Debug($"Entering final approach at {distance:F0}m");
 
                 // Reduce speed for final approach
                 Ped player = Game.Player.Character;
                 Function.Call(
-                    (Hash)Constants.NATIVE_SET_DRIVE_TASK_CRUISE_SPEED,
+                    _setCruiseSpeedHash,
                     player.Handle,
                     Constants.AUTODRIVE_FINAL_APPROACH_SPEED);
             }
@@ -1199,7 +1231,7 @@ internal struct OvertakeTrackingInfo
                     {
                         _arrivalSlowdownActive = true;
                         _audio.Speak("Approaching destination");
-                        Logger.Debug($"Arrival slowdown started at {distance:F0}m");
+                        if (Logger.IsDebugEnabled) Logger.Debug($"Arrival slowdown started at {distance:F0}m");
                     }
 
                     _lastArrivalSpeed = targetArrivalSpeed;
@@ -1242,11 +1274,11 @@ internal struct OvertakeTrackingInfo
             {
                 Ped player = Game.Player.Character;
                 Function.Call(
-                    (Hash)Constants.NATIVE_SET_DRIVE_TASK_CRUISE_SPEED,
+                    _setCruiseSpeedHash,
                     player.Handle,
                     speed);
 
-                Logger.Debug($"Arrival speed adjusted to {speed:F1} m/s");
+                if (Logger.IsDebugEnabled) Logger.Debug($"Arrival speed adjusted to {speed:F1} m/s");
             }
             catch (Exception ex)
             {
@@ -1271,11 +1303,11 @@ internal struct OvertakeTrackingInfo
                 {
                     Ped player = Game.Player.Character;
                     Function.Call(
-                        (Hash)Constants.NATIVE_SET_DRIVE_TASK_CRUISE_SPEED,
+                        _setCruiseSpeedHash,
                         player.Handle,
                         _targetSpeed);
 
-                    Logger.Debug($"Arrival slowdown ended, restored to {_targetSpeed:F1} m/s");
+                    if (Logger.IsDebugEnabled) Logger.Debug($"Arrival slowdown ended, restored to {_targetSpeed:F1} m/s");
                 }
                 catch (Exception ex)
                 {
@@ -1320,18 +1352,22 @@ internal struct OvertakeTrackingInfo
             long cooldown = CalculateSpeedScaledCooldown(speed);
 
             // Look ahead at multiple distances and check for curves/intersections
+            // PERFORMANCE: Calculate radians once outside the loop, use pre-calculated DEG_TO_RAD
+            float radians = (90f - vehicleHeading) * Constants.DEG_TO_RAD;
+            float cosRad = (float)Math.Cos(radians);
+            float sinRad = (float)Math.Sin(radians);
+
             for (float distance = Constants.ROAD_SAMPLE_INTERVAL; distance <= lookaheadDistance; distance += Constants.ROAD_SAMPLE_INTERVAL)
             {
-                // Calculate look-ahead position
-                float radians = (90f - vehicleHeading) * (float)Math.PI / 180f;
+                // Calculate look-ahead position using pre-calculated cos/sin
                 Vector3 lookAheadPos = position + new Vector3(
-                    (float)Math.Cos(radians) * distance,
-                    (float)Math.Sin(radians) * distance,
+                    cosRad * distance,
+                    sinRad * distance,
                     0f);
 
                 // Get road node at look-ahead position
                 bool found = Function.Call<bool>(
-                    (Hash)Constants.NATIVE_GET_CLOSEST_VEHICLE_NODE_WITH_HEADING,
+                    _getClosestNodeWithHeadingHash,
                     lookAheadPos.X, lookAheadPos.Y, lookAheadPos.Z,
                     _nodePos, _nodeHeading, 1, 3f, 0f);
 
@@ -1367,7 +1403,7 @@ internal struct OvertakeTrackingInfo
                 // Check for intersections and traffic lights
                 Vector3 nodePosition = _nodePos.GetResult<Vector3>();
                 Function.Call(
-                    (Hash)Constants.NATIVE_GET_VEHICLE_NODE_PROPERTIES,
+                    _getVehicleNodePropsHash,
                     nodePosition.X, nodePosition.Y, nodePosition.Z,
                     _density, _flags);
 
@@ -1474,11 +1510,11 @@ internal struct OvertakeTrackingInfo
                 // Apply reduced speed
                 Ped player = Game.Player.Character;
                 Function.Call(
-                    (Hash)Constants.NATIVE_SET_DRIVE_TASK_CRUISE_SPEED,
+                    _setCruiseSpeedHash,
                     player.Handle,
                     _curveSlowdownSpeed);
 
-                Logger.Debug($"Curve slowdown: {_originalSpeed:F1} -> {_curveSlowdownSpeed:F1} m/s (combined mult: {combinedMultiplier:P0})");
+                if (Logger.IsDebugEnabled) Logger.Debug($"Curve slowdown: {_originalSpeed:F1} -> {_curveSlowdownSpeed:F1} m/s (combined mult: {combinedMultiplier:P0})");
             }
             catch (Exception ex)
             {
@@ -1524,7 +1560,8 @@ internal struct OvertakeTrackingInfo
 
             // Estimate curve radius using geometry
             // For a given turn angle and distance, estimate the curve radius
-            float curveRadius = distance / (float)Math.Tan(absAngle * Math.PI / 180f / 2f);
+            // PERFORMANCE: Use pre-calculated DEG_TO_RAD constant
+            float curveRadius = distance / (float)Math.Tan(absAngle * Constants.DEG_TO_RAD * 0.5f);
 
             // Calculate safe speed using physics: v = sqrt(μ * g * r)
             // Using coefficient of friction estimates for different road conditions
@@ -1637,7 +1674,7 @@ internal struct OvertakeTrackingInfo
         {
             // Get road node properties at current position
             Function.Call(
-                (Hash)Constants.NATIVE_GET_VEHICLE_NODE_PROPERTIES,
+                _getVehicleNodePropsHash,
                 position.X, position.Y, position.Z,
                 _density, _flags);
 
@@ -1782,7 +1819,7 @@ internal struct OvertakeTrackingInfo
                         float combinedMultiplier = _roadTypeSpeedMultiplier * _weatherSpeedMultiplier * _timeSpeedMultiplier;
                         float adjustedSpeed = _targetSpeed * combinedMultiplier;
                         Function.Call(
-                            (Hash)Constants.NATIVE_SET_DRIVE_TASK_CRUISE_SPEED,
+                            _setCruiseSpeedHash,
                             player.Handle,  // Must use .Handle for native calls
                             adjustedSpeed);
 
@@ -1791,7 +1828,7 @@ internal struct OvertakeTrackingInfo
                         TryAnnounce($"Adjusting speed for {roadName}, {mph} miles per hour",
                             Constants.ANNOUNCE_PRIORITY_LOW, currentTick);
 
-                        Logger.Debug($"Road type speed: {roadName} -> {adjustedSpeed:F1} m/s (combined: {combinedMultiplier:P0})");
+                        if (Logger.IsDebugEnabled) Logger.Debug($"Road type speed: {roadName} -> {adjustedSpeed:F1} m/s (combined: {combinedMultiplier:P0})");
                     }
                     catch (Exception ex)
                     {
@@ -1849,7 +1886,7 @@ internal struct OvertakeTrackingInfo
             {
                 // Get road node properties
                 Function.Call(
-                    (Hash)Constants.NATIVE_GET_VEHICLE_NODE_PROPERTIES,
+                    _getVehicleNodePropsHash,
                     position.X, position.Y, position.Z,
                     _density, _flags);
 
@@ -2083,7 +2120,7 @@ internal struct OvertakeTrackingInfo
             try
             {
                 // Get current weather hash
-                int weatherHash = Function.Call<int>((Hash)Constants.NATIVE_GET_PREV_WEATHER_TYPE_HASH_NAME);
+                int weatherHash = Function.Call<int>(_getPrevWeatherHash);
 
                 if (weatherHash == _currentWeatherHash) return;
 
@@ -2217,7 +2254,7 @@ internal struct OvertakeTrackingInfo
                 {
                     _headlightsOn = shouldHaveHeadlights;
                     // 0 = off, 1 = low, 2 = high
-                    Function.Call((Hash)Constants.NATIVE_SET_VEHICLE_LIGHTS, vehicle.Handle, shouldHaveHeadlights ? 2 : 0);
+                    Function.Call(_setVehicleLightsHash, vehicle.Handle, shouldHaveHeadlights ? 2 : 0);
                 }
 
                 // Update speed multiplier if time changed
@@ -2263,11 +2300,11 @@ internal struct OvertakeTrackingInfo
 
                 Ped player = Game.Player.Character;
                 Function.Call(
-                    (Hash)Constants.NATIVE_SET_DRIVE_TASK_CRUISE_SPEED,
+                    _setCruiseSpeedHash,
                     player.Handle,  // Must use .Handle for native calls
                     adjustedSpeed);
 
-                Logger.Debug($"Environmental speed: road={_roadTypeSpeedMultiplier:P0}, weather={_weatherSpeedMultiplier:P0}, time={_timeSpeedMultiplier:P0}, final={adjustedSpeed:F1} m/s");
+                if (Logger.IsDebugEnabled) Logger.Debug($"Environmental speed: road={_roadTypeSpeedMultiplier:P0}, weather={_weatherSpeedMultiplier:P0}, time={_timeSpeedMultiplier:P0}, final={adjustedSpeed:F1} m/s");
             }
             catch (Exception ex)
             {
@@ -2295,8 +2332,9 @@ internal struct OvertakeTrackingInfo
                 if (ourSpeed < 3f) return;  // Skip if barely moving
 
                 // Get forward direction
+                // PERFORMANCE: Use pre-calculated DEG_TO_RAD constant
                 float heading = vehicle.Heading;
-                float radians = (90f - heading) * (float)Math.PI / 180f;
+                float radians = (90f - heading) * Constants.DEG_TO_RAD;
                 Vector3 forward = new Vector3((float)Math.Cos(radians), (float)Math.Sin(radians), 0f);
 
                 // Scan for vehicles ahead - use larger radius at higher speeds
@@ -2317,16 +2355,18 @@ internal struct OvertakeTrackingInfo
                     if (distance > 0.1f)  // Avoid division by zero
                     {
                         float dot = Vector3.Dot(Vector3.Normalize(toVehicle), forward);
-                        float angle = (float)Math.Acos(Math.Max(-1f, Math.Min(1f, dot))) * 180f / (float)Math.PI;
+                        // PERFORMANCE: Use pre-calculated RAD_TO_DEG constant
+                        float angle = (float)Math.Acos(Math.Max(-1f, Math.Min(1f, dot))) * Constants.RAD_TO_DEG;
 
                         if (angle <= Constants.COLLISION_SCAN_ANGLE && distance < closestDistance)
                         {
                             closestDistance = distance;
 
                             // Calculate closing speed (our speed - their forward speed component)
+                            // PERFORMANCE: Use pre-calculated DEG_TO_RAD constant
                             float theirSpeed = v.Speed;
                             float theirHeading = v.Heading;
-                            float theirRadians = (90f - theirHeading) * (float)Math.PI / 180f;
+                            float theirRadians = (90f - theirHeading) * Constants.DEG_TO_RAD;
                             Vector3 theirForward = new Vector3((float)Math.Cos(theirRadians), (float)Math.Sin(theirRadians), 0f);
 
                             // How much of their velocity is in our direction?
@@ -2472,8 +2512,9 @@ internal struct OvertakeTrackingInfo
                 Vehicle[] nearbyVehicles = World.GetNearbyVehicles(position, Constants.EMERGENCY_DETECTION_RADIUS);
 
                 // Get our forward direction for position analysis
+                // PERFORMANCE: Use pre-calculated DEG_TO_RAD constant
                 float ourHeading = vehicle.Heading;
-                float ourRadians = (90f - ourHeading) * (float)Math.PI / 180f;
+                float ourRadians = (90f - ourHeading) * Constants.DEG_TO_RAD;
                 Vector3 ourForward = new Vector3((float)Math.Cos(ourRadians), (float)Math.Sin(ourRadians), 0f);
 
                 foreach (Vehicle v in nearbyVehicles)
@@ -2482,7 +2523,7 @@ internal struct OvertakeTrackingInfo
                     if (v.Handle == vehicle.Handle || !v.Exists()) continue;
 
                     // Check if siren is on
-                    bool sirenOn = Function.Call<bool>((Hash)Constants.NATIVE_IS_VEHICLE_SIREN_AUDIO_ON, v.Handle);
+                    bool sirenOn = Function.Call<bool>(_sirenAudioOnHash, v.Handle);
                     if (!sirenOn) continue;
 
                     // Found emergency vehicle with siren - determine direction
@@ -2541,7 +2582,8 @@ internal struct OvertakeTrackingInfo
         }
 
         /// <summary>
-        /// Check if an emergency vehicle with siren is still nearby
+        /// Check if an emergency vehicle with siren is still nearby.
+        /// Uses pre-cached Hash to avoid per-call casting.
         /// </summary>
         private bool IsEmergencyVehicleNearby(Vector3 position)
         {
@@ -2551,7 +2593,7 @@ internal struct OvertakeTrackingInfo
                 foreach (Vehicle v in nearbyVehicles)
                 {
                     if (!v.Exists()) continue;
-                    bool sirenOn = Function.Call<bool>((Hash)Constants.NATIVE_IS_VEHICLE_SIREN_AUDIO_ON, v.Handle);
+                    bool sirenOn = Function.Call<bool>(_sirenAudioOnHash, v.Handle);
                     if (sirenOn) return true;
                 }
             }
@@ -2569,10 +2611,10 @@ internal struct OvertakeTrackingInfo
                 Ped player = Game.Player.Character;
 
                 // Clear current task and slow down
-                Function.Call((Hash)Constants.NATIVE_CLEAR_PED_TASKS, player.Handle);
+                Function.Call(_clearPedTasksHash, player.Handle);
 
                 // Apply brakes
-                Function.Call((Hash)Constants.NATIVE_SET_VEHICLE_HANDBRAKE, vehicle.Handle, true);
+                Function.Call(_setHandbrakeHash, vehicle.Handle, true);
 
                 Logger.Info("Yielding to emergency vehicle");
             }
@@ -2592,31 +2634,19 @@ internal struct OvertakeTrackingInfo
                 Ped player = Game.Player.Character;
 
                 // Release brakes
-                Function.Call((Hash)Constants.NATIVE_SET_VEHICLE_HANDBRAKE, vehicle.Handle, false);
+                Function.Call(_setHandbrakeHash, vehicle.Handle, false);
 
                 // Resume driving task
-                int styleValue = Constants.GetDrivingStyleValue(_currentDrivingStyleMode);
-                float ability = Constants.GetDrivingStyleAbility(_currentDrivingStyleMode);
-                float aggressiveness = Constants.GetDrivingStyleAggressiveness(_currentDrivingStyleMode);
-
                 if (_wanderMode)
                 {
-                    Function.Call(
-                        (Hash)Constants.NATIVE_TASK_VEHICLE_DRIVE_WANDER,
-                        player.Handle, vehicle.Handle, _targetSpeed, styleValue);
+                    IssueWanderTask(player, vehicle, _targetSpeed);
                 }
                 else
                 {
-                    Function.Call(
-                        (Hash)Constants.NATIVE_TASK_VEHICLE_DRIVE_TO_COORD,
-                        player.Handle, vehicle.Handle,
-                        _lastWaypointPos.X, _lastWaypointPos.Y, _lastWaypointPos.Z,
-                        _targetSpeed, 0, vehicle.Model.Hash, styleValue,
-                        Constants.AUTODRIVE_WAYPOINT_ARRIVAL_RADIUS, 0f);
+                    // Use helper method for LONGRANGE support
+                    IssueDriveToCoordTask(player, vehicle, _lastWaypointPos, _targetSpeed,
+                        Constants.AUTODRIVE_WAYPOINT_ARRIVAL_RADIUS);
                 }
-
-                Function.Call((Hash)Constants.NATIVE_SET_DRIVER_ABILITY, player.Handle, ability);
-                Function.Call((Hash)Constants.NATIVE_SET_DRIVER_AGGRESSIVENESS, player.Handle, aggressiveness);
 
                 _taskIssued = true;
                 Logger.Info("Resumed driving after emergency yield");
@@ -2878,7 +2908,7 @@ internal struct OvertakeTrackingInfo
 
                 // Check for ceiling above (tunnel/overpass) - result not used but call determines if something is above
                 Function.Call<bool>(
-                    (Hash)Constants.NATIVE_GET_GROUND_Z_FOR_3D_COORD,
+                    _getGroundZHash,
                     position.X, position.Y, position.Z + Constants.STRUCTURE_CHECK_HEIGHT,
                     new OutputArgument(),
                     false);
@@ -2893,7 +2923,7 @@ internal struct OvertakeTrackingInfo
                     // Check for ground below (bridge check)
                     // Use pre-allocated OutputArgument to avoid per-tick allocations
                     bool hasBelowGround = Function.Call<bool>(
-                        (Hash)Constants.NATIVE_GET_GROUND_Z_FOR_3D_COORD,
+                        _getGroundZHash,
                         position.X, position.Y, position.Z - 2f,
                         _structureBelowArg,
                         false);
@@ -3022,7 +3052,7 @@ internal struct OvertakeTrackingInfo
                 // Use GENERATE_DIRECTIONS_TO_COORD to get road-aware distance estimate
                 // Uses pre-allocated OutputArguments to avoid allocations
                 int result = Function.Call<int>(
-                    (Hash)Constants.NATIVE_GENERATE_DIRECTIONS_TO_COORD,
+                    _generateDirectionsHash,
                     position.X, position.Y, position.Z,
                     _lastWaypointPos.X, _lastWaypointPos.Y, _lastWaypointPos.Z,
                     true,                   // p6: unknown, true seems standard
@@ -3041,7 +3071,7 @@ internal struct OvertakeTrackingInfo
             }
             catch (Exception ex)
             {
-                Logger.Debug($"GENERATE_DIRECTIONS_TO_COORD failed: {ex.Message}");
+                if (Logger.IsDebugEnabled) Logger.Debug($"GENERATE_DIRECTIONS_TO_COORD failed: {ex.Message}");
             }
 
             // Fallback: straight-line distance with road factor (roads are ~1.4x longer)
@@ -3098,8 +3128,8 @@ internal struct OvertakeTrackingInfo
 
                 // Clear driving task and apply brakes
                 // Must use .Handle for native calls - SHVDN wrapper objects don't work directly
-                Function.Call((Hash)Constants.NATIVE_CLEAR_PED_TASKS, player.Handle);
-                Function.Call((Hash)Constants.NATIVE_SET_VEHICLE_HANDBRAKE, vehicle.Handle, true);
+                Function.Call(_clearPedTasksHash, player.Handle);
+                Function.Call(_setHandbrakeHash, vehicle.Handle, true);
 
                 _audio.Speak("AutoDrive paused");
                 Logger.Info("AutoDrive paused");
@@ -3140,19 +3170,12 @@ internal struct OvertakeTrackingInfo
 
                 // Release brakes
                 // Must use .Handle for native calls - SHVDN wrapper objects don't work directly
-                Function.Call((Hash)Constants.NATIVE_SET_VEHICLE_HANDBRAKE, vehicle.Handle, false);
+                Function.Call(_setHandbrakeHash, vehicle.Handle, false);
 
-                // Re-issue driving task
-                int styleValue = Constants.GetDrivingStyleValue(_currentDrivingStyleMode);
-                float ability = Constants.GetDrivingStyleAbility(_currentDrivingStyleMode);
-                float aggressiveness = Constants.GetDrivingStyleAggressiveness(_currentDrivingStyleMode);
-
-                // Must use .Handle for native calls - SHVDN wrapper objects don't work directly
+                // Re-issue driving task using optimized helpers
                 if (_wasPausedWander)
                 {
-                    Function.Call(
-                        (Hash)Constants.NATIVE_TASK_VEHICLE_DRIVE_WANDER,
-                        player.Handle, vehicle.Handle, _targetSpeed, styleValue);
+                    IssueWanderTask(player, vehicle, _targetSpeed);
                 }
                 else
                 {
@@ -3161,9 +3184,7 @@ internal struct OvertakeTrackingInfo
                     {
                         _audio.Speak("Waypoint removed, switching to wander mode");
                         _wanderMode = true;
-                        Function.Call(
-                            (Hash)Constants.NATIVE_TASK_VEHICLE_DRIVE_WANDER,
-                            player.Handle, vehicle.Handle, _targetSpeed, styleValue);
+                        IssueWanderTask(player, vehicle, _targetSpeed);
                     }
                     else
                     {
@@ -3173,17 +3194,11 @@ internal struct OvertakeTrackingInfo
                         _safeArrivalPosition = GetSafeArrivalPosition(waypointPos);
                         _lastWaypointPos = _safeArrivalPosition;
 
-                        Function.Call(
-                            (Hash)Constants.NATIVE_TASK_VEHICLE_DRIVE_TO_COORD,
-                            player.Handle, vehicle.Handle,
-                            _safeArrivalPosition.X, _safeArrivalPosition.Y, _safeArrivalPosition.Z,
-                            _targetSpeed, 0, vehicle.Model.Hash, styleValue,
-                            Constants.AUTODRIVE_WAYPOINT_ARRIVAL_RADIUS, 0f);
+                        // Use helper method for LONGRANGE support
+                        IssueDriveToCoordTask(player, vehicle, _safeArrivalPosition, _targetSpeed,
+                            Constants.AUTODRIVE_WAYPOINT_ARRIVAL_RADIUS);
                     }
                 }
-
-                Function.Call((Hash)Constants.NATIVE_SET_DRIVER_ABILITY, player.Handle, ability);
-                Function.Call((Hash)Constants.NATIVE_SET_DRIVER_AGGRESSIVENESS, player.Handle, aggressiveness);
 
                 _taskIssued = true;
                 _pauseState = Constants.PAUSE_STATE_NONE;
@@ -3271,8 +3286,9 @@ internal struct OvertakeTrackingInfo
                 }
 
                 // Calculate lateral movement (perpendicular to heading)
+                // PERFORMANCE: Use pre-calculated DEG_TO_RAD constant
                 Vector3 movement = position - _laneTrackingPosition;
-                float headingRad = (90f - _laneTrackingHeading) * (float)Math.PI / 180f;
+                float headingRad = (90f - _laneTrackingHeading) * Constants.DEG_TO_RAD;
                 Vector3 forward = new Vector3((float)Math.Cos(headingRad), (float)Math.Sin(headingRad), 0f);
                 Vector3 right = new Vector3((float)Math.Sin(headingRad), -(float)Math.Cos(headingRad), 0f);
 
@@ -3331,9 +3347,10 @@ internal struct OvertakeTrackingInfo
 
             try
             {
+                // PERFORMANCE: Use pre-calculated DEG_TO_RAD constant
                 float ourSpeed = vehicle.Speed;
                 float ourHeading = vehicle.Heading;
-                float headingRad = (90f - ourHeading) * (float)Math.PI / 180f;
+                float headingRad = (90f - ourHeading) * Constants.DEG_TO_RAD;
                 Vector3 forward = new Vector3((float)Math.Cos(headingRad), (float)Math.Sin(headingRad), 0f);
                 Vector3 right = new Vector3((float)Math.Sin(headingRad), -(float)Math.Cos(headingRad), 0f);
 
@@ -3424,7 +3441,7 @@ internal struct OvertakeTrackingInfo
                 // Clean up vehicles that are no longer visible or stale (reuse pre-allocated List)
                 // Stale entries are removed to prevent unbounded dictionary growth
                 _handleRemovalList.Clear();
-                long staleThreshold = currentTick - 100_000_000; // 10 seconds staleness limit
+                long staleThreshold = currentTick - 30_000_000; // 3 seconds staleness limit (reduced from 10s to prevent dictionary bloat)
                 foreach (var kvp in _overtakeTracking)
                 {
                     // Remove if no longer visible OR if entry is stale (tracking for too long)
@@ -3469,7 +3486,7 @@ internal struct OvertakeTrackingInfo
                 // This native also provides heading, useful for approach direction
                 // Uses pre-allocated OutputArguments to avoid allocations
                 bool foundNode = Function.Call<bool>(
-                    (Hash)Constants.NATIVE_GET_CLOSEST_VEHICLE_NODE_WITH_HEADING,
+                    _getClosestNodeWithHeadingHash,
                     waypointPos.X, waypointPos.Y, waypointPos.Z,
                     _safeArrivalPosArg, _safeArrivalHeadingArg,
                     Constants.ROAD_NODE_TYPE_ALL,      // Node type: 1 = All road types (most inclusive)
@@ -3484,7 +3501,7 @@ internal struct OvertakeTrackingInfo
                     // Accept if within reasonable distance
                     if (distanceToRoad < Constants.SAFE_ARRIVAL_MAX_DISTANCE)
                     {
-                        Logger.Debug($"Found road node {distanceToRoad:F1}m from waypoint (with heading)");
+                        if (Logger.IsDebugEnabled) Logger.Debug($"Found road node {distanceToRoad:F1}m from waypoint (with heading)");
                         return roadPos;
                     }
                 }
@@ -3492,7 +3509,7 @@ internal struct OvertakeTrackingInfo
                 // Strategy 2: Try the simpler GET_CLOSEST_VEHICLE_NODE
                 // Sometimes works better for off-road waypoints
                 bool foundSimpleNode = Function.Call<bool>(
-                    (Hash)Constants.NATIVE_GET_CLOSEST_VEHICLE_NODE,
+                    _getClosestNodeHash,
                     waypointPos.X, waypointPos.Y, waypointPos.Z,
                     _safeArrivalPosArg,
                     Constants.ROAD_NODE_TYPE_ALL,      // Node type: 1 = Any
@@ -3505,7 +3522,7 @@ internal struct OvertakeTrackingInfo
                     float distanceToRoad = (roadPos - waypointPos).Length();
                     if (distanceToRoad < Constants.SAFE_ARRIVAL_MAX_DISTANCE)
                     {
-                        Logger.Debug($"Found road node {distanceToRoad:F1}m from waypoint (simple)");
+                        if (Logger.IsDebugEnabled) Logger.Debug($"Found road node {distanceToRoad:F1}m from waypoint (simple)");
                         return roadPos;
                     }
                 }
@@ -3515,7 +3532,7 @@ internal struct OvertakeTrackingInfo
                 for (int n = 2; n <= 3; n++)
                 {
                     bool foundNth = Function.Call<bool>(
-                        (Hash)Constants.NATIVE_GET_NTH_CLOSEST_VEHICLE_NODE,
+                        _getNthClosestNodeHash,
                         waypointPos.X, waypointPos.Y, waypointPos.Z,
                         n,
                         _safeArrivalPosArg,
@@ -3529,7 +3546,7 @@ internal struct OvertakeTrackingInfo
                         float distanceToRoad = (roadPos - waypointPos).Length();
                         if (distanceToRoad < Constants.SAFE_ARRIVAL_NTH_NODE_MAX_DISTANCE) // Stricter for nth closest
                         {
-                            Logger.Debug($"Found {n}th closest road node {distanceToRoad:F1}m from waypoint");
+                            if (Logger.IsDebugEnabled) Logger.Debug($"Found {n}th closest road node {distanceToRoad:F1}m from waypoint");
                             return roadPos;
                         }
                     }
@@ -3537,7 +3554,7 @@ internal struct OvertakeTrackingInfo
 
                 // Strategy 4: Try getting a safe coord for ped (more flexible for off-road)
                 bool foundSafe = Function.Call<bool>(
-                    (Hash)Constants.NATIVE_GET_SAFE_COORD_FOR_PED,
+                    _getSafeCoordForPedHash,
                     waypointPos.X, waypointPos.Y, waypointPos.Z,
                     true,   // onGround
                     _safePedCoordArg,
@@ -3555,7 +3572,7 @@ internal struct OvertakeTrackingInfo
 
                 // Strategy 5: Try road side position for parking-friendly arrival
                 bool foundRoadSide = Function.Call<bool>(
-                    (Hash)Constants.NATIVE_GET_POINT_ON_ROAD_SIDE,
+                    _getPointOnRoadSideHash,
                     waypointPos.X, waypointPos.Y, waypointPos.Z,
                     0,      // Side: 0 = right side of road
                     _roadSidePosArg);
@@ -3748,7 +3765,7 @@ internal struct OvertakeTrackingInfo
             {
                 // Get road node properties at current position
                 Function.Call(
-                    (Hash)Constants.NATIVE_GET_VEHICLE_NODE_PROPERTIES,
+                    _getVehicleNodePropsHash,
                     position.X, position.Y, position.Z,
                     _density, _flags);
 
@@ -3797,7 +3814,7 @@ internal struct OvertakeTrackingInfo
                 Ped player = Game.Player.Character;
 
                 // Clear current task
-                Function.Call((Hash)Constants.NATIVE_CLEAR_PED_TASKS, player.Handle);
+                Function.Call(_clearPedTasksHash, player.Handle);
 
                 // Perform a reverse and turn maneuver
                 _deadEndTurnCount++;
@@ -3808,7 +3825,7 @@ internal struct OvertakeTrackingInfo
                     Constants.TEMP_ACTION_REVERSE_RIGHT;
 
                 Function.Call(
-                    (Hash)Constants.NATIVE_TASK_VEHICLE_TEMP_ACTION,
+                    _taskVehicleTempActionHash,
                     player.Handle, vehicle.Handle, action, 2500);  // 2.5 second reverse
 
                 // Re-issue wander task after turnaround completes
@@ -3838,11 +3855,12 @@ internal struct OvertakeTrackingInfo
             try
             {
                 // Look ahead in driving direction
+                // PERFORMANCE: Use pre-calculated DEG_TO_RAD constant
                 float heading = vehicle.Heading;
                 float speed = vehicle.Speed;
                 float lookahead = Math.Max(Constants.COLLISION_LOOKAHEAD_MIN, speed * Constants.COLLISION_LOOKAHEAD_TIME_FACTOR); // At least 30m, or 2 seconds ahead
 
-                float radians = (90f - heading) * (float)Math.PI / 180f;
+                float radians = (90f - heading) * Constants.DEG_TO_RAD;
                 Vector3 aheadPos = position + new Vector3(
                     (float)Math.Cos(radians) * lookahead,
                     (float)Math.Sin(radians) * lookahead,
@@ -3859,12 +3877,9 @@ internal struct OvertakeTrackingInfo
 
                     // Clear task and re-issue to force new route calculation
                     Ped player = Game.Player.Character;
-                    Function.Call((Hash)Constants.NATIVE_CLEAR_PED_TASKS, player.Handle);
+                    Function.Call(_clearPedTasksHash, player.Handle);
 
-                    int styleValue = Constants.GetDrivingStyleValue(_currentDrivingStyleMode);
-                    Function.Call(
-                        (Hash)Constants.NATIVE_TASK_VEHICLE_DRIVE_WANDER,
-                        player.Handle, vehicle.Handle, _targetSpeed, styleValue);
+                    IssueWanderTask(player, vehicle, _targetSpeed);
                 }
             }
             catch (Exception ex)
@@ -3897,7 +3912,7 @@ internal struct OvertakeTrackingInfo
 
                 // Additional check using road node flags for restricted roads
                 Function.Call(
-                    (Hash)Constants.NATIVE_GET_VEHICLE_NODE_PROPERTIES,
+                    _getVehicleNodePropsHash,
                     position.X, position.Y, position.Z,
                     _density, _flags);
 
@@ -3915,7 +3930,7 @@ internal struct OvertakeTrackingInfo
             }
             catch (Exception ex)
             {
-                Logger.Debug($"IsPositionRestricted check failed: {ex.Message}");
+                if (Logger.IsDebugEnabled) Logger.Debug($"IsPositionRestricted check failed: {ex.Message}");
             }
 
             return false;
@@ -3963,6 +3978,12 @@ internal struct OvertakeTrackingInfo
             _seekMode = seekMode;
             _seekStartTick = DateTime.Now.Ticks; // Track when seeking started for timeout
 
+            // FIX: Initialize seek state variables to prevent stale state from previous seeks
+            _seekAttempts = 0;
+            _lastSeekScanTick = 0;  // Allow immediate first scan
+            _lastIssuedSeekTarget = Vector3.Zero;
+            _lastIssuedTaskWasWander = false;
+
             // If seeking "Any Road", just start wander
             if (seekMode == Constants.ROAD_SEEK_MODE_ANY)
             {
@@ -3973,6 +3994,8 @@ internal struct OvertakeTrackingInfo
 
             // Get current road type
             Vector3 position = player.Position;
+            Logger.Info($"StartSeeking: mode={seekMode}, position=({position.X:F1}, {position.Y:F1}, {position.Z:F1})");
+
             int currentRoadType = GetRoadTypeAtPosition(position);
             int desiredRoadType = SeekModeToRoadType(seekMode);
 
@@ -3998,7 +4021,24 @@ internal struct OvertakeTrackingInfo
             }
 
             // Scan for road type
-            Vector3 foundPosition = ScanForRoadType(position, desiredRoadType);
+            if (Logger.IsDebugEnabled) Logger.Debug($"StartSeeking: Beginning scan for road type {desiredRoadType}");
+            Vector3 foundPosition = Vector3.Zero;
+
+            try
+            {
+                foundPosition = ScanForRoadType(position, desiredRoadType);
+                if (Logger.IsDebugEnabled) Logger.Debug($"StartSeeking: Scan complete, found={foundPosition != Vector3.Zero}");
+            }
+            catch (Exception scanEx)
+            {
+                Logger.Exception(scanEx, "StartSeeking.ScanForRoadType");
+                _audio.Speak("Road scan failed. Starting wander mode.");
+                _seekingRoad = true;
+                _onDesiredRoadType = false;
+                _seekTargetPosition = Vector3.Zero;
+                StartWanderInternal();
+                return;
+            }
 
             if (foundPosition != Vector3.Zero)
             {
@@ -4007,6 +4047,7 @@ internal struct OvertakeTrackingInfo
                 _onDesiredRoadType = false;
                 _seekTargetPosition = foundPosition;
 
+                if (Logger.IsDebugEnabled) Logger.Debug($"StartSeeking: Navigating to found position ({foundPosition.X:F1}, {foundPosition.Y:F1}, {foundPosition.Z:F1})");
                 NavigateToSeekTarget(player, vehicle, foundPosition);
             }
             else
@@ -4019,6 +4060,7 @@ internal struct OvertakeTrackingInfo
                 string roadName = Constants.GetRoadSeekModeName(seekMode);
                 _audio.Speak($"No {roadName} found nearby. Wandering until one is found.");
 
+                Logger.Debug("StartSeeking: No road found, starting wander");
                 StartWanderInternal();
             }
         }
@@ -4068,6 +4110,8 @@ internal struct OvertakeTrackingInfo
 
             Vector3 closestPosition = Vector3.Zero;
             float closestDistance = float.MaxValue;
+            int nativeCallCount = 0;
+            const int MAX_NATIVE_CALLS_PER_SCAN = 48;  // Limit to prevent overwhelming the game engine
 
             try
             {
@@ -4085,6 +4129,8 @@ internal struct OvertakeTrackingInfo
                 if (angleSteps <= 0 || angleSteps >= 36) angleSteps = 12;
                 if (distanceSteps <= 0 || distanceSteps >= 20) distanceSteps = 6;
 
+                if (Logger.IsDebugEnabled) Logger.Debug($"ScanForRoadType: Starting scan with {angleSteps} angles x {distanceSteps} distances");
+
                 for (int d = 1; d <= distanceSteps; d++)
                 {
                     float distance = d * Constants.ROAD_SEEK_SAMPLE_DISTANCE;
@@ -4093,25 +4139,36 @@ internal struct OvertakeTrackingInfo
                     {
                         try
                         {
+                            // PERFORMANCE: Use pre-calculated DEG_TO_RAD constant
                             float angle = a * Constants.ROAD_SEEK_SAMPLE_ANGLE;
-                            float radians = angle * (float)Math.PI / 180f;
+                            float radians = angle * Constants.DEG_TO_RAD;
 
-                            Vector3 samplePos = origin + new Vector3(
-                                (float)Math.Cos(radians) * distance,
-                                (float)Math.Sin(radians) * distance,
-                                0f);
+                            // PERFORMANCE: Reuse pre-allocated vector instead of allocating new one
+                            _scanSamplePos.X = origin.X + (float)Math.Cos(radians) * distance;
+                            _scanSamplePos.Y = origin.Y + (float)Math.Sin(radians) * distance;
+                            _scanSamplePos.Z = origin.Z;
+                            Vector3 samplePos = _scanSamplePos;
 
                             // Skip if sample position is invalid
                             if (float.IsNaN(samplePos.X) || float.IsNaN(samplePos.Y))
                                 continue;
 
+                            // FIX: Limit native calls to prevent overwhelming the game engine
+                            if (nativeCallCount >= MAX_NATIVE_CALLS_PER_SCAN)
+                            {
+                                if (Logger.IsDebugEnabled) Logger.Debug($"ScanForRoadType: Hit native call limit ({MAX_NATIVE_CALLS_PER_SCAN}), stopping scan early");
+                                break;
+                            }
+
                             // Get closest road node
+                            nativeCallCount++;
                             bool found = Function.Call<bool>(
-                                (Hash)Constants.NATIVE_GET_CLOSEST_VEHICLE_NODE_WITH_HEADING,
+                                _getClosestNodeWithHeadingHash,
                                 samplePos.X, samplePos.Y, samplePos.Z,
                                 _seekNodePos, _seekNodeHeading, 1, 3f, 0f);
 
                             if (!found) continue;
+                            nativeCallCount++;  // Count the GET_VEHICLE_NODE_PROPERTIES call too
 
                             Vector3 nodePos = _seekNodePos.GetResult<Vector3>();
 
@@ -4121,7 +4178,7 @@ internal struct OvertakeTrackingInfo
 
                             // Get road properties
                             Function.Call(
-                                (Hash)Constants.NATIVE_GET_VEHICLE_NODE_PROPERTIES,
+                                _getVehicleNodePropsHash,
                                 nodePos.X, nodePos.Y, nodePos.Z,
                                 _seekDensity, _seekFlags);
 
@@ -4152,10 +4209,16 @@ internal struct OvertakeTrackingInfo
                         catch (Exception innerEx)
                         {
                             // Log but continue scanning other positions
-                            Logger.Debug($"ScanForRoadType inner error at angle {a}: {innerEx.Message}");
+                            if (Logger.IsDebugEnabled) Logger.Debug($"ScanForRoadType inner error at angle {a}: {innerEx.Message}");
                         }
                     }
+
+                    // FIX: Also break outer loop when native call limit is hit
+                    if (nativeCallCount >= MAX_NATIVE_CALLS_PER_SCAN)
+                        break;
                 }
+
+                if (Logger.IsDebugEnabled) Logger.Debug($"ScanForRoadType: Completed with {nativeCallCount} native calls, found={closestPosition != Vector3.Zero}");
             }
             catch (Exception ex)
             {
@@ -4207,32 +4270,12 @@ internal struct OvertakeTrackingInfo
 
             try
             {
-                // Get current driving style settings (using safe bounds-checked accessors)
-                int styleValue = Constants.GetDrivingStyleValue(_currentDrivingStyleMode);
-                float ability = Constants.GetDrivingStyleAbility(_currentDrivingStyleMode);
-                float aggressiveness = Constants.GetDrivingStyleAggressiveness(_currentDrivingStyleMode);
-
                 // Stop any existing task
-                Function.Call((Hash)Constants.NATIVE_CLEAR_PED_TASKS, player.Handle);
+                Function.Call(_clearPedTasksHash, player.Handle);
 
-                // Issue drive task to target
-                Function.Call(
-                    (Hash)Constants.NATIVE_TASK_VEHICLE_DRIVE_TO_COORD,
-                    player.Handle,
-                    vehicle.Handle,
-                    targetPos.X,
-                    targetPos.Y,
-                    targetPos.Z,
-                    _targetSpeed,
-                    0,
-                    vehicle.Model.Hash,
-                    styleValue,
-                    Constants.ROAD_SEEK_ARRIVAL_THRESHOLD,
-                    0f);
-
-                // Set driver ability and aggressiveness based on style
-                Function.Call((Hash)Constants.NATIVE_SET_DRIVER_ABILITY, player.Handle, ability);
-                Function.Call((Hash)Constants.NATIVE_SET_DRIVER_AGGRESSIVENESS, player.Handle, aggressiveness);
+                // Issue drive task to target using helper (supports LONGRANGE for distant targets)
+                IssueDriveToCoordTask(player, vehicle, targetPos, _targetSpeed,
+                    Constants.ROAD_SEEK_ARRIVAL_THRESHOLD);
 
                 _autoDriveActive = true;
                 _wanderMode = false;
@@ -4246,7 +4289,7 @@ internal struct OvertakeTrackingInfo
                 float distanceFeet = (targetPos - player.Position).Length() * Constants.METERS_TO_FEET;
                 string roadName = Constants.GetRoadSeekModeName(_seekMode);
                 _audio.Speak($"Navigating to {roadName}, {(int)distanceFeet} feet away");
-                Logger.Debug($"NavigateToSeekTarget: Issued drive task to {roadName}, {distanceFeet:F0} feet away");
+                if (Logger.IsDebugEnabled) Logger.Debug($"NavigateToSeekTarget: Issued drive task to {roadName}, {distanceFeet:F0} feet away");
             }
             catch (Exception ex)
             {
@@ -4276,22 +4319,10 @@ internal struct OvertakeTrackingInfo
 
             try
             {
-                // Get current driving style settings (using safe bounds-checked accessors)
-                int styleValue = Constants.GetDrivingStyleValue(_currentDrivingStyleMode);
-                float ability = Constants.GetDrivingStyleAbility(_currentDrivingStyleMode);
-                float aggressiveness = Constants.GetDrivingStyleAggressiveness(_currentDrivingStyleMode);
+                Function.Call(_clearPedTasksHash, player.Handle);
 
-                Function.Call((Hash)Constants.NATIVE_CLEAR_PED_TASKS, player.Handle);
-
-                Function.Call(
-                    (Hash)Constants.NATIVE_TASK_VEHICLE_DRIVE_WANDER,
-                    player.Handle,
-                    vehicle.Handle,
-                    _targetSpeed,
-                    styleValue);
-
-                Function.Call((Hash)Constants.NATIVE_SET_DRIVER_ABILITY, player.Handle, ability);
-                Function.Call((Hash)Constants.NATIVE_SET_DRIVER_AGGRESSIVENESS, player.Handle, aggressiveness);
+                // Use optimized cruise-style wander task
+                IssueWanderTask(player, vehicle, _targetSpeed);
 
                 _autoDriveActive = true;
                 _wanderMode = true;
@@ -4479,11 +4510,11 @@ internal struct OvertakeTrackingInfo
                             NavigateToSeekTarget(player, vehicle, foundPosition);
                             _lastIssuedSeekTarget = foundPosition;
                             _lastIssuedTaskWasWander = false;
-                            Logger.Debug($"UpdateRoadSeeking: Issued new drive task to target {(foundPosition - position).Length():F1}m away");
+                            if (Logger.IsDebugEnabled) Logger.Debug($"UpdateRoadSeeking: Issued new drive task to target {(foundPosition - position).Length():F1}m away");
                         }
                         else
                         {
-                            Logger.Debug($"UpdateRoadSeeking: Skipped task reissue (target unchanged, distance: {(foundPosition - _lastIssuedSeekTarget).Length():F1}m)");
+                            if (Logger.IsDebugEnabled) Logger.Debug($"UpdateRoadSeeking: Skipped task reissue (target unchanged, distance: {(foundPosition - _lastIssuedSeekTarget).Length():F1}m)");
                         }
                     }
                 }
@@ -4532,111 +4563,114 @@ internal struct OvertakeTrackingInfo
         #region Driving Styles
 
         /// <summary>
-        /// Cycle to next driving style (disables dynamic style when manually set)
+        /// Cycle to next driving style
         /// </summary>
         public void CycleDrivingStyle()
         {
-            // Disable dynamic style when user manually sets a style
-            if (_dynamicStyleEnabled)
-            {
-                _dynamicStyleEnabled = false;
-                _audio.Speak("Dynamic style disabled. ");
-            }
-
             _currentDrivingStyleMode = (_currentDrivingStyleMode + 1) % 4;
 
-            // Apply new style if currently driving
+            // Re-issue driving task with new style if currently driving
+            // Research shows SET_DRIVE_TASK_DRIVING_STYLE alone may not update all flags
+            // (especially pathfinding flags like StopAtTrafficLights, TakeShortestPath)
             if (_autoDriveActive)
             {
-                ApplyDrivingStyle();
+                ReissueTaskWithNewStyle();
             }
 
             string styleName = Constants.GetDrivingStyleName(_currentDrivingStyleMode);
+            int styleValue = Constants.GetDrivingStyleValue(_currentDrivingStyleMode);
             _audio.Speak($"Driving style: {styleName}");
+            Logger.Info($"CycleDrivingStyle: Changed to {styleName} (value={styleValue})");
         }
 
         /// <summary>
-        /// Toggle dynamic style mode (auto-adjust based on road type)
+        /// Re-issue the current driving task with the new style.
+        /// This is necessary because SET_DRIVE_TASK_DRIVING_STYLE may not update
+        /// all flag-based behaviors (like traffic light stopping) mid-task.
         /// </summary>
-        public void ToggleDynamicStyle()
-        {
-            _dynamicStyleEnabled = !_dynamicStyleEnabled;
-
-            if (_dynamicStyleEnabled)
-            {
-                _audio.Speak("Dynamic driving style enabled. Style will auto-adjust based on road type.");
-                _lastDynamicStyleRoadType = -1;  // Force re-evaluation
-            }
-            else
-            {
-                _audio.Speak("Dynamic driving style disabled. Manual style control.");
-            }
-        }
-
-        /// <summary>
-        /// Update driving style based on current road type (called during Update)
-        /// Only changes style if dynamic mode is enabled and road type changed
-        /// </summary>
-        private void UpdateDynamicStyle(int roadType, long currentTick)
-        {
-            if (!_dynamicStyleEnabled) return;
-            if (!_autoDriveActive) return;
-
-            // Don't change style too frequently (5 second cooldown)
-            const long STYLE_CHANGE_COOLDOWN = 50_000_000; // 5 seconds
-            if (currentTick - _lastDynamicStyleChangeTick < STYLE_CHANGE_COOLDOWN)
-                return;
-
-            // Only update if road type changed
-            if (roadType == _lastDynamicStyleRoadType) return;
-
-            // Get suggested style for this road type
-            int suggestedStyle = Constants.GetSuggestedDrivingStyle(roadType);
-
-            // Only change if different from current
-            if (suggestedStyle != _currentDrivingStyleMode)
-            {
-                _currentDrivingStyleMode = suggestedStyle;
-                _lastDynamicStyleRoadType = roadType;
-                _lastDynamicStyleChangeTick = currentTick;
-
-                // Apply new style without re-issuing task
-                ApplyDrivingStyle();
-
-                string styleName = Constants.GetDrivingStyleName(_currentDrivingStyleMode);
-                string roadName = Constants.GetRoadTypeName(roadType);
-                Logger.Debug($"Dynamic style: {roadName} -> {styleName}");
-
-                // Optional: Announce style change (low priority)
-                TryAnnounce($"Adjusting to {styleName} driving for {roadName}",
-                    Constants.ANNOUNCE_PRIORITY_LOW, currentTick);
-            }
-            else
-            {
-                _lastDynamicStyleRoadType = roadType;
-            }
-        }
-
-        /// <summary>
-        /// Apply current driving style to active task (without re-issuing)
-        /// </summary>
-        private void ApplyDrivingStyle()
+        private void ReissueTaskWithNewStyle()
         {
             try
             {
                 Ped player = Game.Player.Character;
+                Vehicle vehicle = player?.CurrentVehicle;
+
+                if (player == null || vehicle == null || !player.IsInVehicle())
+                    return;
+
                 int styleValue = Constants.GetDrivingStyleValue(_currentDrivingStyleMode);
                 float ability = Constants.GetDrivingStyleAbility(_currentDrivingStyleMode);
                 float aggressiveness = Constants.GetDrivingStyleAggressiveness(_currentDrivingStyleMode);
+                float speedMultiplier = Constants.GetDrivingStyleSpeedMultiplier(_currentDrivingStyleMode);
 
-                // Change driving style WITHOUT re-issuing task (smooth!)
-                Function.Call((Hash)Constants.NATIVE_SET_DRIVE_TASK_DRIVING_STYLE, player.Handle, styleValue);
-                Function.Call((Hash)Constants.NATIVE_SET_DRIVER_ABILITY, player.Handle, ability);
-                Function.Call((Hash)Constants.NATIVE_SET_DRIVER_AGGRESSIVENESS, player.Handle, aggressiveness);
+                // Apply speed multiplier - THIS is the primary differentiator between styles
+                float adjustedSpeed = _targetSpeed * speedMultiplier;
+
+                if (Logger.IsDebugEnabled) Logger.Debug($"ReissueTaskWithNewStyle: style={styleValue}, speedMult={speedMultiplier}, adjustedSpeed={adjustedSpeed}, wanderMode={_wanderMode}");
+
+                // Clear current task
+                Function.Call(_clearPedTasksHash, player.Handle);
+
+                if (_wanderMode)
+                {
+                    // Re-issue wander task with new style
+                    Function.Call(
+                        _taskVehicleDriveWanderHash,
+                        player.Handle,
+                        vehicle.Handle,
+                        adjustedSpeed,
+                        styleValue);
+                }
+                else if (_safeArrivalPosition != Vector3.Zero)
+                {
+                    // Re-issue waypoint task with new style
+                    float distance = Vector3.Distance(player.Position, _safeArrivalPosition);
+                    bool useLongRange = distance > Constants.AUTODRIVE_LONGRANGE_THRESHOLD;
+
+                    if (useLongRange)
+                    {
+                        Function.Call(
+                            _taskDriveToCoordLongrangeHash,
+                            player.Handle,
+                            vehicle.Handle,
+                            _safeArrivalPosition.X,
+                            _safeArrivalPosition.Y,
+                            _safeArrivalPosition.Z,
+                            adjustedSpeed,
+                            styleValue,
+                            Constants.AUTODRIVE_WAYPOINT_ARRIVAL_RADIUS);
+                    }
+                    else
+                    {
+                        Function.Call(
+                            _taskDriveToCoordHash,
+                            player.Handle,
+                            vehicle.Handle,
+                            _safeArrivalPosition.X,
+                            _safeArrivalPosition.Y,
+                            _safeArrivalPosition.Z,
+                            adjustedSpeed,
+                            0,
+                            vehicle.Model.Hash,
+                            styleValue,
+                            Constants.AUTODRIVE_WAYPOINT_ARRIVAL_RADIUS,
+                            0f);
+                    }
+                }
+
+                // CRITICAL: Set cruise speed AFTER issuing task (reference: AutoDriveScript2.cs)
+                Function.Call(_setCruiseSpeedHash, player.Handle, adjustedSpeed);
+
+                // Apply ability and aggressiveness
+                Function.Call(_setDriverAbilityHash, player.Handle, ability);
+                Function.Call(_setDriverAggressivenessHash, player.Handle, aggressiveness);
+
+                _taskIssued = true;
+                Logger.Info($"ReissueTaskWithNewStyle: style={styleValue} ({Constants.GetDrivingStyleName(_currentDrivingStyleMode)}), speedMult={speedMultiplier:F1}, adjustedSpeed={adjustedSpeed:F1}");
             }
             catch (Exception ex)
             {
-                Logger.Exception(ex, "ApplyDrivingStyle");
+                Logger.Exception(ex, "ReissueTaskWithNewStyle");
             }
         }
 
@@ -4647,6 +4681,132 @@ internal struct OvertakeTrackingInfo
         {
             string styleName = Constants.GetDrivingStyleName(_currentDrivingStyleMode);
             _audio.Speak($"Current driving style: {styleName}");
+        }
+
+        /// <summary>
+        /// Issue a drive-to-coordinate task, using LONGRANGE native for distant waypoints.
+        /// VAutodrive research shows LONGRANGE has better pathfinding for long distances.
+        /// </summary>
+        /// <param name="player">The ped (player) to drive</param>
+        /// <param name="vehicle">The vehicle to drive</param>
+        /// <param name="destination">Target coordinates</param>
+        /// <param name="speed">Driving speed in m/s</param>
+        /// <param name="arrivalRadius">Distance at which to consider arrived</param>
+        /// <param name="styleOverride">Optional style override (-1 to use current style)</param>
+        private void IssueDriveToCoordTask(Ped player, Vehicle vehicle, Vector3 destination, float speed, float arrivalRadius, int styleOverride = -1)
+        {
+            if (player == null || vehicle == null) return;
+
+            try
+            {
+                float distance = Vector3.Distance(player.Position, destination);
+                bool useLongRange = distance > Constants.AUTODRIVE_LONGRANGE_THRESHOLD;
+
+                // Use provided style or get from current mode
+                int styleValue = styleOverride >= 0 ? styleOverride : Constants.GetDrivingStyleValue(_currentDrivingStyleMode);
+
+                // For longrange, use optimized style for better pathfinding
+                if (useLongRange && styleOverride < 0)
+                {
+                    styleValue = Constants.DRIVING_STYLE_LONGRANGE;
+                }
+
+                float ability = Constants.GetDrivingStyleAbility(_currentDrivingStyleMode);
+                float aggressiveness = Constants.GetDrivingStyleAggressiveness(_currentDrivingStyleMode);
+
+                if (Logger.IsDebugEnabled) Logger.Debug($"IssueDriveToCoordTask: dist={distance:F0}m, longRange={useLongRange}, style={styleValue}");
+
+                if (useLongRange)
+                {
+                    // TASK_VEHICLE_DRIVE_TO_COORD_LONGRANGE: 8 params
+                    // Better pathfinding for long distances (VAutodrive research)
+                    Function.Call(
+                        _taskDriveToCoordLongrangeHash,
+                        player.Handle,
+                        vehicle.Handle,
+                        destination.X,
+                        destination.Y,
+                        destination.Z,
+                        speed,
+                        styleValue,
+                        arrivalRadius);
+                }
+                else
+                {
+                    // TASK_VEHICLE_DRIVE_TO_COORD: 11 params (for shorter distances)
+                    Function.Call(
+                        _taskDriveToCoordHash,
+                        player.Handle,
+                        vehicle.Handle,
+                        destination.X,
+                        destination.Y,
+                        destination.Z,
+                        speed,
+                        0,  // p6 - not used
+                        vehicle.Model.Hash,
+                        styleValue,
+                        arrivalRadius,
+                        0f);  // p10
+                }
+
+                // CRITICAL: Set cruise speed AFTER issuing task (reference: AutoDriveScript2.cs)
+                Function.Call(_setCruiseSpeedHash, player.Handle, speed);
+
+                // Set driver ability and aggressiveness
+                Function.Call(_setDriverAbilityHash, player.Handle, ability);
+                Function.Call(_setDriverAggressivenessHash, player.Handle, aggressiveness);
+
+                if (Logger.IsDebugEnabled) Logger.Debug($"IssueDriveToCoordTask: Cruise speed set to {speed:F1}");
+            }
+            catch (Exception ex)
+            {
+                Logger.Exception(ex, "IssueDriveToCoordTask");
+            }
+        }
+
+        /// <summary>
+        /// Issue a wander/cruise task with optimized settings for smooth driving.
+        /// Research shows: CRUISE style + ability 1.0 + aggressiveness 0.0 = smoothest AI driving.
+        /// </summary>
+        /// <param name="player">The ped (player) to drive</param>
+        /// <param name="vehicle">The vehicle to drive</param>
+        /// <param name="speed">Driving speed in m/s</param>
+        private void IssueWanderTask(Ped player, Vehicle vehicle, float speed)
+        {
+            if (player == null || vehicle == null) return;
+
+            try
+            {
+                // Use the user's selected driving style (respects CycleDrivingStyle choice)
+                int styleValue = Constants.GetDrivingStyleValue(_currentDrivingStyleMode);
+                float ability = Constants.GetDrivingStyleAbility(_currentDrivingStyleMode);
+                float aggressiveness = Constants.GetDrivingStyleAggressiveness(_currentDrivingStyleMode);
+                float speedMultiplier = Constants.GetDrivingStyleSpeedMultiplier(_currentDrivingStyleMode);
+
+                // Apply speed multiplier - THIS is the primary differentiator between styles
+                // Reference: AutoDriveScript2.cs uses 0.7f (Cautious), 1.0f (Normal), 1.2f (Aggressive)
+                float adjustedSpeed = speed * speedMultiplier;
+
+                Function.Call(
+                    _taskVehicleDriveWanderHash,
+                    player.Handle,
+                    vehicle.Handle,
+                    adjustedSpeed,
+                    styleValue);
+
+                // CRITICAL: Set cruise speed AFTER issuing task (reference: AutoDriveScript2.cs line 416)
+                // This ensures the speed is applied to the active task
+                Function.Call(_setCruiseSpeedHash, player.Handle, adjustedSpeed);
+
+                Function.Call(_setDriverAbilityHash, player.Handle, ability);
+                Function.Call(_setDriverAggressivenessHash, player.Handle, aggressiveness);
+
+                Logger.Info($"IssueWanderTask: style={styleValue} ({Constants.GetDrivingStyleName(_currentDrivingStyleMode)}), speedMult={speedMultiplier:F1}, adjustedSpeed={adjustedSpeed:F1}, ability={ability:F1}, aggression={aggressiveness:F1}");
+            }
+            catch (Exception ex)
+            {
+                Logger.Exception(ex, "IssueWanderTask");
+            }
         }
 
         /// <summary>
@@ -4667,7 +4827,8 @@ internal struct OvertakeTrackingInfo
 
             // Check if we've deviated significantly from the path to target
             // Calculate how far off course we are based on heading vs target direction
-            float targetHeading = (float)(Math.Atan2(toTarget.Y, toTarget.X) * 180.0 / Math.PI);
+            // PERFORMANCE: Use pre-calculated RAD_TO_DEG constant
+            float targetHeading = (float)(Math.Atan2(toTarget.Y, toTarget.X) * Constants.RAD_TO_DEG);
             float currentHeading = vehicle.Heading;
 
             // Normalize heading difference to -180 to 180
@@ -4687,7 +4848,7 @@ internal struct OvertakeTrackingInfo
                 float speed = vehicle.Speed;
                 if (speed < Constants.STUCK_SPEED_THRESHOLD)
                 {
-                    Logger.Debug($"NeedsTaskReissue: dist={distanceToTarget:F0}m, heading={headingDiff:F0}°, speed={speed:F1}");
+                    if (Logger.IsDebugEnabled) Logger.Debug($"NeedsTaskReissue: dist={distanceToTarget:F0}m, heading={headingDiff:F0}°, speed={speed:F1}");
                     return true;
                 }
             }
@@ -4734,7 +4895,7 @@ internal struct OvertakeTrackingInfo
 
                 // Check if vehicle is in water
                 bool inWater = Function.Call<bool>(
-                    (Hash)Constants.NATIVE_IS_ENTITY_IN_WATER, vehicle.Handle);
+                    _isEntityInWaterHash, vehicle.Handle);
 
                 if (inWater)
                 {
@@ -4932,7 +5093,7 @@ internal struct OvertakeTrackingInfo
             try
             {
                 // Clear current task
-                Function.Call((Hash)Constants.NATIVE_CLEAR_PED_TASKS, player.Handle);
+                Function.Call(_clearPedTasksHash, player.Handle);
 
                 // Execute recovery based on strategy
                 switch (strategy)
@@ -4944,7 +5105,7 @@ internal struct OvertakeTrackingInfo
                             Constants.TEMP_ACTION_REVERSE_RIGHT :
                             Constants.TEMP_ACTION_REVERSE_LEFT;
                         Function.Call(
-                            (Hash)Constants.NATIVE_TASK_VEHICLE_TEMP_ACTION,
+                            _taskVehicleTempActionHash,
                             player.Handle, vehicle.Handle, reverseAction, (int)(GetRecoveryReverseDuration() / 10000));
                         break;
 
@@ -4955,7 +5116,7 @@ internal struct OvertakeTrackingInfo
                             Constants.TEMP_ACTION_TURN_LEFT :  // Opposite direction
                             Constants.TEMP_ACTION_TURN_RIGHT;
                         Function.Call(
-                            (Hash)Constants.NATIVE_TASK_VEHICLE_TEMP_ACTION,
+                            _taskVehicleTempActionHash,
                             player.Handle, vehicle.Handle, forwardAction, 2000);
                         break;
 
@@ -4966,7 +5127,7 @@ internal struct OvertakeTrackingInfo
                             Constants.TEMP_ACTION_REVERSE_LEFT :  // Start with opposite to create space
                             Constants.TEMP_ACTION_REVERSE_RIGHT;
                         Function.Call(
-                            (Hash)Constants.NATIVE_TASK_VEHICLE_TEMP_ACTION,
+                            _taskVehicleTempActionHash,
                             player.Handle, vehicle.Handle, threePointAction, 3500);  // Longer reverse for three-point
                         break;
                 }
@@ -5054,7 +5215,7 @@ internal struct OvertakeTrackingInfo
                                     Constants.TEMP_ACTION_TURN_LEFT;
 
                                 Function.Call(
-                                    (Hash)Constants.NATIVE_TASK_VEHICLE_TEMP_ACTION,
+                                    _taskVehicleTempActionHash,
                                     player.Handle, vehicle.Handle, turnAction, 2500);  // Longer turn for three-point
                             }
                             else
@@ -5068,7 +5229,7 @@ internal struct OvertakeTrackingInfo
                                     Constants.TEMP_ACTION_TURN_LEFT;
 
                                 Function.Call(
-                                    (Hash)Constants.NATIVE_TASK_VEHICLE_TEMP_ACTION,
+                                    _taskVehicleTempActionHash,
                                     player.Handle, vehicle.Handle, action, 1500);
                             }
                         }
@@ -5150,34 +5311,19 @@ internal struct OvertakeTrackingInfo
             try
             {
                 // Clear temp action
-                Function.Call((Hash)Constants.NATIVE_CLEAR_PED_TASKS, player.Handle);
-
-                // Get current driving style settings (using safe bounds-checked accessors)
-                int styleValue = Constants.GetDrivingStyleValue(_currentDrivingStyleMode);
-                float ability = Constants.GetDrivingStyleAbility(_currentDrivingStyleMode);
-                float aggressiveness = Constants.GetDrivingStyleAggressiveness(_currentDrivingStyleMode);
+                Function.Call(_clearPedTasksHash, player.Handle);
 
                 if (_wanderMode)
                 {
-                    // Resume wander
-                    Function.Call(
-                        (Hash)Constants.NATIVE_TASK_VEHICLE_DRIVE_WANDER,
-                        player.Handle, vehicle.Handle, _targetSpeed, styleValue);
+                    // Resume wander with optimized cruise-style driving
+                    IssueWanderTask(player, vehicle, _targetSpeed);
                 }
                 else
                 {
-                    // Resume waypoint navigation
-                    Function.Call(
-                        (Hash)Constants.NATIVE_TASK_VEHICLE_DRIVE_TO_COORD,
-                        player.Handle, vehicle.Handle,
-                        _lastWaypointPos.X, _lastWaypointPos.Y, _lastWaypointPos.Z,
-                        _targetSpeed, 0, vehicle.Model.Hash, styleValue,
-                        Constants.AUTODRIVE_WAYPOINT_ARRIVAL_RADIUS, 0f);
+                    // Resume waypoint navigation using helper (supports LONGRANGE)
+                    IssueDriveToCoordTask(player, vehicle, _lastWaypointPos, _targetSpeed,
+                        Constants.AUTODRIVE_WAYPOINT_ARRIVAL_RADIUS);
                 }
-
-                // Restore driver ability/aggressiveness
-                Function.Call((Hash)Constants.NATIVE_SET_DRIVER_ABILITY, player.Handle, ability);
-                Function.Call((Hash)Constants.NATIVE_SET_DRIVER_AGGRESSIVENESS, player.Handle, aggressiveness);
 
                 _taskIssued = true;
             }

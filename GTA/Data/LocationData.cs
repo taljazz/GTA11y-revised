@@ -74,19 +74,44 @@ namespace GrandTheftAccessibility.Data
 
         public static readonly TeleportLocation[] AirportsAndRunways = new TeleportLocation[]
         {
-            // LSIA - Los Santos International Airport
+            // LSIA - Los Santos International Airport - Runways
             new TeleportLocation("LSIA Runway 03 South End", -1285.0f, -3359.0f, 13.9f, "Airports and Runways"),
             new TeleportLocation("LSIA Runway 21 North End", -1497.0f, -2598.0f, 13.9f, "Airports and Runways"),
             new TeleportLocation("LSIA Runway 12 West End", -1850.0f, -3103.0f, 13.9f, "Airports and Runways"),
             new TeleportLocation("LSIA Runway 30 East End", -942.0f, -2950.0f, 13.9f, "Airports and Runways"),
             new TeleportLocation("LSIA Main Terminal", -1034.6f, -2733.6f, 13.8f, "Airports and Runways"),
             new TeleportLocation("LSIA Center Field", -1336.0f, -3044.0f, 13.9f, "Airports and Runways"),
-            // Other airports
+            // LSIA - Aircraft Parking (for jets/fixed-wing)
+            new TeleportLocation("LSIA Terminal Gate A1", -1037.0f, -2962.0f, 14.0f, "Airports and Runways"),
+            new TeleportLocation("LSIA Terminal Gate A2", -1067.0f, -2962.0f, 14.0f, "Airports and Runways"),
+            new TeleportLocation("LSIA Terminal Gate A3", -1097.0f, -2962.0f, 14.0f, "Airports and Runways"),
+            new TeleportLocation("LSIA Terminal Gate B1", -1200.0f, -2890.0f, 14.0f, "Airports and Runways"),
+            new TeleportLocation("LSIA Terminal Gate B2", -1200.0f, -2920.0f, 14.0f, "Airports and Runways"),
+            new TeleportLocation("LSIA Cargo Ramp 1", -1550.0f, -2730.0f, 14.0f, "Airports and Runways"),
+            new TeleportLocation("LSIA Cargo Ramp 2", -1550.0f, -2780.0f, 14.0f, "Airports and Runways"),
+            new TeleportLocation("LSIA FBO Hangar", -1250.0f, -3050.0f, 14.0f, "Airports and Runways"),
+            new TeleportLocation("LSIA Private Hangar 1", -1150.0f, -3100.0f, 14.0f, "Airports and Runways"),
+            new TeleportLocation("LSIA Private Hangar 2", -1080.0f, -3100.0f, 14.0f, "Airports and Runways"),
+            new TeleportLocation("LSIA Devin Weston Hangar", -1355.0f, -3059.0f, 14.0f, "Airports and Runways"),
+            // Sandy Shores Airfield
             new TeleportLocation("Sandy Shores Airfield Runway", 1747.0f, 3273.7f, 41.1f, "Airports and Runways"),
+            new TeleportLocation("Sandy Shores Main Hangar", 1770.0f, 3239.0f, 42.0f, "Airports and Runways"),
+            new TeleportLocation("Sandy Shores Ramp North", 1700.0f, 3300.0f, 41.0f, "Airports and Runways"),
+            new TeleportLocation("Sandy Shores Ramp South", 1450.0f, 3150.0f, 40.0f, "Airports and Runways"),
+            // McKenzie Field (Grapeseed)
             new TeleportLocation("McKenzie Airfield Runway", 2121.7f, 4796.3f, 41.1f, "Airports and Runways"),
+            new TeleportLocation("McKenzie Hangar", 2100.0f, 4720.0f, 41.0f, "Airports and Runways"),
+            new TeleportLocation("McKenzie Grass Ramp", 2050.0f, 4780.0f, 41.0f, "Airports and Runways"),
+            new TeleportLocation("Grapeseed Airstrip", 2132.0f, 4805.0f, 41.2f, "Airports and Runways"),
+            // Fort Zancudo Military Airbase (best for jets like Lazer)
             new TeleportLocation("Fort Zancudo Runway South", -2285.0f, 3162.0f, 32.8f, "Airports and Runways"),
             new TeleportLocation("Fort Zancudo Runway North", -1813.0f, 3086.0f, 32.8f, "Airports and Runways"),
-            new TeleportLocation("Grapeseed Airstrip", 2132.0f, 4805.0f, 41.2f, "Airports and Runways")
+            new TeleportLocation("Fort Zancudo Hangar 1", -2100.0f, 3150.0f, 33.0f, "Airports and Runways"),
+            new TeleportLocation("Fort Zancudo Hangar 2", -2100.0f, 3200.0f, 33.0f, "Airports and Runways"),
+            new TeleportLocation("Fort Zancudo Flight Line", -2200.0f, 3150.0f, 33.0f, "Airports and Runways"),
+            new TeleportLocation("Fort Zancudo Jet Spawn Area", -2454.0f, 3015.0f, 32.8f, "Airports and Runways"),
+            new TeleportLocation("Fort Zancudo Helipad Main", -2148.0f, 3176.0f, 33.0f, "Airports and Runways"),
+            new TeleportLocation("Fort Zancudo Control Tower Pad", -2358.0f, 3249.0f, 101.5f, "Airports and Runways")
         };
 
         #endregion

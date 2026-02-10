@@ -61,26 +61,32 @@ namespace GrandTheftAccessibility
             { "swimFaster", false },
             { "explosiveAmmo", false },
             { "fireAmmo", false },
-            { "explosiveMelee", false }
+            { "explosiveMelee", false },
+
+            // === GTA ONLINE FEATURES ===
+            { "enableMPMaps", false }  // Enable GTA Online maps/interiors in single player
         };
 
         // Int setting definitions with default values and max values
         // Format: { "settingId", defaultValue } - max values defined separately
         private static readonly Dictionary<string, int> DefaultIntSettings = new Dictionary<string, int>
         {
-            { "altitudeMode", 1 }  // 0=Off, 1=Normal (tone), 2=Aircraft (spoken)
+            { "altitudeMode", 1 },  // 0=Off, 1=Normal (tone), 2=Aircraft (spoken)
+            { "turretCrewAnnouncements", 3 }  // 0=Off, 1=Firing only, 2=Enemy approaching only, 3=Both
         };
 
         // Max values for int settings (for cycling)
         private static readonly Dictionary<string, int> IntSettingMaxValues = new Dictionary<string, int>
         {
-            { "altitudeMode", 2 }  // Cycles 0 -> 1 -> 2 -> 0
+            { "altitudeMode", 2 },  // Cycles 0 -> 1 -> 2 -> 0
+            { "turretCrewAnnouncements", 3 }  // Cycles 0 -> 1 -> 2 -> 3 -> 0
         };
 
         // Display names for int setting values
         private static readonly Dictionary<string, string[]> IntSettingValueNames = new Dictionary<string, string[]>
         {
-            { "altitudeMode", new[] { "Off", "Normal (Tone)", "Aircraft (Spoken)" } }
+            { "altitudeMode", new[] { "Off", "Normal (Tone)", "Aircraft (Spoken)" } },
+            { "turretCrewAnnouncements", new[] { "Off", "Firing Only", "Enemy Approaching Only", "Both" } }
         };
 
         // Display names for settings
@@ -104,6 +110,7 @@ namespace GrandTheftAccessibility
 
             // === AUDIO INDICATORS ===
             { "altitudeMode", "Altitude Indicator Mode" },
+            { "turretCrewAnnouncements", "Turret Crew Announcements" },
             { "targetPitchIndicator", "Audible Targeting Pitch Indicator" },
             { "aircraftAttitude", "Aircraft Attitude Indicator (Pitch/Roll)" },
 
@@ -124,7 +131,10 @@ namespace GrandTheftAccessibility
             { "swimFaster", "Swim Faster" },
             { "explosiveAmmo", "Explosive Ammo" },
             { "fireAmmo", "Fire Ammo" },
-            { "explosiveMelee", "Explosive Melee Attacks" }
+            { "explosiveMelee", "Explosive Melee Attacks" },
+
+            // === GTA ONLINE FEATURES ===
+            { "enableMPMaps", "Enable GTA Online Maps and Interiors" }
         };
 
         public SettingsManager()
@@ -182,10 +192,11 @@ namespace GrandTheftAccessibility
 
             try
             {
-                if (_settings.ContainsKey(id))
+                if (_settings.TryGetValue(id, out bool current))
                 {
-                    _settings[id] = !_settings[id];
-                    return _settings[id];
+                    bool newValue = !current;
+                    _settings[id] = newValue;
+                    return newValue;
                 }
             }
             catch (Exception ex)

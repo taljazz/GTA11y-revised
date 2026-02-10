@@ -14,6 +14,11 @@ namespace GrandTheftAccessibility
         private readonly AudioManager _audio;
         private readonly AnnouncementQueue _announcementQueue;
 
+        // PERFORMANCE: Pre-cached Hash values
+        private static readonly Hash _sirenAudioOnHash = (Hash)Constants.NATIVE_IS_VEHICLE_SIREN_AUDIO_ON;
+        private static readonly Hash _clearPedTasksHash = (Hash)Constants.NATIVE_CLEAR_PED_TASKS;
+        private static readonly Hash _setHandbrakeHash = (Hash)Constants.NATIVE_SET_VEHICLE_HANDBRAKE;
+
         // Emergency vehicle state
         private bool _yieldingToEmergency;
         private long _emergencyYieldStartTick;
@@ -118,8 +123,9 @@ namespace GrandTheftAccessibility
                 Vehicle[] nearbyVehicles = World.GetNearbyVehicles(position, Constants.EMERGENCY_DETECTION_RADIUS);
 
                 // Get our forward direction for position analysis
+                // PERFORMANCE: Use pre-calculated DEG_TO_RAD constant
                 float ourHeading = vehicle.Heading;
-                float ourRadians = (90f - ourHeading) * (float)Math.PI / 180f;
+                float ourRadians = (90f - ourHeading) * Constants.DEG_TO_RAD;
                 Vector3 ourForward = new Vector3((float)Math.Cos(ourRadians), (float)Math.Sin(ourRadians), 0f);
 
                 foreach (Vehicle v in nearbyVehicles)
@@ -128,7 +134,7 @@ namespace GrandTheftAccessibility
                     if (v.Handle == vehicle.Handle || !v.Exists()) continue;
 
                     // Check if siren is on
-                    bool sirenOn = Function.Call<bool>((Hash)Constants.NATIVE_IS_VEHICLE_SIREN_AUDIO_ON, v.Handle);
+                    bool sirenOn = Function.Call<bool>(_sirenAudioOnHash, v.Handle);
                     if (!sirenOn) continue;
 
                     // Found emergency vehicle with siren - determine direction
@@ -199,13 +205,13 @@ namespace GrandTheftAccessibility
                 foreach (Vehicle v in nearbyVehicles)
                 {
                     if (!v.Exists()) continue;
-                    bool sirenOn = Function.Call<bool>((Hash)Constants.NATIVE_IS_VEHICLE_SIREN_AUDIO_ON, v.Handle);
+                    bool sirenOn = Function.Call<bool>(_sirenAudioOnHash, v.Handle);
                     if (sirenOn) return true;
                 }
             }
             catch (Exception ex)
             {
-                Logger.Debug($"IsEmergencyVehicleNearby check failed: {ex.Message}");
+                if (Logger.IsDebugEnabled) Logger.Debug($"IsEmergencyVehicleNearby check failed: {ex.Message}");
             }
             return false;
         }
@@ -220,10 +226,10 @@ namespace GrandTheftAccessibility
                 Ped player = Game.Player.Character;
 
                 // Clear current task and slow down
-                Function.Call((Hash)Constants.NATIVE_CLEAR_PED_TASKS, player.Handle);
+                Function.Call(_clearPedTasksHash, player.Handle);
 
                 // Apply brakes
-                Function.Call((Hash)Constants.NATIVE_SET_VEHICLE_HANDBRAKE, vehicle.Handle, true);
+                Function.Call(_setHandbrakeHash, vehicle.Handle, true);
 
                 Logger.Info("Yielding to emergency vehicle");
             }
@@ -240,7 +246,7 @@ namespace GrandTheftAccessibility
         {
             try
             {
-                Function.Call((Hash)Constants.NATIVE_SET_VEHICLE_HANDBRAKE, vehicle.Handle, false);
+                Function.Call(_setHandbrakeHash, vehicle.Handle, false);
             }
             catch (Exception ex)
             {

@@ -25,11 +25,11 @@ namespace GrandTheftAccessibility
         public EntityScanner()
         {
             _resultBuilder = new StringBuilder(512);
-            _resultPool = new List<Result>(50);
-            _scanResults = new List<Result>(50);  // Reusable list for scan results
+            _resultPool = new List<Result>(150);
+            _scanResults = new List<Result>(150);  // Reusable list for scan results
 
-            // Pre-populate result pool
-            for (int i = 0; i < 50; i++)
+            // Pre-populate result pool (150 to handle dense city areas without overflow allocations)
+            for (int i = 0; i < 150; i++)
             {
                 _resultPool.Add(new Result("", 0, 0, ""));
             }
@@ -97,11 +97,12 @@ namespace GrandTheftAccessibility
                         if (onScreenOnly && !vehicle.IsOnScreen)
                             continue;
 
-                        string status = vehicle.IsStopped ? "a stationary" : "a moving";
                         string localizedName = "vehicle";
                         try { localizedName = vehicle.LocalizedName ?? "vehicle"; }
                         catch { /* LocalizedName can fail for some vehicle types, fallback is acceptable */ }
-                        string name = $"{status} {localizedName}";
+                        string name = vehicle.IsStopped
+                            ? string.Concat("a stationary ", localizedName)
+                            : string.Concat("a moving ", localizedName);
 
                         double xyDistance = SpatialCalculator.GetHorizontalDistance(playerPos, vehicle.Position);
                         double zDistance = SpatialCalculator.GetVerticalDistance(playerPos, vehicle.Position);
@@ -310,20 +311,30 @@ namespace GrandTheftAccessibility
 
         /// <summary>
         /// Format results list into spoken string using StringBuilder
+        /// OPTIMIZED: Pre-estimate capacity, fewer Append calls
         /// </summary>
         private string FormatResults(List<Result> results, string header)
         {
             try
             {
                 _resultBuilder.Clear();
-                _resultBuilder.Append(header ?? "Results: ");
 
                 // Handle null or empty results
                 if (results == null || results.Count == 0)
                 {
-                    _resultBuilder.Append("None found nearby.");
+                    _resultBuilder.Append(header ?? "Results: ").Append("None found nearby.");
                     return _resultBuilder.ToString();
                 }
+
+                // OPTIMIZED: Estimate capacity to avoid StringBuilder resizing
+                // Average result ~60 chars, header ~20 chars
+                int estimatedCapacity = (header?.Length ?? 10) + (results.Count * 65);
+                if (_resultBuilder.Capacity < estimatedCapacity)
+                {
+                    _resultBuilder.EnsureCapacity(estimatedCapacity);
+                }
+
+                _resultBuilder.Append(header ?? "Results: ");
 
                 // Sort by total distance
                 try
@@ -335,23 +346,21 @@ namespace GrandTheftAccessibility
                     // If sort fails, continue with unsorted results
                 }
 
-                foreach (Result result in results)
+                // OPTIMIZED: Use fewer individual Append calls by batching
+                for (int i = 0; i < results.Count; i++)
                 {
+                    Result result = results[i];
                     if (result == null) continue;
 
-                    _resultBuilder.Append(result.xyDistance)
-                        .Append(" meters ")
-                        .Append(result.direction ?? "unknown")
-                        .Append(", ");
+                    // Batch the main format together
+                    _resultBuilder.Append(result.xyDistance).Append(" meters ")
+                        .Append(result.direction ?? "unknown").Append(", ");
 
                     if (result.zDistance != 0)
                     {
                         double absZDistance = Math.Abs(result.zDistance);
-                        string verticalDir = result.zDistance > 0 ? "above" : "below";
-                        _resultBuilder.Append(absZDistance)
-                            .Append(" meters ")
-                            .Append(verticalDir)
-                            .Append(", ");
+                        _resultBuilder.Append(absZDistance).Append(" meters ")
+                            .Append(result.zDistance > 0 ? "above" : "below").Append(", ");
                     }
 
                     _resultBuilder.Append(result.name ?? "unknown").Append(". ");

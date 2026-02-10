@@ -46,6 +46,12 @@ namespace GrandTheftAccessibility
         public static LogLevel MinLevel { get; set; } = LogLevel.Info;
 
         /// <summary>
+        /// Check before building expensive debug strings to avoid allocation when debug is disabled.
+        /// Usage: if (Logger.IsDebugEnabled) Logger.Debug($"expensive {thing}");
+        /// </summary>
+        public static bool IsDebugEnabled => _enabled && _initialized && MinLevel <= LogLevel.Debug;
+
+        /// <summary>
         /// Enable or disable logging entirely
         /// </summary>
         public static bool Enabled
@@ -193,7 +199,15 @@ namespace GrandTheftAccessibility
             try
             {
                 string timestamp = DateTime.Now.ToString("HH:mm:ss.fff");
-                string levelStr = level.ToString().ToUpper().PadRight(7);
+                string levelStr;
+                switch (level)
+                {
+                    case LogLevel.Debug:   levelStr = "DEBUG  "; break;
+                    case LogLevel.Info:    levelStr = "INFO   "; break;
+                    case LogLevel.Warning: levelStr = "WARNING"; break;
+                    case LogLevel.Error:   levelStr = "ERROR  "; break;
+                    default:               levelStr = "UNKNOWN"; break;
+                }
                 string logLine = $"[{timestamp}] [{levelStr}] {message}";
 
                 lock (_lock)
@@ -222,10 +236,12 @@ namespace GrandTheftAccessibility
         }
 
         /// <summary>
-        /// Log a debug message (verbose, for development)
+        /// Log a debug message (verbose, for development).
+        /// Note: callers should guard with Logger.IsDebugEnabled before building expensive strings.
         /// </summary>
         public static void Debug(string message)
         {
+            if (MinLevel > LogLevel.Debug) return;  // Fast exit before method call overhead
             Write(LogLevel.Debug, message);
         }
 

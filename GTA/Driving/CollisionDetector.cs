@@ -31,6 +31,10 @@ namespace GrandTheftAccessibility
         private int _lastFollowingState;
         private long _lastFollowingCheckTick;
 
+        // PERFORMANCE: Pre-allocated vectors to avoid per-frame allocations
+        private Vector3 _forwardVector;
+        private Vector3 _theirForwardVector;
+
         /// <summary>
         /// Distance to the closest vehicle ahead
         /// </summary>
@@ -104,9 +108,12 @@ namespace GrandTheftAccessibility
                 }
 
                 // Get forward direction
+                // PERFORMANCE: Reuse pre-allocated vector, use pre-calculated DEG_TO_RAD constant
                 float heading = vehicle.Heading;
-                float radians = (90f - heading) * (float)Math.PI / 180f;
-                Vector3 forward = new Vector3((float)Math.Cos(radians), (float)Math.Sin(radians), 0f);
+                float radians = (90f - heading) * Constants.DEG_TO_RAD;
+                _forwardVector.X = (float)Math.Cos(radians);
+                _forwardVector.Y = (float)Math.Sin(radians);
+                _forwardVector.Z = 0f;
 
                 // Scan for vehicles ahead - use larger radius at higher speeds
                 float scanDistance = Math.Max(Constants.COLLISION_SCAN_DISTANCE, ourSpeed * 5f);
@@ -125,8 +132,9 @@ namespace GrandTheftAccessibility
                     // Check if in front (within scan angle)
                     if (distance > 0.1f)  // Avoid division by zero
                     {
-                        float dot = Vector3.Dot(Vector3.Normalize(toVehicle), forward);
-                        float angle = (float)Math.Acos(Math.Max(-1f, Math.Min(1f, dot))) * 180f / (float)Math.PI;
+                        float dot = Vector3.Dot(Vector3.Normalize(toVehicle), _forwardVector);
+                        // PERFORMANCE: Use pre-calculated RAD_TO_DEG constant
+                        float angle = (float)Math.Acos(Math.Max(-1f, Math.Min(1f, dot))) * Constants.RAD_TO_DEG;
 
                         if (angle <= Constants.COLLISION_SCAN_ANGLE && distance < closestDistance)
                         {
@@ -135,11 +143,15 @@ namespace GrandTheftAccessibility
                             // Calculate closing speed (our speed - their forward speed component)
                             float theirSpeed = v.Speed;
                             float theirHeading = v.Heading;
-                            float theirRadians = (90f - theirHeading) * (float)Math.PI / 180f;
-                            Vector3 theirForward = new Vector3((float)Math.Cos(theirRadians), (float)Math.Sin(theirRadians), 0f);
+                            // PERFORMANCE: Use pre-calculated DEG_TO_RAD constant
+                            float theirRadians = (90f - theirHeading) * Constants.DEG_TO_RAD;
+                            // PERFORMANCE: Reuse pre-allocated vector instead of allocating new one
+                            _theirForwardVector.X = (float)Math.Cos(theirRadians);
+                            _theirForwardVector.Y = (float)Math.Sin(theirRadians);
+                            _theirForwardVector.Z = 0f;
 
                             // How much of their velocity is in our direction?
-                            float theirSpeedInOurDirection = theirSpeed * Vector3.Dot(theirForward, forward);
+                            float theirSpeedInOurDirection = theirSpeed * Vector3.Dot(_theirForwardVector, _forwardVector);
 
                             // Closing speed = our speed - their speed in our direction
                             // Positive = we're catching up, negative = they're pulling away

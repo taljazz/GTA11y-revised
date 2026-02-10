@@ -97,8 +97,7 @@
     <Compile Include="Core\HashManager.cs" />
     <Compile Include="Core\EntityScanner.cs" />
     <Compile Include="Core\VehicleSaveManager.cs" />
-    <!-- Aircraft -->
-    <Compile Include="Aircraft\AutoFlyManager.cs" />
+    <Compile Include="Core\TurretCrewManager.cs" />
     <!-- Driving -->
     <Compile Include="Driving\AutoDriveManager.cs" />
     <Compile Include="Driving\WeatherManager.cs" />
@@ -126,6 +125,7 @@
     <!-- Data -->
     <Compile Include="Data\LocationData.cs" />
     <Compile Include="Data\LocationDataLoader.cs" />
+    <Compile Include="Data\AirportData.cs" />
     <!-- Menus -->
     <Compile Include="Menus\IMenuState.cs" />
     <Compile Include="Menus\MenuManager.cs" />
@@ -140,7 +140,6 @@
     <Compile Include="Menus\FunctionsMenu.cs" />
     <Compile Include="Menus\SettingsMenu.cs" />
     <Compile Include="Menus\AutoDriveMenu.cs" />
-    <Compile Include="Menus\AutoFlyMenu.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />

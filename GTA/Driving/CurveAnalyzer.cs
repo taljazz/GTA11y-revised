@@ -11,6 +11,9 @@ namespace GrandTheftAccessibility
     /// </summary>
     public class CurveAnalyzer
     {
+        // PERFORMANCE: Pre-cached Hash value to avoid repeated casting
+        private static readonly Hash _getClosestNodeWithHeadingHash = (Hash)Constants.NATIVE_GET_CLOSEST_VEHICLE_NODE_WITH_HEADING;
+
         private readonly WeatherManager _weatherManager;
 
         // Pre-allocated OutputArguments to avoid per-call allocations
@@ -89,7 +92,8 @@ namespace GrandTheftAccessibility
 
             // Estimate curve radius using geometry
             // For a given turn angle and distance, estimate the curve radius
-            float curveRadius = distance / (float)Math.Tan(absAngle * Math.PI / 180f / 2f);
+            // PERFORMANCE: Use pre-calculated DEG_TO_RAD constant
+            float curveRadius = distance / (float)Math.Tan(absAngle * Constants.DEG_TO_RAD * 0.5f);
 
             // Calculate safe speed using physics: v = sqrt(mu * g * r)
             // Using coefficient of friction estimates for different road conditions
@@ -149,18 +153,22 @@ namespace GrandTheftAccessibility
                     Math.Max(Constants.ROAD_LOOKAHEAD_MIN, speed * Constants.ROAD_LOOKAHEAD_SPEED_FACTOR));
 
                 // Look ahead at multiple distances and check for curves
+                // PERFORMANCE: Calculate radians once outside the loop, use pre-calculated DEG_TO_RAD
+                float radians = (90f - vehicleHeading) * Constants.DEG_TO_RAD;
+                float cosRad = (float)Math.Cos(radians);
+                float sinRad = (float)Math.Sin(radians);
+
                 for (float dist = Constants.ROAD_SAMPLE_INTERVAL; dist <= lookaheadDistance; dist += Constants.ROAD_SAMPLE_INTERVAL)
                 {
-                    // Calculate look-ahead position
-                    float radians = (90f - vehicleHeading) * (float)Math.PI / 180f;
+                    // Calculate look-ahead position using pre-calculated cos/sin
                     Vector3 lookAheadPos = position + new Vector3(
-                        (float)Math.Cos(radians) * dist,
-                        (float)Math.Sin(radians) * dist,
+                        cosRad * dist,
+                        sinRad * dist,
                         0f);
 
                     // Get road node at look-ahead position
                     bool found = Function.Call<bool>(
-                        (Hash)Constants.NATIVE_GET_CLOSEST_VEHICLE_NODE_WITH_HEADING,
+                        _getClosestNodeWithHeadingHash,
                         lookAheadPos.X, lookAheadPos.Y, lookAheadPos.Z,
                         _nodePos, _nodeHeading, 1, 3f, 0f);
 
@@ -247,7 +255,7 @@ namespace GrandTheftAccessibility
             _curveSlowdownActive = true;
             _curveSlowdownEndTick = currentTick + Constants.CURVE_SLOWDOWN_DURATION;
 
-            Logger.Debug($"Curve slowdown: {_originalSpeed:F1} -> {_curveSlowdownSpeed:F1} m/s");
+            if (Logger.IsDebugEnabled) Logger.Debug($"Curve slowdown: {_originalSpeed:F1} -> {_curveSlowdownSpeed:F1} m/s");
 
             return _curveSlowdownSpeed;
         }

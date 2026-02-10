@@ -1,5 +1,4 @@
 using GTA;
-using GTA.Math;
 using GTA.Native;
 using GrandTheftAccessibility.Data;
 
@@ -7,12 +6,15 @@ namespace GrandTheftAccessibility.Menus
 {
     /// <summary>
     /// Menu for setting GPS waypoints to predefined driving destinations.
-    /// Uses LocationDataLoader to load from JSON or fallback to hardcoded defaults
+    /// Uses LocationDataLoader to load from JSON or fallback to hardcoded defaults.
     /// </summary>
     public class WaypointMenu : IMenuState
     {
         private int _currentIndex;
         private WaypointDestination[] _destinations;
+
+        // PERFORMANCE: Pre-cached Hash for native calls
+        private static readonly Hash _setNewWaypointHash = Hash.SET_NEW_WAYPOINT;
 
         public WaypointMenu()
         {
@@ -25,6 +27,7 @@ namespace GrandTheftAccessibility.Menus
         public void NavigatePrevious(bool fastScroll = false)
         {
             int step = fastScroll ? 10 : 1;
+
             _currentIndex -= step;
             if (_currentIndex < 0)
             {
@@ -38,6 +41,7 @@ namespace GrandTheftAccessibility.Menus
         public void NavigateNext(bool fastScroll = false)
         {
             int step = fastScroll ? 10 : 1;
+
             _currentIndex += step;
             if (_currentIndex >= _destinations.Length)
                 _currentIndex = _currentIndex % _destinations.Length;
@@ -45,8 +49,9 @@ namespace GrandTheftAccessibility.Menus
 
         public string GetCurrentItemText()
         {
+            int displayIndex = _currentIndex + 1;
             var dest = _destinations[_currentIndex];
-            return $"{_currentIndex + 1} of {_destinations.Length}: {dest.Name}";
+            return $"{displayIndex} of {_destinations.Length}: {dest.Name}";
         }
 
         public void ExecuteSelection()
@@ -54,7 +59,7 @@ namespace GrandTheftAccessibility.Menus
             var dest = _destinations[_currentIndex];
 
             // Set GPS waypoint on the map (uses X, Y coordinates only)
-            Function.Call(Hash.SET_NEW_WAYPOINT, dest.Coords.X, dest.Coords.Y);
+            Function.Call(_setNewWaypointHash, dest.Coords.X, dest.Coords.Y);
 
             // Play confirmation sound
             GTA.Audio.PlaySoundFrontend("WAYPOINT_SET", "HUD_FRONTEND_DEFAULT_SOUNDSET");

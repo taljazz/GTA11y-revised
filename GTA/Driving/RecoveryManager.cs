@@ -35,6 +35,11 @@ namespace GrandTheftAccessibility
     /// </summary>
     public class RecoveryManager
     {
+        // PERFORMANCE: Pre-cached Hash values to avoid repeated casting
+        private static readonly Hash _isEntityInWaterHash = (Hash)Constants.NATIVE_IS_ENTITY_IN_WATER;
+        private static readonly Hash _clearPedTasksHash = (Hash)Constants.NATIVE_CLEAR_PED_TASKS;
+        private static readonly Hash _taskVehicleTempActionHash = (Hash)Constants.NATIVE_TASK_VEHICLE_TEMP_ACTION;
+
         // Stuck detection
         private Vector3 _lastStuckCheckPosition;
         private float _lastStuckCheckHeading;
@@ -132,7 +137,7 @@ namespace GrandTheftAccessibility
 
                 // Check if vehicle is in water
                 bool inWater = Function.Call<bool>(
-                    (Hash)Constants.NATIVE_IS_ENTITY_IN_WATER, vehicle.Handle);
+                    _isEntityInWaterHash, vehicle.Handle);
 
                 if (inWater)
                 {
@@ -387,7 +392,7 @@ namespace GrandTheftAccessibility
             try
             {
                 // Clear current task
-                Function.Call((Hash)Constants.NATIVE_CLEAR_PED_TASKS, player.Handle);
+                Function.Call(_clearPedTasksHash, player.Handle);
 
                 // Execute recovery based on strategy
                 switch (strategy)
@@ -399,7 +404,7 @@ namespace GrandTheftAccessibility
                             Constants.TEMP_ACTION_REVERSE_RIGHT :
                             Constants.TEMP_ACTION_REVERSE_LEFT;
                         Function.Call(
-                            (Hash)Constants.NATIVE_TASK_VEHICLE_TEMP_ACTION,
+                            _taskVehicleTempActionHash,
                             player.Handle, vehicle.Handle, reverseAction, (int)(GetRecoveryReverseDuration() / 10000));
                         break;
 
@@ -410,7 +415,7 @@ namespace GrandTheftAccessibility
                             Constants.TEMP_ACTION_TURN_LEFT :  // Opposite direction
                             Constants.TEMP_ACTION_TURN_RIGHT;
                         Function.Call(
-                            (Hash)Constants.NATIVE_TASK_VEHICLE_TEMP_ACTION,
+                            _taskVehicleTempActionHash,
                             player.Handle, vehicle.Handle, forwardAction, 2000);
                         break;
 
@@ -421,7 +426,7 @@ namespace GrandTheftAccessibility
                             Constants.TEMP_ACTION_REVERSE_LEFT :  // Start with opposite to create space
                             Constants.TEMP_ACTION_REVERSE_RIGHT;
                         Function.Call(
-                            (Hash)Constants.NATIVE_TASK_VEHICLE_TEMP_ACTION,
+                            _taskVehicleTempActionHash,
                             player.Handle, vehicle.Handle, threePointAction, 3500);  // Longer reverse for three-point
                         break;
                 }
@@ -482,7 +487,7 @@ namespace GrandTheftAccessibility
                                     Constants.TEMP_ACTION_TURN_LEFT;
 
                                 Function.Call(
-                                    (Hash)Constants.NATIVE_TASK_VEHICLE_TEMP_ACTION,
+                                    _taskVehicleTempActionHash,
                                     player.Handle, vehicle.Handle, turnAction, 2500);  // Longer turn for three-point
                             }
                             else
@@ -496,7 +501,7 @@ namespace GrandTheftAccessibility
                                     Constants.TEMP_ACTION_TURN_LEFT;
 
                                 Function.Call(
-                                    (Hash)Constants.NATIVE_TASK_VEHICLE_TEMP_ACTION,
+                                    _taskVehicleTempActionHash,
                                     player.Handle, vehicle.Handle, action, 1500);
                             }
                         }

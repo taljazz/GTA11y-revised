@@ -57,6 +57,19 @@ namespace GrandTheftAccessibility
         private bool _cachedRadioOff;
         private int _lastVehicleHandleForRadio;  // Track which vehicle we set radio for
 
+        // PERFORMANCE: Cached per-frame cheat settings (avoid dictionary lookups every frame)
+        private bool _cachedExplosiveAmmo;
+        private bool _cachedFireAmmo;
+        private bool _cachedExplosiveMelee;
+        private bool _cachedSuperJump;
+        private bool _cachedRunFaster;
+        private bool _cachedSwimFaster;
+        private long _lastCheatSettingsRefreshTick;
+
+        // GTA Online features tracking
+        private bool _cachedEnableMPMaps;
+        private bool _mpMapsCurrentlyEnabled;  // Track actual state to detect changes
+
         // Tick throttling (avoid running expensive operations every frame)
         private long _lastVehicleSpeedTick;
         private long _lastTargetingTick;
@@ -68,7 +81,6 @@ namespace GrandTheftAccessibility
         private long _lastAircraftAttitudeTick;
         private long _lastAutoDriveTick;
         private long _lastRoadFeatureTick;
-        private long _lastAutoFlyTick;
 
         public GTA11Y()
         {
@@ -230,7 +242,7 @@ namespace GrandTheftAccessibility
             }
 
             // Apply cheat settings
-            ApplyCheatSettings(player, currentVehicle);
+            ApplyCheatSettings(player, currentVehicle, currentTick);
 
             // Heading announcements (only when not in certain states)
             if (!player.IsFalling && !player.IsGettingIntoVehicle && !player.IsGettingUp &&
@@ -394,14 +406,7 @@ namespace GrandTheftAccessibility
                 try
                 {
                     _menu.UpdateAircraftNavigation(currentVehicle, playerPos, currentTick);
-
-                    // AutoFly updates (0.2s throttle)
-                    if (_menu.IsAutoFlyActive &&
-                        currentTick - _lastAutoFlyTick > Constants.TICK_INTERVAL_AUTOFLY_UPDATE)
-                    {
-                        _lastAutoFlyTick = currentTick;
-                        _menu.UpdateAutoFly(currentVehicle, playerPos, currentTick);
-                    }
+                    _menu.UpdateAircraftBeacon(currentVehicle, playerPos, currentTick);
                 }
                 catch (Exception ex)
                 {
@@ -440,6 +445,19 @@ namespace GrandTheftAccessibility
                 catch (Exception ex)
                 {
                     Logger.Exception(ex, "AutoDrive/road feature update");
+                }
+            }
+
+            // Turret crew updates (for weaponized vehicles)
+            if (_menu.IsTurretCrewActive)
+            {
+                try
+                {
+                    _menu.UpdateTurretCrew(currentTick);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Exception(ex, "Turret crew update");
                 }
             }
 
@@ -573,7 +591,7 @@ namespace GrandTheftAccessibility
         /// Apply cheat settings (god mode, infinite ammo, etc.)
         /// Optimized to minimize per-frame work
         /// </summary>
-        private void ApplyCheatSettings(Ped player, Vehicle currentVehicle)
+        private void ApplyCheatSettings(Ped player, Vehicle currentVehicle, long ticksFromOnTick)
         {
             // Guard: Ensure player is valid
             if (player == null || !player.Exists()) return;
@@ -679,26 +697,91 @@ namespace GrandTheftAccessibility
                     }
                 }
 
+                // PERFORMANCE: Refresh cached per-frame settings periodically (every 500ms)
+                // These settings rarely change, so avoid dictionary lookups every frame
+                long currentTick = ticksFromOnTick / TimeSpan.TicksPerMillisecond;
+                if (currentTick - _lastCheatSettingsRefreshTick > 500)
+                {
+                    _lastCheatSettingsRefreshTick = currentTick;
+                    _cachedExplosiveAmmo = _settings.GetSetting("explosiveAmmo");
+                    _cachedFireAmmo = _settings.GetSetting("fireAmmo");
+                    _cachedExplosiveMelee = _settings.GetSetting("explosiveMelee");
+                    _cachedSuperJump = _settings.GetSetting("superJump");
+                    _cachedRunFaster = _settings.GetSetting("runFaster");
+                    _cachedSwimFaster = _settings.GetSetting("swimFaster");
+                    _cachedEnableMPMaps = _settings.GetSetting("enableMPMaps");
+
+                    // Apply GTA Online MP Maps setting when it changes
+                    if (_cachedEnableMPMaps != _mpMapsCurrentlyEnabled)
+                    {
+                        ApplyMPMapsSettings(_cachedEnableMPMaps);
+                        _mpMapsCurrentlyEnabled = _cachedEnableMPMaps;
+                    }
+                }
+
                 // Per-frame cheat settings (must be called each frame when active)
+                // Uses cached values to avoid dictionary lookups every frame
                 if (Game.Player != null)
                 {
-                    if (_settings.GetSetting("explosiveAmmo"))
+                    if (_cachedExplosiveAmmo)
                         Game.Player.SetExplosiveAmmoThisFrame();
-                    if (_settings.GetSetting("fireAmmo"))
+                    if (_cachedFireAmmo)
                         Game.Player.SetFireAmmoThisFrame();
-                    if (_settings.GetSetting("explosiveMelee"))
+                    if (_cachedExplosiveMelee)
                         Game.Player.SetExplosiveMeleeThisFrame();
-                    if (_settings.GetSetting("superJump"))
+                    if (_cachedSuperJump)
                         Game.Player.SetSuperJumpThisFrame();
-                    if (_settings.GetSetting("runFaster"))
+                    if (_cachedRunFaster)
                         Game.Player.SetRunSpeedMultThisFrame(2f);
-                    if (_settings.GetSetting("swimFaster"))
+                    if (_cachedSwimFaster)
                         Game.Player.SetSwimSpeedMultThisFrame(2f);
                 }
             }
             catch (Exception ex)
             {
                 Logger.Exception(ex, "ApplyCheatSettings");
+            }
+        }
+
+        // PERFORMANCE: Pre-cached Hash for MP map natives
+        private static readonly Hash _onEnterMPHash = (Hash)Constants.NATIVE_ON_ENTER_MP;
+        private static readonly Hash _onEnterSPHash = (Hash)Constants.NATIVE_ON_ENTER_SP;
+        private static readonly Hash _setInstancePriorityModeHash = (Hash)Constants.NATIVE_SET_INSTANCE_PRIORITY_MODE;
+
+        /// <summary>
+        /// Apply GTA Online MP Maps settings.
+        /// Enables/disables multiplayer map content (interiors, DLC locations) in single player.
+        /// </summary>
+        private void ApplyMPMapsSettings(bool enable)
+        {
+            try
+            {
+                if (enable)
+                {
+                    // Enable MP maps - this activates GTA Online map content in single player
+                    // ON_ENTER_MP native tells the game to load multiplayer map content
+                    Function.Call(_onEnterMPHash);
+
+                    // Set instance priority mode for better MP content loading
+                    Function.Call(_setInstancePriorityModeHash, 1);
+
+                    Logger.Info("GTA Online maps and interiors enabled");
+                }
+                else
+                {
+                    // Disable MP maps - return to standard single player map
+                    // ON_ENTER_SP native returns to normal single player map state
+                    Function.Call(_onEnterSPHash);
+
+                    // Reset instance priority mode
+                    Function.Call(_setInstancePriorityModeHash, 0);
+
+                    Logger.Info("GTA Online maps and interiors disabled");
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Exception(ex, "ApplyMPMapsSettings");
             }
         }
 
@@ -996,6 +1079,14 @@ namespace GrandTheftAccessibility
 
             try
             {
+                // CRITICAL: Unsubscribe all event handlers to prevent accumulation on script reload.
+                // Without this, every F2 reload adds duplicate handlers causing exponential slowdown.
+                Tick -= OnTick;
+                KeyDown -= OnKeyDown;
+                KeyUp -= OnKeyUp;
+                Aborted -= OnAborted;
+
+                _menu?.Dispose();
                 _audio?.Dispose();
                 Logger.Info("Cleanup complete");
             }

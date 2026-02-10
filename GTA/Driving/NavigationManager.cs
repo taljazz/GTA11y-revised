@@ -11,6 +11,14 @@ namespace GrandTheftAccessibility
     /// </summary>
     public class NavigationManager
     {
+        // PERFORMANCE: Pre-cached Hash values to avoid repeated casting
+        private static readonly Hash _setCruiseSpeedHash = (Hash)Constants.NATIVE_SET_DRIVE_TASK_CRUISE_SPEED;
+        private static readonly Hash _getClosestNodeWithHeadingHash = (Hash)Constants.NATIVE_GET_CLOSEST_VEHICLE_NODE_WITH_HEADING;
+        private static readonly Hash _getClosestNodeHash = (Hash)Constants.NATIVE_GET_CLOSEST_VEHICLE_NODE;
+        private static readonly Hash _getNthClosestNodeHash = (Hash)Constants.NATIVE_GET_NTH_CLOSEST_VEHICLE_NODE;
+        private static readonly Hash _getSafeCoordForPedHash = (Hash)Constants.NATIVE_GET_SAFE_COORD_FOR_PED;
+        private static readonly Hash _getPointOnRoadSideHash = (Hash)Constants.NATIVE_GET_POINT_ON_ROAD_SIDE;
+
         private readonly AudioManager _audio;
         private readonly AnnouncementQueue _announcementQueue;
 
@@ -155,11 +163,11 @@ namespace GrandTheftAccessibility
             if (!_inFinalApproach && distance < Constants.AUTODRIVE_FINAL_APPROACH_DISTANCE)
             {
                 _inFinalApproach = true;
-                Logger.Debug($"Entering final approach at {distance:F0}m");
+                if (Logger.IsDebugEnabled) Logger.Debug($"Entering final approach at {distance:F0}m");
 
                 Ped player = Game.Player.Character;
                 Function.Call(
-                    (Hash)Constants.NATIVE_SET_DRIVE_TASK_CRUISE_SPEED,
+                    _setCruiseSpeedHash,
                     player.Handle,
                     Constants.AUTODRIVE_FINAL_APPROACH_SPEED);
             }
@@ -193,7 +201,7 @@ namespace GrandTheftAccessibility
                         _arrivalSlowdownActive = true;
                         _announcementQueue.TryAnnounce("Approaching destination",
                             Constants.ANNOUNCE_PRIORITY_MEDIUM, currentTick, "announceNavigation");
-                        Logger.Debug($"Arrival slowdown started at {distance:F0}m");
+                        if (Logger.IsDebugEnabled) Logger.Debug($"Arrival slowdown started at {distance:F0}m");
                     }
 
                     _lastArrivalSpeed = targetArrivalSpeed;
@@ -232,11 +240,11 @@ namespace GrandTheftAccessibility
             {
                 Ped player = Game.Player.Character;
                 Function.Call(
-                    (Hash)Constants.NATIVE_SET_DRIVE_TASK_CRUISE_SPEED,
+                    _setCruiseSpeedHash,
                     player.Handle,
                     speed);
 
-                Logger.Debug($"Arrival speed adjusted to {speed:F1} m/s");
+                if (Logger.IsDebugEnabled) Logger.Debug($"Arrival speed adjusted to {speed:F1} m/s");
             }
             catch (Exception ex)
             {
@@ -260,11 +268,11 @@ namespace GrandTheftAccessibility
                 {
                     Ped player = Game.Player.Character;
                     Function.Call(
-                        (Hash)Constants.NATIVE_SET_DRIVE_TASK_CRUISE_SPEED,
+                        _setCruiseSpeedHash,
                         player.Handle,
                         targetSpeed);
 
-                    Logger.Debug($"Arrival slowdown ended, restored to {targetSpeed:F1} m/s");
+                    if (Logger.IsDebugEnabled) Logger.Debug($"Arrival slowdown ended, restored to {targetSpeed:F1} m/s");
                 }
                 catch (Exception ex)
                 {
@@ -306,7 +314,7 @@ namespace GrandTheftAccessibility
             {
                 // Strategy 1: GET_CLOSEST_VEHICLE_NODE_WITH_HEADING
                 bool foundNode = Function.Call<bool>(
-                    (Hash)Constants.NATIVE_GET_CLOSEST_VEHICLE_NODE_WITH_HEADING,
+                    _getClosestNodeWithHeadingHash,
                     waypointPos.X, waypointPos.Y, waypointPos.Z,
                     _safeArrivalPosArg, _safeArrivalHeadingArg,
                     Constants.ROAD_NODE_TYPE_ALL,
@@ -319,14 +327,14 @@ namespace GrandTheftAccessibility
                     float distanceToRoad = (roadPos - waypointPos).Length();
                     if (distanceToRoad < Constants.SAFE_ARRIVAL_MAX_DISTANCE)
                     {
-                        Logger.Debug($"Found road node {distanceToRoad:F1}m from waypoint (with heading)");
+                        if (Logger.IsDebugEnabled) Logger.Debug($"Found road node {distanceToRoad:F1}m from waypoint (with heading)");
                         return roadPos;
                     }
                 }
 
                 // Strategy 2: GET_CLOSEST_VEHICLE_NODE
                 bool foundSimpleNode = Function.Call<bool>(
-                    (Hash)Constants.NATIVE_GET_CLOSEST_VEHICLE_NODE,
+                    _getClosestNodeHash,
                     waypointPos.X, waypointPos.Y, waypointPos.Z,
                     _safeArrivalPosArg,
                     Constants.ROAD_NODE_TYPE_ALL,
@@ -339,7 +347,7 @@ namespace GrandTheftAccessibility
                     float distanceToRoad = (roadPos - waypointPos).Length();
                     if (distanceToRoad < Constants.SAFE_ARRIVAL_MAX_DISTANCE)
                     {
-                        Logger.Debug($"Found road node {distanceToRoad:F1}m from waypoint (simple)");
+                        if (Logger.IsDebugEnabled) Logger.Debug($"Found road node {distanceToRoad:F1}m from waypoint (simple)");
                         return roadPos;
                     }
                 }
@@ -348,7 +356,7 @@ namespace GrandTheftAccessibility
                 for (int n = 2; n <= 3; n++)
                 {
                     bool foundNth = Function.Call<bool>(
-                        (Hash)Constants.NATIVE_GET_NTH_CLOSEST_VEHICLE_NODE,
+                        _getNthClosestNodeHash,
                         waypointPos.X, waypointPos.Y, waypointPos.Z,
                         n,
                         _safeArrivalPosArg,
@@ -362,7 +370,7 @@ namespace GrandTheftAccessibility
                         float distanceToRoad = (roadPos - waypointPos).Length();
                         if (distanceToRoad < Constants.SAFE_ARRIVAL_NTH_NODE_MAX_DISTANCE)
                         {
-                            Logger.Debug($"Found {n}th closest road node {distanceToRoad:F1}m from waypoint");
+                            if (Logger.IsDebugEnabled) Logger.Debug($"Found {n}th closest road node {distanceToRoad:F1}m from waypoint");
                             return roadPos;
                         }
                     }
@@ -370,7 +378,7 @@ namespace GrandTheftAccessibility
 
                 // Strategy 4: GET_SAFE_COORD_FOR_PED
                 bool foundSafe = Function.Call<bool>(
-                    (Hash)Constants.NATIVE_GET_SAFE_COORD_FOR_PED,
+                    _getSafeCoordForPedHash,
                     waypointPos.X, waypointPos.Y, waypointPos.Z,
                     true,
                     _safePedCoordArg,
@@ -388,7 +396,7 @@ namespace GrandTheftAccessibility
 
                 // Strategy 5: GET_POINT_ON_ROAD_SIDE
                 bool foundRoadSide = Function.Call<bool>(
-                    (Hash)Constants.NATIVE_GET_POINT_ON_ROAD_SIDE,
+                    _getPointOnRoadSideHash,
                     waypointPos.X, waypointPos.Y, waypointPos.Z,
                     0,
                     _roadSidePosArg);

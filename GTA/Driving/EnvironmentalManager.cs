@@ -10,6 +10,10 @@ namespace GrandTheftAccessibility
     /// </summary>
     public class EnvironmentalManager
     {
+        // PERFORMANCE: Pre-cached Hash values to avoid repeated casting
+        private static readonly Hash _setVehicleLightsHash = (Hash)Constants.NATIVE_SET_VEHICLE_LIGHTS;
+        private static readonly Hash _setCruiseSpeedHash = (Hash)Constants.NATIVE_SET_DRIVE_TASK_CRUISE_SPEED;
+
         private readonly AudioManager _audio;
         private readonly AnnouncementQueue _announcementQueue;
         private readonly WeatherManager _weatherManager;
@@ -139,7 +143,7 @@ namespace GrandTheftAccessibility
                 // 0 = off, 1 = low, 2 = high
                 try
                 {
-                    Function.Call((Hash)Constants.NATIVE_SET_VEHICLE_LIGHTS,
+                    Function.Call(_setVehicleLightsHash,
                         vehicle.Handle, shouldHaveHeadlights ? 2 : 0);
                 }
                 catch (Exception ex)
@@ -183,11 +187,11 @@ namespace GrandTheftAccessibility
                 if (player != null && player.IsInVehicle())
                 {
                     Function.Call(
-                        (Hash)Constants.NATIVE_SET_DRIVE_TASK_CRUISE_SPEED,
+                        _setCruiseSpeedHash,
                         player.Handle,
                         adjustedSpeed);
 
-                    Logger.Debug($"Environmental speed: road={roadTypeSpeedMultiplier:P0}, " +
+                    if (Logger.IsDebugEnabled) Logger.Debug($"Environmental speed: road={roadTypeSpeedMultiplier:P0}, " +
                         $"weather={_weatherManager?.SpeedMultiplier ?? 1.0f:P0}, " +
                         $"time={_timeSpeedMultiplier:P0}, final={adjustedSpeed:F1} m/s");
                 }

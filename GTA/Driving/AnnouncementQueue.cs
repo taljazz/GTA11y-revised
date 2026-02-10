@@ -51,7 +51,7 @@ namespace GrandTheftAccessibility
             {
                 if (!_settings.GetSetting(settingName))
                 {
-                    Logger.Debug($"Announcement suppressed by setting '{settingName}': {message}");
+                    if (Logger.IsDebugEnabled) Logger.Debug($"Announcement suppressed by setting '{settingName}': {message}");
                     return false;
                 }
             }
@@ -81,7 +81,7 @@ namespace GrandTheftAccessibility
             try
             {
                 _audio.Speak(message);
-                Logger.Debug($"Announced (P{priority}): {message}");
+                if (Logger.IsDebugEnabled) Logger.Debug($"Announced (P{priority}): {message}");
                 return true;
             }
             catch (Exception ex)
@@ -203,7 +203,7 @@ namespace GrandTheftAccessibility
             try
             {
                 _audio.Speak(message);
-                Logger.Debug($"Announced (immediate): {message}");
+                if (Logger.IsDebugEnabled) Logger.Debug($"Announced (immediate): {message}");
             }
             catch (Exception ex)
             {

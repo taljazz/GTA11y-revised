@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using GTA;
 
@@ -7,7 +8,7 @@ namespace GrandTheftAccessibility.Menus
     /// Manages the main menu hierarchy and state transitions
     /// Supports hierarchical submenus with back navigation
     /// </summary>
-    public class MenuManager
+    public class MenuManager : IDisposable
     {
         private readonly List<IMenuState> _menus;
         private readonly SettingsManager _settings;
@@ -15,8 +16,7 @@ namespace GrandTheftAccessibility.Menus
         private readonly AircraftLandingMenu _aircraftLandingMenu;
         private readonly AutoDriveMenu _autoDriveMenu;
         private readonly AutoDriveManager _autoDriveManager;
-        private readonly AutoFlyMenu _autoFlyMenu;
-        private readonly AutoFlyManager _autoFlyManager;
+        private readonly TurretCrewManager _turretCrewManager;
         private int _currentMenuIndex;
 
         public MenuManager(SettingsManager settings, AudioManager audio)
@@ -28,35 +28,32 @@ namespace GrandTheftAccessibility.Menus
             _autoDriveManager = new AutoDriveManager(audio, settings);
             _autoDriveMenu = new AutoDriveMenu(_autoDriveManager);
 
-            // Create AutoFly manager and menu
-            _autoFlyManager = new AutoFlyManager(audio, settings);
-            _autoFlyMenu = new AutoFlyMenu(_autoFlyManager);
+            // Create TurretCrewManager
+            _turretCrewManager = new TurretCrewManager(settings, audio);
 
-            // Create AircraftLandingMenu with AutoFlyManager for autofly integration
-            _aircraftLandingMenu = new AircraftLandingMenu(settings, _autoFlyManager);
+            // Create AircraftLandingMenu with audio beacon support
+            _aircraftLandingMenu = new AircraftLandingMenu(settings, audio);
 
             // Initialize menus in order:
             // 1. Location (teleport)
             // 2. GPS Waypoint (driving destinations)
             // 3. AutoDrive (autonomous driving)
-            // 4. Aircraft Landing (flying destinations with autofly)
-            // 5. AutoFly (aircraft autopilot controls)
-            // 6. Vehicle Spawn (by category)
-            // 7. Vehicle Mods (when in vehicle)
-            // 8. Vehicle Save/Load
-            // 9. Functions (chaos)
-            // 10. Settings
+            // 4. Aircraft Landing (flying destinations with voice navigation)
+            // 5. Vehicle Spawn (by category)
+            // 6. Vehicle Mods (when in vehicle)
+            // 7. Vehicle Save/Load
+            // 8. Functions (chaos)
+            // 9. Settings
             _menus = new List<IMenuState>
             {
                 new LocationMenu(),
                 new WaypointMenu(),
                 _autoDriveMenu,
                 _aircraftLandingMenu,
-                _autoFlyMenu,
                 new VehicleCategoryMenu(settings),
                 new VehicleModMenuProxy(settings),
                 new VehicleSaveLoadMenu(_saveManager, settings),
-                new FunctionsMenu(settings),
+                new FunctionsMenu(settings, _turretCrewManager),
                 new SettingsMenu(settings)
             };
 
@@ -170,6 +167,14 @@ namespace GrandTheftAccessibility.Menus
         }
 
         /// <summary>
+        /// Update aircraft landing beacon audio (called from OnTick when in aircraft)
+        /// </summary>
+        public void UpdateAircraftBeacon(Vehicle aircraft, GTA.Math.Vector3 position, long currentTick)
+        {
+            _aircraftLandingMenu.UpdateBeacon(aircraft, position, currentTick);
+        }
+
+        /// <summary>
         /// Update AutoDrive navigation (called from OnTick when in vehicle)
         /// </summary>
         public void UpdateAutoDrive(Vehicle vehicle, GTA.Math.Vector3 position, long currentTick)
@@ -225,26 +230,48 @@ namespace GrandTheftAccessibility.Menus
         public bool IsRoadSeekingActive => _autoDriveManager.IsSeeking;
 
         /// <summary>
-        /// Update AutoFly navigation (called from OnTick when in aircraft)
+        /// Update turret crew behavior (called from OnTick when in weaponized vehicle)
         /// </summary>
-        public void UpdateAutoFly(Vehicle aircraft, GTA.Math.Vector3 position, long currentTick)
+        public void UpdateTurretCrew(long currentTick)
         {
-            _autoFlyManager.Update(aircraft, position, currentTick);
+            _turretCrewManager.Update(currentTick);
         }
 
         /// <summary>
-        /// Check if AutoFly is currently active
+        /// Check if turret crew is currently spawned
         /// </summary>
-        public bool IsAutoFlyActive => _autoFlyManager.IsActive;
+        public bool IsTurretCrewActive => _turretCrewManager.IsSpawned;
 
         /// <summary>
-        /// Stop AutoFly if active
+        /// Destroy turret crew if active
         /// </summary>
-        public void StopAutoFly()
+        public void DestroyTurretCrew()
         {
-            if (_autoFlyManager.IsActive)
+            if (_turretCrewManager.IsSpawned)
             {
-                _autoFlyManager.Stop();
+                _turretCrewManager.DestroyTurretCrew();
+            }
+        }
+
+        /// <summary>
+        /// Cleanup resources on script unload to prevent leaks across script reloads
+        /// </summary>
+        public void Dispose()
+        {
+            try
+            {
+                if (_autoDriveManager != null && _autoDriveManager.IsActive)
+                    _autoDriveManager.Stop();
+
+                if (_turretCrewManager != null && _turretCrewManager.IsSpawned)
+                    _turretCrewManager.DestroyTurretCrew();
+
+                if (_aircraftLandingMenu != null && _aircraftLandingMenu.IsNavigationActive)
+                    _aircraftLandingMenu.CancelNavigation();
+            }
+            catch (Exception ex)
+            {
+                Logger.Exception(ex, "MenuManager.Dispose");
             }
         }
 

@@ -28,6 +28,12 @@ namespace GrandTheftAccessibility
         // Conversion factors
         public const double METERS_PER_SECOND_TO_MPH = 2.23694;
 
+        // PERFORMANCE: Pre-calculated math constants to avoid repeated calculations in hot paths
+        public const float DEG_TO_RAD = (float)(Math.PI / 180.0);   // ~0.01745329f
+        public const float RAD_TO_DEG = (float)(180.0 / Math.PI);   // ~57.29578f
+        public const float PI_FLOAT = (float)Math.PI;               // ~3.14159265f
+        public const float TWO_PI = (float)(Math.PI * 2.0);         // ~6.28318531f
+
         // Altitude indicator audio
         public const double ALTITUDE_GAIN = 0.1;
         public const double ALTITUDE_BASE_FREQUENCY = 120.0;
@@ -107,6 +113,35 @@ namespace GrandTheftAccessibility
         public const double AIRCRAFT_ROLL_GAIN = 0.06;
         public const double AIRCRAFT_ROLL_FREQUENCY = 300.0;            // Hz (constant)
         public const double AIRCRAFT_ROLL_DURATION_SECONDS = 0.08;
+
+        // Landing beacon audio (3D audio beacon for aircraft navigation)
+        public const float BEACON_GAIN = 0.08f;
+        public const float BEACON_MIN_GAIN = BEACON_GAIN * 0.1f;   // Floor gain when behind
+        public const float BEACON_BASE_FREQUENCY = 400f;           // Hz at destination altitude
+        public const float BEACON_MIN_FREQUENCY = 150f;            // Hz when very high above
+        public const float BEACON_MAX_FREQUENCY = 800f;            // Hz when below destination
+        public const float BEACON_ALTITUDE_SCALE = 0.5f;           // Hz reduction per foot above destination
+        public const float BEACON_PULSE_DURATION = 0.06f;          // seconds per pulse (60ms beep)
+        public const long BEACON_PULSE_DURATION_TICKS = (long)(BEACON_PULSE_DURATION * 10_000_000);
+
+        // Beacon pulse rate (pre-calculated as ticks to avoid per-pulse float→long conversion)
+        public const long BEACON_PULSE_FAR_TICKS = (long)(1.5f * 10_000_000);      // >2 miles
+        public const long BEACON_PULSE_MEDIUM_TICKS = (long)(0.8f * 10_000_000);   // 1-2 miles
+        public const long BEACON_PULSE_NEAR_TICKS = (long)(0.4f * 10_000_000);     // 0.25-1 mile
+        public const long BEACON_PULSE_CLOSE_TICKS = (long)(0.15f * 10_000_000);   // <0.25 mile
+        public const long BEACON_PULSE_OVERHEAD_TICKS = (long)(0.06f * 10_000_000); // directly over
+
+        // Beacon distance thresholds (meters) - squared to avoid sqrt in distance check
+        public const float BEACON_OVERHEAD_DISTANCE_SQ = 150f * 150f;   // ~500 feet
+        public const float BEACON_CLOSE_DISTANCE_SQ = 400f * 400f;      // ~0.25 miles
+        public const float BEACON_NEAR_DISTANCE_SQ = 1600f * 1600f;     // ~1 mile
+        public const float BEACON_MEDIUM_DISTANCE_SQ = 3200f * 3200f;   // ~2 miles
+
+        // Beacon pan parameters
+        public const float BEACON_PAN_DEAD_ZONE = 5f;              // degrees - center tolerance
+        public const float BEACON_PAN_MAX_ANGLE = 90f;             // degrees - full pan at 90+ off heading
+        public const float BEACON_PAN_RANGE_INV = 1f / (BEACON_PAN_MAX_ANGLE - BEACON_PAN_DEAD_ZONE); // pre-calculated
+        public const float BEACON_BEHIND_GAIN_FACTOR = 0.3f;       // reduce volume when behind (>120 degrees off)
 
         // Compass directions (degrees)
         public const double NORTH = 0;
@@ -195,16 +230,19 @@ namespace GrandTheftAccessibility
             1824333165    // Conada
         };
 
-        // Native function hash for VTOL nozzle position (not in all SHVDN versions)
+        // Native function hashes for VTOL nozzle position control
         public const ulong NATIVE_GET_VEHICLE_FLIGHT_NOZZLE_POSITION = 0xDA62027C8BDB326E;
+        public const ulong NATIVE_SET_VEHICLE_FLIGHT_NOZZLE_POSITION = 0x30D779DE7C4F6DD3;  // Set VTOL nozzle angle (0=plane, 1=hover)
 
         // Vehicle save/load
         public const int VEHICLE_SAVE_SLOT_COUNT = 10;
         public const string SAVED_VEHICLES_FILE_NAME = "gta11ySavedVehicles.json";
 
-        // Vehicle mod menu display names
+        // Vehicle mod menu display names - expanded to include all known mod types
+        // Standard mods: 0-49, Colors: 66-67, Extended/DLC mods probed dynamically
         public static readonly Dictionary<int, string> MOD_TYPE_NAMES = new Dictionary<int, string>
         {
+            // Body/Exterior (0-10)
             { 0, "Spoiler" },
             { 1, "Front Bumper" },
             { 2, "Rear Bumper" },
@@ -213,42 +251,142 @@ namespace GrandTheftAccessibility
             { 5, "Frame" },
             { 6, "Grille" },
             { 7, "Hood" },
-            { 8, "Left Fender/Wing" },
-            { 9, "Right Fender/Wing" },
+            { 8, "Left Fender" },
+            { 9, "Right Fender" },
             { 10, "Roof" },
+
+            // Performance (11-18)
             { 11, "Engine" },
             { 12, "Brakes" },
             { 13, "Transmission" },
             { 14, "Horn" },
             { 15, "Suspension" },
             { 16, "Armor" },
+            { 17, "Nitrous" },
             { 18, "Turbo" },
-            { 22, "Xenon Headlights" },
+
+            // Audio/Visual (19-22)
+            { 19, "Subwoofer" },
+            { 20, "Tire Smoke" },
+            { 21, "Hydraulics" },
+            { 22, "Xenon Lights" },
+
+            // Wheels (23-24)
             { 23, "Front Wheels" },
             { 24, "Rear Wheels" },
+
+            // Plates (25-26)
             { 25, "Plate Holder" },
-            { 26, "Vanity Plates" },
+            { 26, "Vanity Plate" },
+
+            // Interior/Benny's (27-45)
             { 27, "Trim" },
             { 28, "Ornaments" },
             { 29, "Dashboard" },
-            { 30, "Dial" },
+            { 30, "Dial Design" },
             { 31, "Door Speaker" },
             { 32, "Seats" },
             { 33, "Steering Wheel" },
-            { 34, "Shifter Lever" },
+            { 34, "Shift Lever" },
             { 35, "Plaques" },
             { 36, "Speakers" },
             { 37, "Trunk" },
             { 38, "Hydraulics" },
             { 39, "Engine Block" },
             { 40, "Air Filter" },
-            { 41, "Struts" },
+            { 41, "Strut Bar" },
             { 42, "Arch Cover" },
-            { 43, "Aerials" },
-            { 44, "Trim Design" },
+            { 43, "Antenna" },
+            { 44, "Exterior Parts" },
             { 45, "Tank" },
-            { 46, "Windows" },
-            { 48, "Livery" }
+
+            // Doors/Windows (46-47)
+            { 46, "Left Door" },
+            { 47, "Right Door" },
+
+            // Livery (48)
+            { 48, "Livery" },
+
+            // Light Bar (49)
+            { 49, "Light Bar" }
+
+            // NOTE: Weaponized vehicle mods (Primary Weapon, Secondary Weapon, Countermeasures, etc.)
+            // are NOT accessible through GET_NUM_VEHICLE_MODS/SET_VEHICLE_MOD natives.
+            // They require the in-game Vehicle Workshop (Facility, MOC, Avenger) to modify.
+            // The standard vehicle mod type system only goes up to index 48 (Livery) + 49 (Light Bar).
+        };
+
+        // All valid mod type indices (0-49)
+        // Note: 17-22 are toggle mods (Nitrous, Turbo, Subwoofer, TyreSmoke, Hydraulics, XenonLights)
+        // which are handled separately via VehicleToggleModType
+        public static readonly int[] ALL_MOD_TYPES = new int[]
+        {
+            // Body/Exterior
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+            // Performance
+            11, 12, 13, 14, 15, 16,
+            // Note: 17-22 are handled as toggle mods, not through GET_NUM_VEHICLE_MODS
+            // Wheels
+            23, 24,
+            // Plates
+            25, 26,
+            // Interior/Benny's
+            27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45,
+            // Doors/Windows
+            46, 47,
+            // Livery/Light Bar
+            48, 49
+        };
+
+        // Performance mod types (commonly used)
+        // Note: 17 (Nitrous) and 18 (Turbo) are toggle mods handled separately
+        public static readonly int[] PERFORMANCE_MOD_TYPES = { 11, 12, 13, 15, 16 };
+
+        // Body mod types
+        public static readonly int[] BODY_MOD_TYPES = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 46, 47 };
+
+        // Interior/Benny's mod types
+        public static readonly int[] INTERIOR_MOD_TYPES = { 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45 };
+
+        // Horn names for horn mod type (14)
+        public static readonly string[] HORN_NAMES = new string[]
+        {
+            "Stock Horn",
+            "Jazz Horn Loop",
+            "Jazz Horn",
+            "Sad Trombone",
+            "Classical Horn Loop 1",
+            "Classical Horn Loop 2",
+            "Classical Horn Loop 3",
+            "Classical Horn 1",
+            "Classical Horn 2",
+            "Classical Horn 3",
+            "Classical Horn 4",
+            "Classical Horn 5",
+            "Classical Horn 6",
+            "Classical Horn 7",
+            "Scale - Do",
+            "Scale - Re",
+            "Scale - Mi",
+            "Scale - Fa",
+            "Scale - Sol",
+            "Scale - La",
+            "Scale - Ti",
+            "Scale - Do (High)",
+            "Liberty City Loop",
+            "Liberty City",
+            "Star Spangled Banner Loop",
+            "Star Spangled Banner",
+            "Shave and Haircut Loop",
+            "Shave and Haircut",
+            "Vice City Loop",
+            "Vice City",
+            "Lowrider Horn Loop",
+            "Lowrider Horn",
+            "San Andreas Loop",
+            "San Andreas",
+            "Revelation",
+            "Revelation Loop"
         };
 
         // Wheel type names (index matches VehicleWheelType enum value)
@@ -327,6 +465,7 @@ namespace GrandTheftAccessibility
         public const float AUTODRIVE_FINAL_APPROACH_DISTANCE = 50f;        // meters - start final approach
         public const float AUTODRIVE_FINAL_APPROACH_SPEED = 8f;            // m/s (~18 mph) for precise arrival
         public const float AUTODRIVE_PRECISE_ARRIVAL_RADIUS = 6f;          // meters - very close to destination
+        public const float AUTODRIVE_LONGRANGE_THRESHOLD = 500f;           // meters - use LONGRANGE native above this distance
 
         // Native for finding safe road position near waypoint
         public const ulong NATIVE_GET_CLOSEST_VEHICLE_NODE = 0x240A18690AE96513;
@@ -342,32 +481,69 @@ namespace GrandTheftAccessibility
         public const int DRIVING_STYLE_MODE_FAST = 2;
         public const int DRIVING_STYLE_MODE_RECKLESS = 3;
 
-        // Dynamic style default (auto-adjust based on road type)
-        public const bool DYNAMIC_STYLE_ENABLED_DEFAULT = true;
-
-        // Driving style flag values (optimized for human-like driving)
-        // Flag breakdown:
-        //   StopForVehicles (1), StopForPeds (2), SwerveAroundAllVehicles (4)
-        //   SteerAroundStationaryVehicles (8), SteerAroundPeds (16), SteerAroundObjects (32)
-        //   StopAtTrafficLights (128), GoOffRoadWhenAvoiding (256), AllowGoingWrongWay (512)
-        //   Reverse (1024), UseWanderFallbackInsteadOfStraightLine (2048) - cruise randomly if pathfinding fails
-        //   AvoidRestrictedAreas (4096), AdjustCruiseSpeedBasedOnRoadSpeed (16384)
-        //   UseShortCutLinks (262144), ChangeLanesAroundObstructions (524288)
-        //   UseStringPullingAtJunctions (33554432) - smoother, more natural turns
-        //   ForceJoinInRoadDirection (1073741824) - join roads in correct lane direction
+        // ===== DRIVING STYLE FLAGS (Verified via binary analysis) =====
+        // Flag breakdown (CORRECTED bit positions):
+        //   Bit 0:  StopBeforeVehicles (1)
+        //   Bit 1:  StopBeforePeds (2)
+        //   Bit 2:  AvoidVehicles (4)
+        //   Bit 3:  AvoidEmptyVehicles (8)
+        //   Bit 4:  AvoidPeds (16)
+        //   Bit 5:  AvoidObjects (32)
+        //   Bit 7:  StopAtTrafficLights (128)
+        //   Bit 8:  UseBlinkers (256)
+        //   Bit 9:  AllowWrongWay (512) - uses wrong lane when stuck, self-corrects
+        //   Bit 10: Reverse (1024)
+        //   Bit 14: TakeShortestPath (16384) - uses all roads including dirt
+        //   Bit 15: Reckless (32768) - aggressive overtaking/ramming behavior
+        //   Bit 17: IgnoreRoads (131072) - local pathing only (~200m range)
+        //   Bit 19: IgnoreAllPathing (524288) - drives straight to destination (AVOID!)
+        //   Bit 24: AvoidHighways (16777216)
         //
-        // Cautious: All safety flags + pathfinding fallback + avoid restricted + smooth turns + correct lane join
-        public const int DRIVING_STYLE_CAUTIOUS = 1108105407;   // 34357439 + 2048 + 4096 + 1073741824
-        // Normal: Balanced safety + pathfinding fallback + avoid restricted + smooth turns + correct lane join
-        public const int DRIVING_STYLE_NORMAL = 1108105403;     // 34357435 + 2048 + 4096 + 1073741824
-        // Fast: Ignore lights, pathfinding fallback + smooth turns + correct lane join (no restricted area check)
-        public const int DRIVING_STYLE_FAST = 1108086565;       // 34342693 + 2048 + 1073741824
-        // Reckless: Ram through + pathfinding fallback + smooth turns + correct lane join
-        // Does NOT include StopForVehicles, SwerveAroundAllVehicles, or AvoidRestrictedAreas
-        public const int DRIVING_STYLE_RECKLESS = 1108086304;   // 34342432 + 2048 + 1073741824
+        // WARNING: Value 786603 (common in old mods) has IgnoreAllPathing enabled!
+        // This causes AI to drive off-road directly to destination. Don't use it.
+        //
+        // CORRECTED VALUES based on bit flag analysis:
+        // Bit 0 (1): StopBeforeVehicles    Bit 1 (2): StopBeforePeds
+        // Bit 2 (4): AvoidVehicles         Bit 3 (8): AvoidEmptyVehicles
+        // Bit 4 (16): AvoidPeds            Bit 5 (32): AvoidObjects
+        // Bit 7 (128): StopAtTrafficLights Bit 8 (256): UseBlinkers
+        // Bit 9 (512): AllowWrongWay       Bit 10 (1024): Reverse
+        // Bit 14 (16384): TakeShortestPath Bit 15 (32768): Reckless
+        //
+        // WARNING: 786603 has IgnoreAllPathing (bit 19) which makes AI drive off-road!
+        // Do NOT use 786603 for normal driving.
+
+        // Cautious: Maximum safety - stops for everything, avoids everything, obeys all laws
+        // = StopVeh(1) + StopPed(2) + AvoidVeh(4) + AvoidEmpty(8) + AvoidPed(16) + AvoidObj(32) + StopLight(128) + Blinkers(256)
+        public const int DRIVING_STYLE_CAUTIOUS = 447;
+
+        // Normal: Uses SHVDN's AvoidTrafficExtremely (1074528293)
+        // Reference: AutoDriveScript uses this as base for all styles - proven to work
+        public const int DRIVING_STYLE_NORMAL = 1074528293;
+
+        // Fast: Same as Normal but with speed multiplier difference
+        // Reference: AutoDriveScript uses same base style, speed multiplier makes the difference
+        public const int DRIVING_STYLE_FAST = 1074528293;
+
+        // Reckless: Aggressive driving - NO traffic light stops, uses Reckless flag
+        // = AvoidPeds(16) + AvoidObj(32) + Reckless(32768) = 32816
+        // NOTE: 2883621 (SHVDN Rushed) still has StopAtTrafficLights! Don't use it.
+        public const int DRIVING_STYLE_RECKLESS = 32816;
 
         // Legacy constant (kept for compatibility)
         public const int DRIVING_STYLE_RUSHED = 1074528293;
+
+        // ===== SPECIALIZED DRIVING STYLES =====
+
+        // Cruise/Wander optimized style - smooth, relaxed driving for aimless cruising
+        // = StopVeh(1) + StopPed(2) + AvoidVeh(4) + AvoidEmpty(8) + AvoidPed(16) + AvoidObj(32)
+        //   + StopLight(128) + Blinkers(256) + AllowWrongWay(512)
+        // AllowWrongWay helps when AI gets stuck, will correct itself
+        public const int DRIVING_STYLE_CRUISE = 959;
+
+        // Longrange driving style (for distant waypoints >500m)
+        // Same as Normal - safe driving with efficient pathing
+        public const int DRIVING_STYLE_LONGRANGE = 16831;
 
         // Driving style values array (indexed by mode)
         public static readonly int[] DRIVING_STYLE_VALUES = new int[]
@@ -378,26 +554,37 @@ namespace GrandTheftAccessibility
             DRIVING_STYLE_RECKLESS    // 3 - Reckless
         };
 
+        // Speed multipliers per style (applied to target speed)
+        // Reference: AutoDriveScript2.cs uses 0.7f (Cautious), 1.0f (Normal), 1.2f (Aggressive)
+        // This is the PRIMARY differentiator between styles!
+        public static readonly float[] DRIVING_STYLE_SPEED_MULTIPLIERS = new float[]
+        {
+            0.7f,   // Cautious - 70% of target speed (slower, safer)
+            1.0f,   // Normal - 100% of target speed
+            1.2f,   // Fast - 120% of target speed (faster, more aggressive)
+            1.3f    // Reckless - 130% of target speed (maximum speed)
+        };
+
         // Driver ability per style (0.0 - 1.0)
-        // Lower values = more human-like imperfection (slight steering variation, less perfect lane centering)
-        // Research shows ability 1.0 = "too perfect", feels robotic
-        // Values below create natural variation while still being competent
+        // Research: 1.0 = best vehicle control, smoother driving
+        // Higher values = better lane keeping, smoother turns
         public static readonly float[] DRIVING_STYLE_ABILITIES = new float[]
         {
-            0.5f,   // Cautious - hesitant, less confident (like nervous driver)
-            0.7f,   // Normal - average driver skill, some imperfection
-            0.85f,  // Fast - skilled but not perfect
-            0.95f   // Reckless - high skill (needs precision for ramming)
+            1.0f,   // Cautious - maximum control for safe driving
+            1.0f,   // Normal - maximum control
+            1.0f,   // Fast - maximum control needed at speed
+            0.8f    // Reckless - slightly less control for chaotic feel
         };
 
         // Driver aggressiveness per style (0.0 - 1.0)
-        // Higher values = more assertive lane changes, closer following, quicker reactions
+        // Research: Higher = more lane changes, closer following, more assertive
+        // This has a BIG impact on observable driving behavior
         public static readonly float[] DRIVING_STYLE_AGGRESSIVENESS = new float[]
         {
-            0.1f,   // Cautious - very passive, gives way often
-            0.4f,   // Normal - balanced, typical urban driver
-            0.65f,  // Fast - pushier, less patient
-            0.9f    // Reckless - very aggressive, minimal hesitation
+            0.0f,   // Cautious - completely passive, no lane changes
+            0.0f,   // Normal - calm driving (reference uses 0.0 for smooth driving)
+            0.5f,   // Fast - more assertive for overtaking
+            1.0f    // Reckless - maximum aggression, constant lane changes
         };
 
         // Display names for menu
@@ -445,6 +632,7 @@ namespace GrandTheftAccessibility
         // Native function hashes for AutoDrive
         public const ulong NATIVE_TASK_VEHICLE_DRIVE_WANDER = 0x480142959D337D00;
         public const ulong NATIVE_TASK_VEHICLE_DRIVE_TO_COORD = 0xE2A2AA2F659D77A7;
+        public const ulong NATIVE_TASK_VEHICLE_DRIVE_TO_COORD_LONGRANGE = 0x158BB33F920D360C;  // Better pathfinding for long distances
         public const ulong NATIVE_SET_DRIVE_TASK_CRUISE_SPEED = 0x5C9B84BD7D31D908;
         public const ulong NATIVE_SET_DRIVER_ABILITY = 0xB195FFA8042FC5C3;
         public const ulong NATIVE_SET_DRIVER_AGGRESSIVENESS = 0xA731F608CA104E3C;
@@ -854,181 +1042,18 @@ namespace GrandTheftAccessibility
         public const float OVERTAKE_SIDE_DISTANCE = 8f;            // meters - how far to the side to consider "beside"
         public const float OVERTAKE_BEHIND_DISTANCE = 15f;         // meters - how far behind = "passed"
         public const float OVERTAKE_MIN_SPEED_DIFF = 5f;           // m/s - must be going faster than overtaken vehicle
-        public const long TICK_INTERVAL_OVERTAKE_CHECK = 5_000_000;  // 0.5 seconds
+        public const long TICK_INTERVAL_OVERTAKE_CHECK = 10_000_000;  // 1.0 seconds
         public const long OVERTAKE_ANNOUNCE_COOLDOWN = 50_000_000;   // 5 seconds between announcements
         public const int OVERTAKE_TRACKING_MAX = 5;                // max vehicles to track for overtaking
 
         // ===== END AUTODRIVE SYSTEM =====
 
-        // ===== AUTOFLY SYSTEM (Aircraft Autopilot & AutoLand) =====
+        // ===== AIRCRAFT DATA =====
 
-        // AutoFly native function hashes
-        public const ulong NATIVE_TASK_PLANE_MISSION = 0x23703CD154E83B88;
-        public const ulong NATIVE_TASK_HELI_MISSION = 0xDAD029E187A2BEB4;
-        public const ulong NATIVE_TASK_PLANE_LAND = 0xBF19721FA34D32C0;
-        public const ulong NATIVE_CONTROL_LANDING_GEAR = 0xCFC8BE9A5E1FE575;
-        public const ulong NATIVE_GET_LANDING_GEAR_STATE = 0x9B0F3DCA3DB0F4CD;
-        public const ulong NATIVE_IS_VEHICLE_ON_ALL_WHEELS = 0x1F9FB66F3A3842D2;
-        public const ulong NATIVE_SET_HELI_BLADES_SPEED = 0xFD280B4D7F3ABC4D;  // Grok: altitude hold via rotor speed
-
-        // Altitude hold thresholds (Grok optimization)
-        public const float ALTITUDE_HOLD_TOLERANCE = 15f;       // meters - start adjusting if off by more than this
-        public const float HELI_BLADES_SPEED_CLIMB = 1.15f;     // Rotor speed multiplier for climbing
-        public const float HELI_BLADES_SPEED_DESCEND = 0.85f;   // Rotor speed multiplier for descending
-        public const float HELI_BLADES_SPEED_NORMAL = 1.0f;     // Normal rotor speed
-
-        // Aircraft mission types (eVehicleMission)
-        public const int MISSION_NONE = 0;
-        public const int MISSION_CRUISE = 1;
-        public const int MISSION_GOTO = 4;
-        public const int MISSION_STOP = 5;
-        public const int MISSION_CIRCLE = 9;
-        public const int MISSION_LAND = 19;
-
-        // Helicopter mission flags (eHeliMissionFlags)
-        public const int HELI_FLAG_NONE = 0;
-        public const int HELI_FLAG_ATTAIN_REQUESTED_ORIENTATION = 1;
-        public const int HELI_FLAG_DONT_MODIFY_ORIENTATION = 2;
-        public const int HELI_FLAG_DONT_MODIFY_PITCH = 4;
-        public const int HELI_FLAG_DONT_MODIFY_THROTTLE = 8;
-        public const int HELI_FLAG_DONT_MODIFY_ROLL = 16;
-        public const int HELI_FLAG_LAND_ON_ARRIVAL = 32;
-        public const int HELI_FLAG_DONT_DO_AVOIDANCE = 64;
-        public const int HELI_FLAG_START_ENGINE_IMMEDIATELY = 128;
-        public const int HELI_FLAG_MAINTAIN_HEIGHT_ABOVE_TERRAIN = 4096;
-        // Combined flags for common operations
-        public const int HELI_FLAG_LAND_NO_AVOIDANCE = 96;  // LandOnArrival + DontDoAvoidance
-
-        // Landing gear states
-        public const int LANDING_GEAR_DEPLOYED = 0;
-        public const int LANDING_GEAR_CLOSING = 1;
-        public const int LANDING_GEAR_OPENING = 2;
-        public const int LANDING_GEAR_RETRACTED = 3;
-        public const int LANDING_GEAR_BROKEN = 5;
-
-        // AutoFly tick intervals
-        public const long TICK_INTERVAL_AUTOFLY_UPDATE = 2_000_000;           // 0.2s main update
-        public const long TICK_INTERVAL_AUTOFLY_APPROACH = 5_000_000;         // 0.5s approach checks
-        public const long TICK_INTERVAL_AUTOFLY_DISTANCE = 10_000_000;        // 1.0s distance announcements
-
-        // Flight modes
-        public const int FLIGHT_MODE_NONE = 0;
-        public const int FLIGHT_MODE_CRUISE = 1;        // Maintain altitude/heading
-        public const int FLIGHT_MODE_WAYPOINT = 2;      // Fly to GPS waypoint, then circle
-        public const int FLIGHT_MODE_DESTINATION = 3;   // Fly to destination and autoland
-
-        // Flight mode display names
-        public static readonly string[] FLIGHT_MODE_NAMES = new string[]
-        {
-            "Inactive",
-            "Cruise",
-            "Waypoint",
-            "Destination"
-        };
-
-        // Flight phases (for DESTINATION mode state machine)
-        public const int PHASE_INACTIVE = 0;
-        public const int PHASE_CRUISE = 1;        // En route to destination
-        public const int PHASE_APPROACH = 2;      // Within approach distance, aligning
-        public const int PHASE_FINAL = 3;         // Final approach, gear down
-        public const int PHASE_TOUCHDOWN = 4;     // Landing task issued
-        public const int PHASE_TAXIING = 5;       // Fixed-wing taxiing after landing
-        public const int PHASE_LANDED = 6;        // Flight complete
-
-        // Flight phase display names
-        public static readonly string[] FLIGHT_PHASE_NAMES = new string[]
-        {
-            "Inactive",
-            "En route",
-            "Approach",
-            "Final approach",
-            "Landing",
-            "Taxiing",
-            "Landed"
-        };
-
-        // AutoFly speed parameters (m/s)
-        public const float AUTOFLY_DEFAULT_SPEED = 50f;       // ~112 mph / 97 knots
-        public const float AUTOFLY_MIN_SPEED = 20f;           // ~45 mph / 39 knots
-        public const float AUTOFLY_MAX_SPEED = 100f;          // ~224 mph / 194 knots
-        public const float AUTOFLY_SPEED_INCREMENT = 5f;      // m/s per key press (~11 mph)
-        public const float AUTOFLY_APPROACH_SPEED = 40f;      // ~90 mph for approach phase
-        public const float AUTOFLY_FINAL_SPEED = 30f;         // ~67 mph for final approach
-        public const float AUTOFLY_HELI_DEFAULT_SPEED = 30f;  // Helicopters fly slower
-        public const float AUTOFLY_BLIMP_DEFAULT_SPEED = 15f; // Blimps are very slow (~34 mph)
-        public const float AUTOFLY_BLIMP_MAX_SPEED = 25f;     // Blimp max speed (~56 mph)
-        public const float AUTOFLY_BLIMP_MIN_SPEED = 8f;      // Blimp min speed (~18 mph)
-
-        // Aircraft type speed caps (m/s) - indexed by AIRCRAFT_TYPE_* constants
-        // Prevents over-speeding based on aircraft capabilities (Grok optimization)
-        public static readonly float[] AIRCRAFT_TYPE_SPEED_CAPS = new float[]
-        {
-            100f,   // 0 - Fixed-wing: ~224 mph
-            60f,    // 1 - Helicopter: ~134 mph
-            60f,    // 2 - VTOL (hover mode): ~134 mph
-            25f     // 3 - Blimp: ~56 mph
-        };
-
-        /// <summary>
-        /// Get maximum safe speed for aircraft type (for AutoFly speed limiting)
-        /// </summary>
-        public static float GetAircraftTypeSpeedCap(int aircraftType)
-        {
-            if (aircraftType >= 0 && aircraftType < AIRCRAFT_TYPE_SPEED_CAPS.Length)
-                return AIRCRAFT_TYPE_SPEED_CAPS[aircraftType];
-            return AUTOFLY_MAX_SPEED;  // Default to general max
-        }
-
-        // AutoFly altitude parameters (meters)
-        public const float AUTOFLY_DEFAULT_ALTITUDE = 500f;   // ~1640 feet
-        public const float AUTOFLY_MIN_ALTITUDE = 100f;       // ~328 feet
-        public const float AUTOFLY_MAX_ALTITUDE = 3000f;      // ~10,000 feet
-        public const float AUTOFLY_ALTITUDE_INCREMENT = 152f; // 500 feet in meters
-        public const float AUTOFLY_MIN_TERRAIN_CLEARANCE = 50f; // meters above ground
-
-        // Phase transition distances (meters)
-        public const float AUTOFLY_APPROACH_DISTANCE = 3200f;    // 2 miles - start approach phase
-        public const float AUTOFLY_FINAL_DISTANCE = 800f;        // 0.5 miles - start final approach
-        public const float AUTOFLY_TOUCHDOWN_DISTANCE = 100f;    // Issue landing task
-        public const float AUTOFLY_ARRIVAL_RADIUS = 30f;         // meters - consider landed
-
-        // Landing gear deployment
-        public const float AUTOFLY_GEAR_DEPLOY_ALTITUDE = 152f;  // 500 feet AGL in meters
-        public const float AUTOFLY_GEAR_DEPLOY_DISTANCE = 1600f; // 1 mile from destination
-
-        // Runway parameters
+        // Default runway length for landing destination calculations (used by AircraftLandingMenu)
         public const float DEFAULT_RUNWAY_LENGTH = 800f;         // meters (~2625 feet)
-        public const float RUNWAY_ALIGNMENT_TOLERANCE = 30f;     // degrees off runway heading
 
-        // Helicopter landing parameters
-        public const float HELI_LANDING_SPEED = 10f;             // m/s for final descent
-        public const float HELI_LANDING_RADIUS = 15f;            // meters - precision landing
-        public const float HELI_APPROACH_HEIGHT = 50f;           // meters above landing zone
-
-        // Cruise mode parameters
-        public const float CRUISE_HEADING_TOLERANCE = 5f;        // degrees - acceptable deviation
-        public const float CRUISE_ALTITUDE_TOLERANCE = 20f;      // meters - acceptable deviation
-
-        // Distance announcement thresholds (in feet)
-        public static readonly int[] AUTOFLY_DISTANCE_MILESTONES_FEET = new int[]
-        {
-            2000, 1500, 1000, 500, 200, 100
-        };
-
-        // Distance announcement thresholds (in miles)
-        public static readonly float[] AUTOFLY_DISTANCE_MILESTONES_MILES = new float[]
-        {
-            5f, 4f, 3f, 2.5f, 2f, 1.5f, 1f, 0.5f
-        };
-
-        // Turn guidance thresholds
-        public const float AUTOFLY_TURN_GUIDANCE_THRESHOLD = 30f;   // degrees off-course to announce
-        public const float AUTOFLY_ALTITUDE_GUIDANCE_THRESHOLD = 50f; // meters altitude diff to announce
-
-        // Pause states (reuse from AutoDrive)
-        // PAUSE_STATE_NONE = 0, PAUSE_STATE_PAUSED = 1, PAUSE_STATE_RESUMING = 2
-
-        // ===== END AUTOFLY SYSTEM =====
+        // ===== END AIRCRAFT DATA =====
 
         // Vehicle class names (indexed by VehicleClass enum value)
         public static readonly string[] VEHICLE_CLASS_NAMES = new string[]
@@ -1141,62 +1166,6 @@ namespace GrandTheftAccessibility
         public const float COLLISION_LOOKAHEAD_MIN = 30f;                 // meters - minimum lookahead distance
         public const float COLLISION_LOOKAHEAD_TIME_FACTOR = 2f;          // seconds ahead to scan
 
-        // ===== AUTOFLY ADDITIONAL CONSTANTS =====
-
-        // Default ground height fallback
-        public const float AUTOFLY_DEFAULT_GROUND_HEIGHT = 50f;           // meters - fallback ground height
-
-        // Helicopter landing approach parameters
-        public const float AUTOFLY_HELI_APPROACH_SPEED = 10f;             // m/s - slow approach speed
-        public const float AUTOFLY_DESCEND_AGL = 300f;                    // meters - ~1000 feet AGL for descend
-        public const float AUTOFLY_DESCEND_OFFSET = 500f;                 // meters - offset for descend target
-
-        // Task reach distances for plane mission
-        public const float AUTOFLY_TASK_REACH_DISTANCE = 100f;            // meters - targetReachedDist parameter
-
-        // Circling altitudes
-        public const float AUTOFLY_CIRCLE_APPROACH_AGL = 450f;            // meters - ~1500 feet AGL
-        public const float AUTOFLY_CIRCLE_FINAL_AGL = 150f;               // meters - ~500 feet AGL
-        public const float AUTOFLY_CIRCLE_ARRIVED_AGL = 100f;             // meters - ~300 feet AGL for circling
-
-        // Task radius parameters
-        public const float AUTOFLY_HELI_TASK_RADIUS = 50f;                // meters - helicopter task radius
-        public const float AUTOFLY_HELI_CIRCLE_RADIUS = 100f;             // meters - helicopter circle radius
-        public const float AUTOFLY_PLANE_CIRCLE_RADIUS = 200f;            // meters - plane circle radius (larger)
-        public const float AUTOFLY_CRUISE_FAR_DISTANCE = 10000f;          // meters - cruise target distance (10km)
-
-        // Touchdown detection
-        public const float AUTOFLY_TOUCHDOWN_SPEED = 20f;                 // m/s - ~45 mph acceptable touchdown speed
-        public const int AUTOFLY_TOUCHDOWN_STABLE_COUNT_PLANE = 3;        // consecutive checks for plane
-        public const int AUTOFLY_TOUCHDOWN_STABLE_COUNT_HELI = 5;         // consecutive checks for helicopter (settles slower)
-        public const float AUTOFLY_TOUCHDOWN_HEIGHT_PLANE = 3f;           // meters - height threshold for plane
-        public const float AUTOFLY_TOUCHDOWN_HEIGHT_HELI = 2f;            // meters - height threshold for helicopter
-        public const float AUTOFLY_TOUCHDOWN_HEIGHT_WHEELS = 0.5f;        // meters - fallback if wheels check fails
-
-        // Terrain clearance and flight path planning
-        public const float AUTOFLY_DEFAULT_TERRAIN_CLEARANCE = 300f;      // meters - default safe clearance
-        public const float AUTOFLY_TERRAIN_SAMPLE_START = 200f;           // meters - start terrain sampling
-        public const float AUTOFLY_TERRAIN_SAMPLE_INTERVAL = 400f;        // meters - sample interval
-        public const float AUTOFLY_TERRAIN_SAMPLE_MAX = 2000f;            // meters - max terrain sample distance
-        public const float AUTOFLY_TERRAIN_WARNING_THRESHOLD = 100f;      // meters - terrain warning threshold
-
-        // Altitude calculations
-        public const float AUTOFLY_CRUISE_ALTITUDE_OFFSET = 500f;         // meters - cruise altitude above base
-        public const float AUTOFLY_APPROACH_ALTITUDE_OFFSET = 200f;       // meters - approach altitude above base
-        public const float AUTOFLY_FINAL_ALTITUDE_OFFSET = 100f;          // meters - final altitude above base
-        public const float AUTOFLY_DEFAULT_ALTITUDE_OFFSET = 300f;        // meters - default altitude above base
-        public const float AUTOFLY_MIN_SAFE_ALTITUDE_AGL = 300f;          // meters - ~1000 feet AGL minimum
-
-        // Altitude factor calculation
-        public const float AUTOFLY_ALTITUDE_FACTOR_MIN = 0.8f;            // minimum altitude factor
-        public const float AUTOFLY_ALTITUDE_FACTOR_REFERENCE = 10000f;    // meters - reference altitude for factor
-        public const float AUTOFLY_ALTITUDE_FACTOR_RATE = 0.2f;           // rate of factor decrease
-        public const float AUTOFLY_ACCEL_ALTITUDE_FACTOR_MIN = 0.6f;      // minimum for acceleration
-        public const float AUTOFLY_ACCEL_ALTITUDE_FACTOR_RATE = 0.4f;     // rate for acceleration factor
-
-        // Minimum safe speed for approach
-        public const float AUTOFLY_APPROACH_MIN_SPEED = 15f;              // m/s - minimum safe approach speed
-
         // ===== SAFE ARRAY ACCESS HELPER METHODS =====
         // These methods provide bounds-checked access to constant arrays to prevent IndexOutOfRangeException
 
@@ -1228,6 +1197,17 @@ namespace GrandTheftAccessibility
             if (modeIndex >= 0 && modeIndex < DRIVING_STYLE_AGGRESSIVENESS.Length)
                 return DRIVING_STYLE_AGGRESSIVENESS[modeIndex];
             return DRIVING_STYLE_AGGRESSIVENESS[DRIVING_STYLE_MODE_NORMAL];
+        }
+
+        /// <summary>
+        /// Safely get driving style speed multiplier by mode index with bounds checking.
+        /// This is the PRIMARY differentiator between styles (reference: AutoDriveScript2.cs)
+        /// </summary>
+        public static float GetDrivingStyleSpeedMultiplier(int modeIndex)
+        {
+            if (modeIndex >= 0 && modeIndex < DRIVING_STYLE_SPEED_MULTIPLIERS.Length)
+                return DRIVING_STYLE_SPEED_MULTIPLIERS[modeIndex];
+            return DRIVING_STYLE_SPEED_MULTIPLIERS[DRIVING_STYLE_MODE_NORMAL];
         }
 
         /// <summary>
@@ -1281,23 +1261,24 @@ namespace GrandTheftAccessibility
         }
 
         /// <summary>
-        /// Safely get flight mode name by mode index with bounds checking.
+        /// Get mod type display name by mod type index.
+        /// Returns the name from MOD_TYPE_NAMES dictionary or a formatted fallback.
         /// </summary>
-        public static string GetFlightModeName(int flightMode)
+        public static string GetModTypeName(int modType)
         {
-            if (flightMode >= 0 && flightMode < FLIGHT_MODE_NAMES.Length)
-                return FLIGHT_MODE_NAMES[flightMode];
-            return "Unknown";
+            if (MOD_TYPE_NAMES.TryGetValue(modType, out string name))
+                return name;
+            return $"Mod Type {modType}";
         }
 
         /// <summary>
-        /// Safely get flight phase name by phase index with bounds checking.
+        /// Get horn name by horn index.
         /// </summary>
-        public static string GetFlightPhaseName(int phase)
+        public static string GetHornName(int hornIndex)
         {
-            if (phase >= 0 && phase < FLIGHT_PHASE_NAMES.Length)
-                return FLIGHT_PHASE_NAMES[phase];
-            return "Unknown";
+            if (hornIndex >= 0 && hornIndex < HORN_NAMES.Length)
+                return HORN_NAMES[hornIndex];
+            return $"Horn {hornIndex + 1}";
         }
 
         /// <summary>
@@ -1323,6 +1304,131 @@ namespace GrandTheftAccessibility
         {
             return seekMode >= 0 && seekMode < ROAD_SEEK_MODE_NAMES.Length;
         }
+
+        // ===== TURRET CREW SYSTEM =====
+
+        // Turret crew announcement modes
+        public const int TURRET_ANNOUNCE_OFF = 0;
+        public const int TURRET_ANNOUNCE_FIRING_ONLY = 1;
+        public const int TURRET_ANNOUNCE_APPROACHING_ONLY = 2;
+        public const int TURRET_ANNOUNCE_BOTH = 3;
+
+        // Turret announcement mode display names
+        public static readonly string[] TURRET_ANNOUNCE_MODE_NAMES = new string[]
+        {
+            "Off",
+            "Firing Only",
+            "Enemy Approaching Only",
+            "Both"
+        };
+
+        /// <summary>
+        /// Safely get turret announcement mode name by index with bounds checking.
+        /// </summary>
+        public static string GetTurretAnnouncementModeName(int mode)
+        {
+            if (mode >= 0 && mode < TURRET_ANNOUNCE_MODE_NAMES.Length)
+                return TURRET_ANNOUNCE_MODE_NAMES[mode];
+            return "Unknown";
+        }
+
+        // Vehicle hash to turret seat index mapping
+        // Maps vehicle model hashes to arrays of seat indices that have turrets
+        public static readonly Dictionary<int, int[]> TURRET_VEHICLE_SEATS = new Dictionary<int, int[]>
+        {
+            { 562680400, new int[] { 0, 1, 2 } },      // APC - driver and two gunner seats
+            { -1860900134, new int[] { 5 } },          // Insurgent Pick-Up (insurgent3) - rear turret
+            { -1831682906, new int[] { 0, 1, 2 } },    // Barrage - three turret positions
+            { 837858166, new int[] { 1, 2 } },         // Technical - two gunner seats
+            { -1600252419, new int[] { 0, 1, 2 } },    // Valkyrie - pilot and two door gunners
+            { -1435527158, new int[] { 0, 1, 2 } },    // Khanjali tank - three turret seats
+            { -32236122, new int[] { 1 } },            // HalfTrack - left rear seat turret
+            { -212993243, new int[] { 1, 2 } },        // Barrage variant - .50 cal and grenade launcher
+            { 1181327175, new int[] { 0 } },           // Akula - passenger minigun
+            { -42959138, new int[] { 0 } },            // Hunter - passenger minigun
+            { -2020647301, new int[] { 1 } },          // Menacer - rear turret
+            { 408970549, new int[] { 0, 1, 2 } },      // Avenger - multiple turret positions
+            { 1033245328, new int[] { 2 } },           // Insurgent (weaponized variant)
+            { -1970118790, new int[] { 0 } },          // Savage - front gunner
+            { -1660661558, new int[] { 0 } },          // Savage (alt hash)
+            { -1216765807, new int[] { 0 } },          // Hunter helicopter
+            { 788747387, new int[] { 0 } },            // Buzzard - pilot weapons
+            { -339587598, new int[] { 1, 2 } },        // Annihilator - door gunners
+            { -1628917549, new int[] { 1, 2 } }        // Annihilator2 - door gunners
+        };
+
+        // Turret engagement parameters
+        public const float TURRET_FULL_AUTO_RANGE = 50f;        // meters - full auto engagement within this range
+        public const float TURRET_AIM_RANGE = 150f;             // meters - aim at targets within this range
+        public const float TURRET_CREW_DAMAGE_THRESHOLD = 0.5f; // 50% health threshold for damage warning
+
+        // Turret tick intervals
+        public const long TICK_INTERVAL_TURRET_UPDATE = 500_000;          // 0.05s - turret AI update
+        public const long TICK_INTERVAL_TURRET_ANNOUNCE = 50_000_000;     // 5s - announcement cooldown
+
+        // Turret crew states
+        public const int TURRET_STATE_IDLE = 0;
+        public const int TURRET_STATE_AIMING = 1;
+        public const int TURRET_STATE_FIGHTING = 2;
+
+        // Natives for turret crew behavior
+        public const ulong NATIVE_SET_PED_FIRING_PATTERN = 0x9AC577F5A12AD8A9;
+        public const ulong NATIVE_TASK_VEHICLE_SHOOT_AT_COORD = 0x5190796ED39C9B6D;
+        public const ulong NATIVE_IS_TURRET_SEAT = 0xE33FFA906CE74880;  // IS_TURRET_SEAT(Vehicle vehicle, int seatIndex)
+
+        // Firing patterns (uint values)
+        public const uint FIRING_PATTERN_FULL_AUTO = 0xC6EE6B4C;
+        public const uint FIRING_PATTERN_DEFAULT = 0;
+
+        // ===== END TURRET CREW SYSTEM =====
+
+        // ===== GTA ONLINE FEATURES IN SINGLE PLAYER =====
+
+        // Native to enable MP maps in single player (ON_ENTER_MP)
+        // This activates multiplayer map content (interiors, DLC locations) in single player
+        public const ulong NATIVE_ON_ENTER_MP = 0x0888C3502DBBEEF5;
+
+        // Native to disable MP maps (ON_ENTER_SP) - returns to standard single player map
+        public const ulong NATIVE_ON_ENTER_SP = 0xD7C10C4A637992C9;
+
+        // DLC check native - used to verify if specific DLC content is available
+        // IS_DLC_PRESENT(dlcHash) - returns true if the specified DLC is present
+        public const ulong NATIVE_IS_DLC_PRESENT = 0x812595A0644CE1DE;
+
+        // Set this player as MP player for certain game systems
+        // _SET_PLAYER_MODEL_IS_MP_PLAYER(bool toggle)
+        public const ulong NATIVE_SET_PLAYER_MODEL_IS_MP_PLAYER = 0xFFFA0DE1DFEB4E72;
+
+        // Enable/disable freemode property manager (for MP properties)
+        // _ENABLE_FREEMODE_PROPERTY_MANAGER(bool toggle)
+        public const ulong NATIVE_ENABLE_FREEMODE_PROPERTY_MANAGER = 0xC505036A35AFD01B;
+
+        // Set instance priority mode (affects MP content loading)
+        // SET_INSTANCE_PRIORITY_MODE(int mode) - 0=normal, 1=priority
+        public const ulong NATIVE_SET_INSTANCE_PRIORITY_MODE = 0x35A3CD97B2C0A6D2;
+
+        // Request IPL (Interior Proxy List) - loads specific interiors/exteriors
+        public const ulong NATIVE_REQUEST_IPL = 0x41B4893843BBDB74;
+
+        // Remove IPL - unloads specific interiors/exteriors
+        public const ulong NATIVE_REMOVE_IPL = 0xEE6C5AD3ECE0A82D;
+
+        // Check if IPL is active
+        public const ulong NATIVE_IS_IPL_ACTIVE = 0x88A741E44A2B3495;
+
+        // Get interior at coordinates
+        public const ulong NATIVE_GET_INTERIOR_AT_COORDS = 0xB0F7F8663821D9C3;
+
+        // Enable interior prop set
+        public const ulong NATIVE_ENABLE_INTERIOR_PROP = 0x55E86AF2712B36A1;
+
+        // Disable interior prop set
+        public const ulong NATIVE_DISABLE_INTERIOR_PROP = 0x420BD37289EEE162;
+
+        // Refresh interior (after changing props)
+        public const ulong NATIVE_REFRESH_INTERIOR = 0x41F37C3F5D25F3AA;
+
+        // ===== END GTA ONLINE FEATURES =====
 
         // ===== END CONSTANTS =====
     }

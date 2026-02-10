@@ -11,6 +11,13 @@ namespace GrandTheftAccessibility
     /// </summary>
     public class RoadTypeManager
     {
+        // PERFORMANCE: Pre-cached Hash values to avoid repeated casting
+        private static readonly Hash _getVehicleNodePropsHash = (Hash)Constants.NATIVE_GET_VEHICLE_NODE_PROPERTIES;
+        private static readonly Hash _setCruiseSpeedHash = (Hash)Constants.NATIVE_SET_DRIVE_TASK_CRUISE_SPEED;
+        private static readonly Hash _clearPedTasksHash = (Hash)Constants.NATIVE_CLEAR_PED_TASKS;
+        private static readonly Hash _taskVehicleTempActionHash = (Hash)Constants.NATIVE_TASK_VEHICLE_TEMP_ACTION;
+        private static readonly Hash _taskVehicleDriveWanderHash = (Hash)Constants.NATIVE_TASK_VEHICLE_DRIVE_WANDER;
+
         private readonly AudioManager _audio;
         private readonly AnnouncementQueue _announcementQueue;
 
@@ -152,7 +159,7 @@ namespace GrandTheftAccessibility
             {
                 // Get road node properties
                 Function.Call(
-                    (Hash)Constants.NATIVE_GET_VEHICLE_NODE_PROPERTIES,
+                    _getVehicleNodePropsHash,
                     position.X, position.Y, position.Z,
                     _density, _flags);
 
@@ -199,12 +206,12 @@ namespace GrandTheftAccessibility
                         {
                             float adjustedSpeed = targetSpeed * _roadTypeSpeedMultiplier;
                             Function.Call(
-                                (Hash)Constants.NATIVE_SET_DRIVE_TASK_CRUISE_SPEED,
+                                _setCruiseSpeedHash,
                                 player.Handle,
                                 adjustedSpeed);
 
                             string roadName = Constants.GetRoadTypeName(roadType);
-                            Logger.Debug($"Road type speed: {roadName} -> {adjustedSpeed:F1} m/s ({_roadTypeSpeedMultiplier:P0})");
+                            if (Logger.IsDebugEnabled) Logger.Debug($"Road type speed: {roadName} -> {adjustedSpeed:F1} m/s ({_roadTypeSpeedMultiplier:P0})");
                         }
                     }
                     catch (Exception ex)
@@ -358,7 +365,7 @@ namespace GrandTheftAccessibility
             {
                 // Get road node properties at current position
                 Function.Call(
-                    (Hash)Constants.NATIVE_GET_VEHICLE_NODE_PROPERTIES,
+                    _getVehicleNodePropsHash,
                     position.X, position.Y, position.Z,
                     _density, _flags);
 
@@ -426,7 +433,7 @@ namespace GrandTheftAccessibility
                 }
 
                 // Clear current task
-                Function.Call((Hash)Constants.NATIVE_CLEAR_PED_TASKS, player.Handle);
+                Function.Call(_clearPedTasksHash, player.Handle);
 
                 // Perform a reverse and turn maneuver
                 _deadEndTurnCount++;
@@ -444,7 +451,7 @@ namespace GrandTheftAccessibility
                     Constants.TEMP_ACTION_REVERSE_RIGHT;
 
                 Function.Call(
-                    (Hash)Constants.NATIVE_TASK_VEHICLE_TEMP_ACTION,
+                    _taskVehicleTempActionHash,
                     player.Handle, vehicle.Handle, action, 2500);  // 2.5 second reverse
 
                 // Notify parent about turnaround for recovery state
@@ -482,7 +489,8 @@ namespace GrandTheftAccessibility
                 float lookahead = Math.Max(Constants.COLLISION_LOOKAHEAD_MIN,
                     speed * Constants.COLLISION_LOOKAHEAD_TIME_FACTOR);
 
-                float radians = (90f - heading) * (float)Math.PI / 180f;
+                // PERFORMANCE: Use pre-calculated DEG_TO_RAD constant
+                float radians = (90f - heading) * Constants.DEG_TO_RAD;
                 Vector3 aheadPos = position + new Vector3(
                     (float)Math.Cos(radians) * lookahead,
                     (float)Math.Sin(radians) * lookahead,
@@ -500,11 +508,11 @@ namespace GrandTheftAccessibility
 
                     // Clear task and re-issue to force new route calculation
                     Ped player = Game.Player.Character;
-                    Function.Call((Hash)Constants.NATIVE_CLEAR_PED_TASKS, player.Handle);
+                    Function.Call(_clearPedTasksHash, player.Handle);
 
                     int styleValue = Constants.GetDrivingStyleValue(drivingStyleMode);
                     Function.Call(
-                        (Hash)Constants.NATIVE_TASK_VEHICLE_DRIVE_WANDER,
+                        _taskVehicleDriveWanderHash,
                         player.Handle, vehicle.Handle, targetSpeed, styleValue);
 
                     return true;
@@ -542,7 +550,7 @@ namespace GrandTheftAccessibility
 
                 // Additional check using road node flags for restricted roads
                 Function.Call(
-                    (Hash)Constants.NATIVE_GET_VEHICLE_NODE_PROPERTIES,
+                    _getVehicleNodePropsHash,
                     position.X, position.Y, position.Z,
                     _density, _flags);
 
@@ -560,7 +568,7 @@ namespace GrandTheftAccessibility
             }
             catch (Exception ex)
             {
-                Logger.Debug($"IsPositionRestricted check failed: {ex.Message}");
+                if (Logger.IsDebugEnabled) Logger.Debug($"IsPositionRestricted check failed: {ex.Message}");
             }
 
             return false;
