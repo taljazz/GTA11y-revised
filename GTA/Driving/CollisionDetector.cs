@@ -27,10 +27,6 @@ namespace GrandTheftAccessibility
         private int _lastCollisionWarningLevel;
         private long _lastCollisionCheckTick;
         private long _lastCollisionAnnounceTick;
-        private float _followingTimeGap = float.MaxValue;
-        private int _lastFollowingState;
-        private long _lastFollowingCheckTick;
-
         // PERFORMANCE: Pre-allocated vectors to avoid per-frame allocations
         private Vector3 _forwardVector;
         private Vector3 _theirForwardVector;
@@ -44,16 +40,6 @@ namespace GrandTheftAccessibility
         /// Current collision warning level
         /// </summary>
         public CollisionWarningLevel WarningLevel => (CollisionWarningLevel)_lastCollisionWarningLevel;
-
-        /// <summary>
-        /// Following time gap in seconds (for 2-3 second rule)
-        /// </summary>
-        public float FollowingTimeGap => _followingTimeGap;
-
-        /// <summary>
-        /// Current following state (0=clear, 1=safe, 2=normal, 3=close, 4=dangerous)
-        /// </summary>
-        public int FollowingState => _lastFollowingState;
 
         /// <summary>
         /// Whether a collision is imminent (requires immediate action)
@@ -237,82 +223,6 @@ namespace GrandTheftAccessibility
         }
 
         /// <summary>
-        /// Check following distance using realistic time-based following (2-3 second rule).
-        /// </summary>
-        /// <param name="vehicle">Current vehicle</param>
-        /// <param name="currentTick">Current game tick</param>
-        /// <returns>Following state (0=clear, 1=safe, 2=normal, 3=close, 4=dangerous)</returns>
-        public int CheckFollowingDistance(Vehicle vehicle, long currentTick)
-        {
-            // Defensive: Validate vehicle parameter
-            if (vehicle == null || !vehicle.Exists())
-                return _lastFollowingState;
-
-            // Defensive: Guard against invalid tick values
-            if (currentTick < 0)
-                return _lastFollowingState;
-
-            // Throttle checks
-            if (currentTick - _lastFollowingCheckTick < Constants.TICK_INTERVAL_FOLLOWING_CHECK)
-                return _lastFollowingState;
-
-            _lastFollowingCheckTick = currentTick;
-
-            try
-            {
-                // Defensive: Check vehicle state before accessing properties
-                if (vehicle.IsDead)
-                    return _lastFollowingState;
-
-                float vehicleSpeed = vehicle.Speed;
-                float followingTimeGap = float.MaxValue; // seconds
-
-                // Only calculate time gap if we have a vehicle ahead and we're moving
-                // Guard against float.MaxValue in _lastVehicleAheadDistance to prevent overflow
-                if (_lastVehicleAheadDistance < Constants.FOLLOWING_CLEAR_ROAD &&
-                    _lastVehicleAheadDistance < float.MaxValue &&
-                    vehicleSpeed > 1f)
-                {
-                    // Time gap = distance / relative speed
-                    // For simplicity, assume lead vehicle is going similar speed
-                    followingTimeGap = _lastVehicleAheadDistance / Math.Max(vehicleSpeed, 1f);
-                }
-
-                // Determine following state based on time gap (realistic 2-3 second rule)
-                int followingState;
-                if (_lastVehicleAheadDistance >= Constants.FOLLOWING_CLEAR_ROAD)
-                {
-                    followingState = 0; // Clear road
-                    _followingTimeGap = float.MaxValue;
-                }
-                else
-                {
-                    _followingTimeGap = followingTimeGap;
-
-                    // Time-based following states (2-3 second rule is safe)
-                    if (followingTimeGap >= 4.0f)
-                        followingState = 0; // Very clear
-                    else if (followingTimeGap >= 3.0f)
-                        followingState = 1; // Safe following (3+ seconds)
-                    else if (followingTimeGap >= 2.0f)
-                        followingState = 2; // Normal following (2-3 seconds)
-                    else if (followingTimeGap >= 1.5f)
-                        followingState = 3; // Close following (1.5-2 seconds)
-                    else
-                        followingState = 4; // Dangerous (< 1.5 seconds)
-                }
-
-                _lastFollowingState = followingState;
-                return followingState;
-            }
-            catch (Exception ex)
-            {
-                Logger.Exception(ex, "CollisionDetector.CheckFollowingDistance");
-                return _lastFollowingState;
-            }
-        }
-
-        /// <summary>
         /// Reset all collision detection state
         /// </summary>
         public void Reset()
@@ -321,9 +231,6 @@ namespace GrandTheftAccessibility
             _lastCollisionWarningLevel = 0;
             _lastCollisionCheckTick = 0;
             _lastCollisionAnnounceTick = 0;
-            _followingTimeGap = float.MaxValue;
-            _lastFollowingState = 0;
-            _lastFollowingCheckTick = 0;
         }
     }
 }

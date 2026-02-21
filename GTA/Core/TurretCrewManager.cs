@@ -9,8 +9,9 @@ namespace GrandTheftAccessibility
     /// <summary>
     /// Manages AI turret crew members for weaponized vehicles.
     /// Spawns and controls AI peds in turret seats that automatically engage enemies.
-    /// Based on PedTurrets mod functionality, integrated into GTA11Y.
-    /// PERFORMANCE OPTIMIZED: Uses manual loops instead of LINQ, HashSet for O(1) lookups
+    /// Features: minimum engagement range (self-damage protection), vehicle threat detection,
+    /// priority-based targeting, and combat effectiveness tuning.
+    /// PERFORMANCE OPTIMIZED: Manual loops, HashSet for O(1) lookups, squared distances
     /// </summary>
     public class TurretCrewManager
     {
@@ -19,50 +20,59 @@ namespace GrandTheftAccessibility
 
         // Active turret crew state
         private Vehicle _vehicle;
+        private int _vehicleHandle;
         private List<Ped> _turretPeds;
         private HashSet<int> _turretPedHandles;  // O(1) lookup for turret ped contains check
         private Dictionary<Ped, int> _turretPedStates;  // TurretPedState enum values
         private Dictionary<Ped, int> _turretPedLastHealth;
         private bool _isSpawned;
 
-        // Cached player relationship group (avoid repeated native calls)
+        // Cached player state (reduce native calls)
         private RelationshipGroup _cachedPlayerRelationshipGroup;
         private long _lastRelationshipGroupUpdate;
+        private int _cachedPlayerHandle;
 
         // Message tracking to prevent spam
         private bool _hasEngagedMessagePlayed;
         private bool _hasOutOfRangeMessagePlayed;
         private bool _hasDamagedMessagePlayed;
+        private bool _hasTooCloseMessagePlayed;
         private DateTime _lastDeathMessageTime;
 
         // Tick throttling
         private long _lastUpdateTick;
 
+        // Pre-cached Hash values to avoid repeated casting
+        private static readonly Hash _setFiringPatternHash = (Hash)Constants.NATIVE_SET_PED_FIRING_PATTERN;
+        private static readonly Hash _shootAtCoordHash = (Hash)Constants.NATIVE_TASK_VEHICLE_SHOOT_AT_COORD;
+        private static readonly Hash _isTurretSeatHash = (Hash)Constants.NATIVE_IS_TURRET_SEAT;
+
+        private static readonly Hash _hasBeenDamagedByHash = (Hash)Constants.NATIVE_HAS_ENTITY_BEEN_DAMAGED_BY;
+        private static readonly Hash _isPedInCombatHash = (Hash)Constants.NATIVE_IS_PED_IN_COMBAT;
+        private static readonly Hash _setCombatAbilityHash = (Hash)Constants.NATIVE_SET_PED_COMBAT_ABILITY;
+        private static readonly Hash _setCombatRangeHash = (Hash)Constants.NATIVE_SET_PED_COMBAT_RANGE;
+
         public TurretCrewManager(SettingsManager settings, AudioManager audio)
         {
             _settings = settings;
             _audio = audio;
-            _turretPeds = new List<Ped>(8);  // Pre-allocate for typical max crew size
-            _turretPedHandles = new HashSet<int>();  // O(1) contains check
+            _turretPeds = new List<Ped>(8);
+            _turretPedHandles = new HashSet<int>();
             _turretPedStates = new Dictionary<Ped, int>(8);
             _turretPedLastHealth = new Dictionary<Ped, int>(8);
             _isSpawned = false;
             _hasEngagedMessagePlayed = false;
             _hasOutOfRangeMessagePlayed = false;
             _hasDamagedMessagePlayed = false;
+            _hasTooCloseMessagePlayed = false;
             _lastDeathMessageTime = DateTime.MinValue;
             _cachedPlayerRelationshipGroup = default;
             _lastRelationshipGroupUpdate = 0;
+            _cachedPlayerHandle = 0;
         }
 
-        /// <summary>
-        /// Check if turret crew is currently spawned
-        /// </summary>
         public bool IsSpawned => _isSpawned;
 
-        /// <summary>
-        /// Get the current turret crew count
-        /// </summary>
         public int CrewCount => _turretPeds?.Count ?? 0;
 
         /// <summary>
@@ -107,33 +117,33 @@ namespace GrandTheftAccessibility
                     return;
                 }
 
+                _vehicleHandle = _vehicle.Handle;
+                _cachedPlayerHandle = player.Handle;
                 int vehicleHash = _vehicle.Model.Hash;
 
                 // Check if vehicle has weapons
                 bool hasWeapons = Function.Call<bool>(Hash.DOES_VEHICLE_HAVE_WEAPONS, _vehicle);
                 if (!hasWeapons)
                 {
-                    Announce($"Failed: Vehicle has no weapons", true, true);
+                    Announce("Failed: Vehicle has no weapons", true, true);
                     return;
                 }
 
                 int playerSeat = GetPlayerSeatIndex();
 
-                // Dynamically detect turret seats - works with modded vehicles!
-                // First try hardcoded seats (stock vehicles), then fall back to dynamic detection
+                // Dynamically detect turret seats - works with modded vehicles
                 int[] validSeats;
                 if (Constants.TURRET_VEHICLE_SEATS.TryGetValue(vehicleHash, out int[] knownSeats))
                 {
                     validSeats = knownSeats;
-                    Logger.Debug($"TurretCrewManager: Using known turret seats for hash {vehicleHash}");
+                    if (Logger.IsDebugEnabled) Logger.Debug($"TurretCrewManager: Using known turret seats for hash {vehicleHash}");
                 }
                 else
                 {
-                    // Dynamic detection for modded vehicles - scan all seats with IS_TURRET_SEAT
                     validSeats = DetectTurretSeats(_vehicle);
                     if (validSeats.Length == 0)
                     {
-                        Announce($"Failed: No turret seats detected", true, true);
+                        Announce("Failed: No turret seats detected", true, true);
                         return;
                     }
                     Logger.Info($"TurretCrewManager: Dynamically detected {validSeats.Length} turret seat(s) for modded vehicle");
@@ -141,7 +151,7 @@ namespace GrandTheftAccessibility
 
                 // Clear all tracking collections
                 _turretPeds.Clear();
-                _turretPedHandles.Clear();  // IMPORTANT: Clear HashSet too!
+                _turretPedHandles.Clear();
                 _turretPedStates.Clear();
                 _turretPedLastHealth.Clear();
 
@@ -150,27 +160,19 @@ namespace GrandTheftAccessibility
                 int spawnedCount = 0;
                 foreach (int seatIndex in validSeats)
                 {
-                    // Skip if player is in this seat
                     if (seatIndex == playerSeat)
                     {
-                        Logger.Debug($"TurretCrewManager: Skipping seat {seatIndex} - player is in this seat");
+                        if (Logger.IsDebugEnabled) Logger.Debug($"TurretCrewManager: Skipping seat {seatIndex} - player is in this seat");
                         continue;
                     }
 
-                    // Check if seat is free
                     bool seatFree = _vehicle.IsSeatFree((VehicleSeat)seatIndex);
                     if (!seatFree)
                     {
-                        // Log who is in the seat for debugging
-                        Ped occupant = _vehicle.GetPedOnSeat((VehicleSeat)seatIndex);
-                        string occupantInfo = occupant != null ? $"ped handle {occupant.Handle}" : "unknown occupant";
-                        Logger.Debug($"TurretCrewManager: Skipping seat {seatIndex} - occupied by {occupantInfo}");
+                        if (Logger.IsDebugEnabled) Logger.Debug($"TurretCrewManager: Skipping seat {seatIndex} - occupied");
                         continue;
                     }
 
-                    Logger.Debug($"TurretCrewManager: Attempting to spawn ped for seat {seatIndex}");
-
-                    // Spawn ped near vehicle, then put in seat
                     Vector3 spawnPos = _vehicle.Position + _vehicle.RightVector * (spawnedCount + 1) * 2f;
                     Ped ped = World.CreatePed(PedHash.Blackops01SMY, spawnPos);
 
@@ -184,7 +186,7 @@ namespace GrandTheftAccessibility
                     ConfigureTurretPed(ped);
 
                     _turretPeds.Add(ped);
-                    _turretPedHandles.Add(ped.Handle);  // Track handle for O(1) contains
+                    _turretPedHandles.Add(ped.Handle);
                     _turretPedStates[ped] = Constants.TURRET_STATE_IDLE;
                     _turretPedLastHealth[ped] = ped.MaxHealth;
                     spawnedCount++;
@@ -242,40 +244,49 @@ namespace GrandTheftAccessibility
                 {
                     CleanupTurretPeds();
                     _isSpawned = false;
+                    _vehicle = null;
                     return;
+                }
+
+                // Update cached player info periodically
+                if (currentTick - _lastRelationshipGroupUpdate > 10_000_000) // 1 second
+                {
+                    Ped player = Game.Player?.Character;
+                    if (player != null && player.Exists())
+                    {
+                        _cachedPlayerRelationshipGroup = player.RelationshipGroup;
+                        _cachedPlayerHandle = player.Handle;
+                    }
+                    _lastRelationshipGroupUpdate = currentTick;
                 }
 
                 bool anyFighting = false;
                 bool anyInRange = false;
                 bool anyDamaged = false;
+                bool anyTooClose = false;
 
                 // Iterate in reverse to safely remove dead peds
                 for (int i = _turretPeds.Count - 1; i >= 0; i--)
                 {
                     Ped ped = _turretPeds[i];
 
-                    // Check if ped is valid and still in vehicle
                     if (ped == null || !ped.Exists() || !ped.IsInVehicle(_vehicle))
                     {
                         RemoveTurretPed(i);
                         continue;
                     }
 
-                    // Update ped behavior
-                    UpdateTurretPedState(ped, ref anyFighting, ref anyInRange, ref anyDamaged);
-
-                    // Check for death
                     if (ped.IsDead)
                     {
                         HandleTurretPedDeath(i);
                         continue;
                     }
+
+                    UpdateTurretPedState(ped, ref anyFighting, ref anyInRange, ref anyDamaged, ref anyTooClose);
                 }
 
-                // Handle collective announcements
-                UpdateCollectiveMessages(anyFighting, anyInRange, anyDamaged);
+                UpdateCollectiveMessages(anyFighting, anyInRange, anyDamaged, anyTooClose);
 
-                // Check if all crew gone
                 if (_turretPeds.Count == 0)
                 {
                     _isSpawned = false;
@@ -289,7 +300,7 @@ namespace GrandTheftAccessibility
         }
 
         /// <summary>
-        /// Configure a turret ped with proper settings
+        /// Configure a turret ped with proper combat settings
         /// </summary>
         private void ConfigureTurretPed(Ped ped)
         {
@@ -301,7 +312,24 @@ namespace GrandTheftAccessibility
                 ped.IsPersistent = true;
                 ped.CanRagdoll = false;
 
-                // Set config flag 132 (combat-related)
+                // Combat effectiveness tuning
+                ped.Accuracy = Constants.TURRET_CREW_ACCURACY;
+                Function.Call(_setCombatAbilityHash, ped, Constants.TURRET_COMBAT_ABILITY_PROFESSIONAL);
+                Function.Call(_setCombatRangeHash, ped, Constants.TURRET_COMBAT_RANGE_FAR);
+
+                // Combat attributes for effective turret behavior
+                // 2 = CanDoDrivebys
+                Function.Call(Hash.SET_PED_COMBAT_ATTRIBUTES, ped, 2, true);
+                // 5 = CanFightArmedPedsWhenNotArmed
+                Function.Call(Hash.SET_PED_COMBAT_ATTRIBUTES, ped, 5, true);
+                // 20 = CanTauntInVehicle
+                Function.Call(Hash.SET_PED_COMBAT_ATTRIBUTES, ped, 20, true);
+                // 46 = UseVehicleAttack (use vehicle weapons against vehicles)
+                Function.Call(Hash.SET_PED_COMBAT_ATTRIBUTES, ped, 46, true);
+                // 52 = UseVehicleAttackIfVehicleHasMountedGuns
+                Function.Call(Hash.SET_PED_COMBAT_ATTRIBUTES, ped, 52, true);
+
+                // Config flag 132 (combat-related)
                 Function.Call(Hash.SET_PED_CONFIG_FLAG, ped, 132, true);
 
                 // Put ped in player's relationship group so they're friendly
@@ -312,7 +340,7 @@ namespace GrandTheftAccessibility
                     Function.Call(Hash.SET_PED_RELATIONSHIP_GROUP_HASH, ped, playerGroup);
                 }
 
-                // Give them a weapon for when they dismount (turret weapons are vehicle-based)
+                // Give them a weapon for when they dismount
                 ped.Weapons.Give(WeaponHash.MicroSMG, 9999, true, true);
             }
             catch (Exception ex)
@@ -336,16 +364,17 @@ namespace GrandTheftAccessibility
                     return -2;
 
                 int totalSeats = _vehicle.PassengerCapacity + 1;
+                int playerHandle = player.Handle;
                 for (int i = -1; i < totalSeats - 1; i++)
                 {
                     Ped pedInSeat = _vehicle.GetPedOnSeat((VehicleSeat)i);
-                    if (pedInSeat != null && pedInSeat == player)
+                    if (pedInSeat != null && pedInSeat.Handle == playerHandle)
                     {
                         return i;
                     }
                 }
 
-                return -2; // Not found
+                return -2;
             }
             catch (Exception ex)
             {
@@ -356,10 +385,7 @@ namespace GrandTheftAccessibility
 
         /// <summary>
         /// Dynamically detect turret seats in a vehicle using the IS_TURRET_SEAT native.
-        /// This allows turret crew to work with modded vehicles whose hashes have changed.
         /// </summary>
-        /// <param name="vehicle">The vehicle to scan for turret seats</param>
-        /// <returns>Array of seat indices that are turret seats</returns>
         private int[] DetectTurretSeats(Vehicle vehicle)
         {
             try
@@ -367,41 +393,27 @@ namespace GrandTheftAccessibility
                 if (vehicle == null || !vehicle.Exists())
                     return Array.Empty<int>();
 
-                // Get total seat count (PassengerCapacity doesn't include driver)
                 int totalSeats = vehicle.PassengerCapacity + 1;
-
-                // Use a list to collect turret seats (can't predict count ahead of time)
                 List<int> turretSeats = new List<int>(totalSeats);
 
-                // Scan all seats (starting from 0, as driver seat -1 is rarely a turret)
-                // Check seats 0 through totalSeats-1 (passenger indices)
                 for (int seatIndex = 0; seatIndex < totalSeats; seatIndex++)
                 {
-                    bool isTurret = Function.Call<bool>((Hash)Constants.NATIVE_IS_TURRET_SEAT, vehicle, seatIndex);
+                    bool isTurret = Function.Call<bool>(_isTurretSeatHash, vehicle, seatIndex);
                     if (isTurret)
                     {
                         turretSeats.Add(seatIndex);
-                        Logger.Debug($"TurretCrewManager: Seat {seatIndex} is a turret seat");
+                        if (Logger.IsDebugEnabled) Logger.Debug($"TurretCrewManager: Seat {seatIndex} is a turret seat");
                     }
                 }
 
-                // If no turret seats found via IS_TURRET_SEAT, try alternative detection
-                // Some vehicles may have weapons but not report turret seats properly
+                // Fallback for vehicles where IS_TURRET_SEAT doesn't work
                 if (turretSeats.Count == 0)
                 {
-                    Logger.Debug("TurretCrewManager: IS_TURRET_SEAT found no turrets, trying weapon seat detection");
-
-                    // Try checking if seats can use vehicle weapons via GET_VEHICLE_PED_IS_IN
-                    // For now, try common turret seat patterns: seats 0, 1, 2 (many military vehicles)
+                    if (Logger.IsDebugEnabled) Logger.Debug("TurretCrewManager: IS_TURRET_SEAT found no turrets, trying fallback");
                     for (int seatIndex = 0; seatIndex < Math.Min(3, totalSeats); seatIndex++)
                     {
-                        // Add seat if vehicle has weapons and seat exists
-                        // This is a fallback for vehicles where IS_TURRET_SEAT doesn't work
-                        if (seatIndex < totalSeats)
-                        {
-                            turretSeats.Add(seatIndex);
-                            Logger.Debug($"TurretCrewManager: Adding seat {seatIndex} as potential turret (fallback)");
-                        }
+                        turretSeats.Add(seatIndex);
+                        if (Logger.IsDebugEnabled) Logger.Debug($"TurretCrewManager: Adding seat {seatIndex} as potential turret (fallback)");
                     }
                 }
 
@@ -415,103 +427,97 @@ namespace GrandTheftAccessibility
         }
 
         /// <summary>
-        /// Update a turret ped's combat state
-        /// OPTIMIZED: Uses TryGetValue instead of ContainsKey + access
+        /// Update a turret ped's combat state with priority-based targeting and minimum range enforcement.
+        /// 3-tier engagement: dead zone (0-25m), full auto (25-80m), aimed fire (80-150m)
         /// </summary>
-        private void UpdateTurretPedState(Ped ped, ref bool anyFighting, ref bool anyInRange, ref bool anyDamaged)
+        private void UpdateTurretPedState(Ped ped, ref bool anyFighting, ref bool anyInRange, ref bool anyDamaged, ref bool anyTooClose)
         {
             try
             {
-                // OPTIMIZED: Single dictionary lookup instead of ContainsKey + access
                 int currentState = _turretPedStates.TryGetValue(ped, out int state) ? state : Constants.TURRET_STATE_IDLE;
-                Ped nearestEnemy = FindNearestEnemy(ped);
-                float distanceToEnemy = nearestEnemy != null ? ped.Position.DistanceTo(nearestEnemy.Position) : float.MaxValue;
+
+                // Find the best target using priority system
+                float distanceToEnemy;
+                bool enemyInDeadZone;
+                Ped bestTarget = FindBestTarget(ped, out distanceToEnemy, out enemyInDeadZone);
+
+                if (enemyInDeadZone)
+                    anyTooClose = true;
 
                 switch (currentState)
                 {
                     case Constants.TURRET_STATE_IDLE:
-                        if (nearestEnemy != null)
+                        if (bestTarget != null)
                         {
                             if (distanceToEnemy <= Constants.TURRET_FULL_AUTO_RANGE)
                             {
-                                // Engage in full auto
-                                Function.Call((Hash)Constants.NATIVE_SET_PED_FIRING_PATTERN, ped, Constants.FIRING_PATTERN_FULL_AUTO);
-                                ped.Task.FightAgainst(nearestEnemy);
+                                EngageTarget(ped, bestTarget);
                                 _turretPedStates[ped] = Constants.TURRET_STATE_FIGHTING;
                                 anyFighting = true;
                                 anyInRange = true;
                             }
                             else if (distanceToEnemy <= Constants.TURRET_AIM_RANGE)
                             {
-                                // Aim at distant enemy
-                                ped.Task.AimAt(nearestEnemy, -1);
+                                ped.Task.AimAt(bestTarget, -1);
                                 _turretPedStates[ped] = Constants.TURRET_STATE_AIMING;
                             }
                         }
-                        else
+                        else if (!enemyInDeadZone)
                         {
-                            // No enemy - clear targeting
-                            Function.Call((Hash)Constants.NATIVE_TASK_VEHICLE_SHOOT_AT_COORD, ped, 0f, 0f, 0f, 0);
+                            // No targets at all - use autonomous combat as fallback
+                            ClearTargeting(ped);
                         }
                         break;
 
                     case Constants.TURRET_STATE_AIMING:
-                        if (nearestEnemy != null)
+                        if (bestTarget != null)
                         {
                             if (distanceToEnemy <= Constants.TURRET_FULL_AUTO_RANGE)
                             {
-                                // Enemy now in range - engage
-                                Function.Call((Hash)Constants.NATIVE_SET_PED_FIRING_PATTERN, ped, Constants.FIRING_PATTERN_FULL_AUTO);
-                                ped.Task.FightAgainst(nearestEnemy);
+                                EngageTarget(ped, bestTarget);
                                 _turretPedStates[ped] = Constants.TURRET_STATE_FIGHTING;
                                 anyFighting = true;
                                 anyInRange = true;
                             }
                             else
                             {
-                                // Keep aiming
-                                ped.Task.AimAt(nearestEnemy, -1);
+                                ped.Task.AimAt(bestTarget, -1);
                             }
                         }
                         else
                         {
-                            // Enemy gone
-                            Function.Call((Hash)Constants.NATIVE_SET_PED_FIRING_PATTERN, ped, Constants.FIRING_PATTERN_DEFAULT);
-                            Function.Call((Hash)Constants.NATIVE_TASK_VEHICLE_SHOOT_AT_COORD, ped, 0f, 0f, 0f, 0);
+                            DisengageTarget(ped);
                             _turretPedStates[ped] = Constants.TURRET_STATE_IDLE;
                         }
                         break;
 
                     case Constants.TURRET_STATE_FIGHTING:
-                        if (nearestEnemy != null)
+                        if (bestTarget != null)
                         {
                             if (distanceToEnemy <= Constants.TURRET_FULL_AUTO_RANGE)
                             {
-                                // Continue fighting
-                                Function.Call((Hash)Constants.NATIVE_SET_PED_FIRING_PATTERN, ped, Constants.FIRING_PATTERN_FULL_AUTO);
-                                ped.Task.FightAgainst(nearestEnemy);
+                                // Continue fighting - re-issue task to keep targeting best priority
+                                EngageTarget(ped, bestTarget);
                                 anyFighting = true;
                                 anyInRange = true;
                             }
                             else
                             {
-                                // Out of range - fall back to aiming
-                                Function.Call((Hash)Constants.NATIVE_SET_PED_FIRING_PATTERN, ped, Constants.FIRING_PATTERN_DEFAULT);
-                                ped.Task.AimAt(nearestEnemy, -1);
+                                // Out of full auto range - fall back to aiming
+                                Function.Call(_setFiringPatternHash, ped, Constants.FIRING_PATTERN_DEFAULT);
+                                ped.Task.AimAt(bestTarget, -1);
                                 _turretPedStates[ped] = Constants.TURRET_STATE_AIMING;
                             }
                         }
                         else
                         {
-                            // No more enemies
-                            Function.Call((Hash)Constants.NATIVE_SET_PED_FIRING_PATTERN, ped, Constants.FIRING_PATTERN_DEFAULT);
-                            Function.Call((Hash)Constants.NATIVE_TASK_VEHICLE_SHOOT_AT_COORD, ped, 0f, 0f, 0f, 0);
+                            DisengageTarget(ped);
                             _turretPedStates[ped] = Constants.TURRET_STATE_IDLE;
                         }
                         break;
                 }
 
-                // Check for damage - OPTIMIZED: TryGetValue instead of ContainsKey + access
+                // Check for damage
                 int currentHealth = ped.Health;
                 int lastHealth = _turretPedLastHealth.TryGetValue(ped, out int health) ? health : ped.MaxHealth;
 
@@ -531,83 +537,289 @@ namespace GrandTheftAccessibility
         }
 
         /// <summary>
-        /// Find the nearest enemy to a ped
-        /// PERFORMANCE OPTIMIZED: Manual loop instead of LINQ to avoid allocations
-        /// Uses HashSet for O(1) turret ped check, caches player relationship group
+        /// Engage a target with full auto fire
         /// </summary>
-        private Ped FindNearestEnemy(Ped turretPed)
+        private void EngageTarget(Ped ped, Ped target)
         {
+            Function.Call(_setFiringPatternHash, ped, Constants.FIRING_PATTERN_FULL_AUTO);
+            ped.Task.FightAgainst(target);
+        }
+
+        /// <summary>
+        /// Disengage from current target and clear firing
+        /// </summary>
+        private void DisengageTarget(Ped ped)
+        {
+            Function.Call(_setFiringPatternHash, ped, Constants.FIRING_PATTERN_DEFAULT);
+            ClearTargeting(ped);
+        }
+
+        /// <summary>
+        /// Clear targeting task on a ped
+        /// </summary>
+        private void ClearTargeting(Ped ped)
+        {
+            Function.Call(_shootAtCoordHash, ped, 0f, 0f, 0f, 0);
+        }
+
+        /// <summary>
+        /// Find the best target using priority-based scoring.
+        /// Considers: threat level (attacking > armed vehicle > armed foot > unarmed),
+        /// distance, and minimum engagement range (25m dead zone).
+        /// Also scans hostile vehicle occupants that GetNearbyPeds may miss.
+        /// </summary>
+        private Ped FindBestTarget(Ped turretPed, out float bestDistance, out bool enemyInDeadZone)
+        {
+            bestDistance = float.MaxValue;
+            enemyInDeadZone = false;
+
             try
             {
                 Ped player = Game.Player?.Character;
                 if (player == null || !player.Exists())
                     return null;
 
-                Ped[] nearbyPeds = World.GetNearbyPeds(turretPed, Constants.TURRET_AIM_RANGE);
-                if (nearbyPeds == null || nearbyPeds.Length == 0)
-                    return null;
-
-                // Cache player relationship group (update every ~1 second to reduce native calls)
-                long currentTick = DateTime.Now.Ticks;
-                if (currentTick - _lastRelationshipGroupUpdate > 10_000_000) // 1 second
-                {
-                    _cachedPlayerRelationshipGroup = player.RelationshipGroup;
-                    _lastRelationshipGroupUpdate = currentTick;
-                }
-
+                Vector3 vehiclePos = _vehicle.Position;
                 Vector3 turretPos = turretPed.Position;
-                Ped nearestEnemy = null;
-                float nearestDistSq = float.MaxValue;
-                int playerHandle = player.Handle;
 
-                // Manual loop - no LINQ allocations
-                for (int i = 0; i < nearbyPeds.Length; i++)
+                Ped bestTarget = null;
+                int bestScore = -1;
+                float bestDistSq = float.MaxValue;
+
+                // === Phase 1: Scan nearby peds on foot ===
+                Ped[] nearbyPeds = World.GetNearbyPeds(turretPed, Constants.TURRET_AIM_RANGE);
+                if (nearbyPeds != null)
                 {
-                    Ped p = nearbyPeds[i];
-
-                    // Quick null/validity checks first
-                    if (p == null || !p.Exists() || !p.IsAlive)
-                        continue;
-
-                    // Skip player
-                    if (p.Handle == playerHandle)
-                        continue;
-
-                    // O(1) check if this is one of our turret peds
-                    if (_turretPedHandles.Contains(p.Handle))
-                        continue;
-
-                    // Check relationship (enemy only)
-                    if (p.RelationshipGroup == _cachedPlayerRelationshipGroup)
-                        continue;
-
-                    // Calculate squared distance (avoid sqrt for comparison)
-                    Vector3 pPos = p.Position;
-                    float dx = pPos.X - turretPos.X;
-                    float dy = pPos.Y - turretPos.Y;
-                    float dz = pPos.Z - turretPos.Z;
-                    float distSq = dx * dx + dy * dy + dz * dz;
-
-                    if (distSq < nearestDistSq)
+                    for (int i = 0; i < nearbyPeds.Length; i++)
                     {
-                        nearestDistSq = distSq;
-                        nearestEnemy = p;
+                        Ped p = nearbyPeds[i];
+                        if (p == null || !p.Exists() || !p.IsAlive)
+                            continue;
+
+                        if (p.Handle == _cachedPlayerHandle)
+                            continue;
+
+                        if (_turretPedHandles.Contains(p.Handle))
+                            continue;
+
+                        // Check if hostile
+                        if (p.RelationshipGroup == _cachedPlayerRelationshipGroup)
+                            continue;
+
+                        // Distance from the vehicle (for dead zone) and from turret ped (for engagement)
+                        Vector3 pPos = p.Position;
+                        float dxV = pPos.X - vehiclePos.X;
+                        float dyV = pPos.Y - vehiclePos.Y;
+                        float dzV = pPos.Z - vehiclePos.Z;
+                        float distSqFromVehicle = dxV * dxV + dyV * dyV + dzV * dzV;
+
+                        // Check dead zone relative to our vehicle
+                        if (distSqFromVehicle < Constants.TURRET_MIN_ENGAGEMENT_RANGE_SQ)
+                        {
+                            enemyInDeadZone = true;
+                            continue; // Too close - skip
+                        }
+
+                        float dxT = pPos.X - turretPos.X;
+                        float dyT = pPos.Y - turretPos.Y;
+                        float dzT = pPos.Z - turretPos.Z;
+                        float distSqFromTurret = dxT * dxT + dyT * dyT + dzT * dzT;
+
+                        if (distSqFromTurret > Constants.TURRET_AIM_RANGE_SQ)
+                            continue;
+
+                        int score = ScoreTarget(p, player);
+
+                        // Higher score wins; equal score = closer wins
+                        if (score > bestScore || (score == bestScore && distSqFromTurret < bestDistSq))
+                        {
+                            bestScore = score;
+                            bestDistSq = distSqFromTurret;
+                            bestTarget = p;
+                        }
                     }
                 }
 
-                return nearestEnemy;
+                // === Phase 2: Scan hostile vehicle occupants ===
+                Vehicle[] nearbyVehicles = World.GetNearbyVehicles(turretPed, Constants.TURRET_AIM_RANGE);
+                if (nearbyVehicles != null)
+                {
+                    for (int i = 0; i < nearbyVehicles.Length; i++)
+                    {
+                        Vehicle v = nearbyVehicles[i];
+                        if (v == null || !v.Exists())
+                            continue;
+
+                        // Skip our own vehicle
+                        if (v.Handle == _vehicleHandle)
+                            continue;
+
+                        // Check distance from our vehicle for dead zone
+                        Vector3 vPos = v.Position;
+                        float dxV = vPos.X - vehiclePos.X;
+                        float dyV = vPos.Y - vehiclePos.Y;
+                        float dzV = vPos.Z - vehiclePos.Z;
+                        float distSqFromVehicle = dxV * dxV + dyV * dyV + dzV * dzV;
+
+                        if (distSqFromVehicle < Constants.TURRET_MIN_ENGAGEMENT_RANGE_SQ)
+                        {
+                            enemyInDeadZone = true;
+                            continue;
+                        }
+
+                        float dxT = vPos.X - turretPos.X;
+                        float dyT = vPos.Y - turretPos.Y;
+                        float dzT = vPos.Z - turretPos.Z;
+                        float distSqFromTurret = dxT * dxT + dyT * dyT + dzT * dzT;
+
+                        if (distSqFromTurret > Constants.TURRET_AIM_RANGE_SQ)
+                            continue;
+
+                        // Check occupants for hostiles - scan driver + up to 3 passengers
+                        Ped hostileOccupant = FindHostileOccupant(v);
+                        if (hostileOccupant == null)
+                            continue;
+
+                        // Already counted via nearby peds? Skip duplicate
+                        if (_turretPedHandles.Contains(hostileOccupant.Handle))
+                            continue;
+
+                        // Score vehicle-based target
+                        int score = ScoreVehicleTarget(v, hostileOccupant, player);
+
+                        if (score > bestScore || (score == bestScore && distSqFromTurret < bestDistSq))
+                        {
+                            bestScore = score;
+                            bestDistSq = distSqFromTurret;
+                            bestTarget = hostileOccupant;
+                        }
+                    }
+                }
+
+                if (bestTarget != null)
+                {
+                    bestDistance = (float)Math.Sqrt(bestDistSq);
+                }
+
+                return bestTarget;
             }
             catch (Exception ex)
             {
-                Logger.Exception(ex, "FindNearestEnemy");
+                Logger.Exception(ex, "FindBestTarget");
                 return null;
             }
         }
 
         /// <summary>
-        /// Handle collective announcement messages
+        /// Score a ped target based on threat level.
+        /// Higher score = higher priority.
         /// </summary>
-        private void UpdateCollectiveMessages(bool anyFighting, bool anyInRange, bool anyDamaged)
+        private int ScoreTarget(Ped target, Ped player)
+        {
+            try
+            {
+                // Highest priority: actively attacking the player or our vehicle
+                bool isInCombatWithPlayer = Function.Call<bool>(_isPedInCombatHash, target, player);
+                if (isInCombatWithPlayer)
+                    return Constants.TURRET_PRIORITY_ATTACKING;
+
+                // Check if this ped has damaged our vehicle recently
+                if (_vehicle != null && _vehicle.Exists())
+                {
+                    bool damagedVehicle = Function.Call<bool>(_hasBeenDamagedByHash, _vehicle, target, true);
+                    if (damagedVehicle)
+                        return Constants.TURRET_PRIORITY_ATTACKING;
+                }
+
+                // Armed on foot
+                if (target.Weapons != null && target.Weapons.Current != null &&
+                    target.Weapons.Current.Hash != WeaponHash.Unarmed)
+                    return Constants.TURRET_PRIORITY_ARMED_ON_FOOT;
+
+                // Hostile but unarmed
+                return Constants.TURRET_PRIORITY_UNARMED;
+            }
+            catch
+            {
+                return Constants.TURRET_PRIORITY_UNARMED;
+            }
+        }
+
+        /// <summary>
+        /// Score a vehicle-based target. Returns higher scores for weaponized vehicles.
+        /// </summary>
+        private int ScoreVehicleTarget(Vehicle vehicle, Ped occupant, Ped player)
+        {
+            try
+            {
+                // Check if occupant is in combat with player
+                bool isInCombatWithPlayer = Function.Call<bool>(_isPedInCombatHash, occupant, player);
+                if (isInCombatWithPlayer)
+                    return Constants.TURRET_PRIORITY_ATTACKING;
+
+                // Check if this vehicle has damaged our vehicle
+                if (_vehicle != null && _vehicle.Exists())
+                {
+                    bool damagedVehicle = Function.Call<bool>(_hasBeenDamagedByHash, _vehicle, vehicle, true);
+                    if (damagedVehicle)
+                        return Constants.TURRET_PRIORITY_ATTACKING;
+                }
+
+                // Weaponized vehicle
+                bool hasWeapons = Function.Call<bool>(Hash.DOES_VEHICLE_HAVE_WEAPONS, vehicle);
+                if (hasWeapons)
+                    return Constants.TURRET_PRIORITY_ARMED_VEHICLE;
+
+                // Regular hostile vehicle
+                return Constants.TURRET_PRIORITY_ARMED_ON_FOOT;
+            }
+            catch
+            {
+                return Constants.TURRET_PRIORITY_UNARMED;
+            }
+        }
+
+        /// <summary>
+        /// Find a hostile occupant in a vehicle. Returns the driver if hostile, otherwise first hostile passenger.
+        /// </summary>
+        private Ped FindHostileOccupant(Vehicle vehicle)
+        {
+            try
+            {
+                // Check driver first
+                Ped driver = vehicle.GetPedOnSeat(VehicleSeat.Driver);
+                if (driver != null && driver.Exists() && driver.IsAlive &&
+                    driver.Handle != _cachedPlayerHandle &&
+                    driver.RelationshipGroup != _cachedPlayerRelationshipGroup)
+                {
+                    return driver;
+                }
+
+                // Check passengers (up to 4)
+                int passengerCount = Math.Min(vehicle.PassengerCapacity, 4);
+                for (int seat = 0; seat < passengerCount; seat++)
+                {
+                    Ped passenger = vehicle.GetPedOnSeat((VehicleSeat)seat);
+                    if (passenger != null && passenger.Exists() && passenger.IsAlive &&
+                        passenger.Handle != _cachedPlayerHandle &&
+                        passenger.RelationshipGroup != _cachedPlayerRelationshipGroup)
+                    {
+                        return passenger;
+                    }
+                }
+
+                return null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Handle collective announcement messages including "too close" warning
+        /// </summary>
+        private void UpdateCollectiveMessages(bool anyFighting, bool anyInRange, bool anyDamaged, bool anyTooClose)
         {
             int announceMode = _settings.GetIntSetting("turretCrewAnnouncements");
             if (announceMode == Constants.TURRET_ANNOUNCE_OFF)
@@ -618,16 +830,28 @@ namespace GrandTheftAccessibility
             bool announceApproaching = (announceMode == Constants.TURRET_ANNOUNCE_APPROACHING_ONLY ||
                                         announceMode == Constants.TURRET_ANNOUNCE_BOTH);
 
-            // Engagement message (firing)
+            // "Too close" warning (firing category)
             if (announceFiring)
             {
+                if (anyTooClose && !anyFighting && !_hasTooCloseMessagePlayed)
+                {
+                    Announce("Enemy too close, holding fire", false, false);
+                    _hasTooCloseMessagePlayed = true;
+                }
+                else if (!anyTooClose && _hasTooCloseMessagePlayed)
+                {
+                    _hasTooCloseMessagePlayed = false;
+                }
+
+                // Engagement messages
                 if (anyFighting && anyInRange && !_hasEngagedMessagePlayed)
                 {
                     Announce("Turret crew engaging enemies", false, false);
                     _hasEngagedMessagePlayed = true;
                     _hasOutOfRangeMessagePlayed = false;
+                    _hasTooCloseMessagePlayed = false;
                 }
-                else if (!anyInRange && _hasEngagedMessagePlayed && !_hasOutOfRangeMessagePlayed)
+                else if (!anyInRange && !anyTooClose && _hasEngagedMessagePlayed && !_hasOutOfRangeMessagePlayed)
                 {
                     Announce("Turret crew holding fire", false, false);
                     _hasOutOfRangeMessagePlayed = true;
@@ -635,7 +859,7 @@ namespace GrandTheftAccessibility
                 }
             }
 
-            // Damage message (approaching/critical)
+            // Damage messages
             if (announceApproaching)
             {
                 if (anyDamaged && !_hasDamagedMessagePlayed)
@@ -688,7 +912,7 @@ namespace GrandTheftAccessibility
                 Ped ped = _turretPeds[index];
                 if (ped != null)
                 {
-                    _turretPedHandles.Remove(ped.Handle);  // Remove from HashSet
+                    _turretPedHandles.Remove(ped.Handle);
                     if (ped.Exists())
                     {
                         ped.Delete();
@@ -722,12 +946,13 @@ namespace GrandTheftAccessibility
                         }
                     }
                     _turretPeds.Clear();
-                    _turretPedHandles.Clear();  // Clear HashSet
+                    _turretPedHandles.Clear();
                     _turretPedStates.Clear();
                     _turretPedLastHealth.Clear();
                 }
 
                 _vehicle = null;
+                _vehicleHandle = 0;
                 _isSpawned = false;
                 ResetMessageFlags();
             }
@@ -745,6 +970,7 @@ namespace GrandTheftAccessibility
             _hasEngagedMessagePlayed = false;
             _hasOutOfRangeMessagePlayed = false;
             _hasDamagedMessagePlayed = false;
+            _hasTooCloseMessagePlayed = false;
             _lastDeathMessageTime = DateTime.MinValue;
         }
 
@@ -775,7 +1001,6 @@ namespace GrandTheftAccessibility
 
         /// <summary>
         /// Check if player's current vehicle supports turret crew.
-        /// Uses dynamic detection for modded vehicles.
         /// </summary>
         public bool IsCurrentVehicleTurretCapable()
         {
@@ -789,17 +1014,14 @@ namespace GrandTheftAccessibility
                 if (vehicle == null || !vehicle.Exists())
                     return false;
 
-                // First check: does vehicle have weapons at all?
                 bool hasWeapons = Function.Call<bool>(Hash.DOES_VEHICLE_HAVE_WEAPONS, vehicle);
                 if (!hasWeapons)
                     return false;
 
-                // Check if we have hardcoded seats for this hash (stock vehicles)
                 int vehicleHash = vehicle.Model.Hash;
                 if (Constants.TURRET_VEHICLE_SEATS.ContainsKey(vehicleHash))
                     return true;
 
-                // For modded vehicles, dynamically detect turret seats
                 int[] turretSeats = DetectTurretSeats(vehicle);
                 return turretSeats.Length > 0;
             }

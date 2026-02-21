@@ -149,7 +149,7 @@ namespace GrandTheftAccessibility
             {
                 SavedVehicle saved = new SavedVehicle
                 {
-                    DisplayName = vehicle.DisplayName,
+                    DisplayName = vehicle.LocalizedName ?? vehicle.DisplayName,
                     ModelHash = vehicle.Model.Hash
                 };
 
@@ -279,6 +279,7 @@ namespace GrandTheftAccessibility
                 if (vehicle == null)
                     return null;
 
+                vehicle.IsPersistent = true;
                 vehicle.PlaceOnGround();
 
                 // Install mod kit first

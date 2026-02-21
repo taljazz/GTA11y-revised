@@ -158,9 +158,9 @@ namespace GrandTheftAccessibility.Menus
             VehicleSpawn vehicle = _vehicles[_currentIndex];
             if (!string.IsNullOrEmpty(vehicle.vehicleClassName))
             {
-                return $"{vehicle.name}, {vehicle.vehicleClassName}";
+                return $"{_currentIndex + 1} of {_vehicles.Count}: {vehicle.name}, {vehicle.vehicleClassName}";
             }
-            return vehicle.name;
+            return $"{_currentIndex + 1} of {_vehicles.Count}: {vehicle.name}";
         }
 
         public void ExecuteSelection()
@@ -204,6 +204,7 @@ namespace GrandTheftAccessibility.Menus
                 }
 
                 vehicle.PlaceOnGround();
+                DavyKager.Tolk.Speak($"Spawned {_vehicles[_currentIndex].name}");
 
                 // Warp player inside if setting enabled
                 if (_settings != null && _settings.GetSetting("warpInsideVehicle"))

@@ -199,27 +199,26 @@ namespace GrandTheftAccessibility.Menus
         public void NavigatePrevious(bool fastScroll = false)
         {
             int step = fastScroll ? 10 : 1;
-
-            if (_currentIndex >= step)
-                _currentIndex -= step;
-            else
-                _currentIndex = _destinations.Count - 1;
+            _currentIndex -= step;
+            if (_currentIndex < 0)
+                _currentIndex = ((_currentIndex % _destinations.Count) + _destinations.Count) % _destinations.Count;
         }
 
         public void NavigateNext(bool fastScroll = false)
         {
             int step = fastScroll ? 10 : 1;
-
-            if (_currentIndex < _destinations.Count - step)
-                _currentIndex += step;
-            else
-                _currentIndex = 0;
+            _currentIndex += step;
+            if (_currentIndex >= _destinations.Count)
+                _currentIndex = _currentIndex % _destinations.Count;
         }
 
         public string GetCurrentItemText()
         {
+            Ped player = Game.Player?.Character;
+            if (player == null || !player.Exists()) return "Unavailable";
+
             LandingDestination dest = _destinations[_currentIndex];
-            Vector3 playerPos = Game.Player.Character.Position;
+            Vector3 playerPos = player.Position;
             float distance = (dest.Position - playerPos).Length();
             float distanceMiles = distance * Constants.METERS_TO_MILES;
 
@@ -266,7 +265,9 @@ namespace GrandTheftAccessibility.Menus
 
             // Set GPS waypoint
             Function.Call(Hash.SET_NEW_WAYPOINT, dest.Position.X, dest.Position.Y);
-            GTA.Audio.PlaySoundFrontend("WAYPOINT_SET", "HUD_FRONTEND_DEFAULT_SOUNDSET");
+            int soundId = Function.Call<int>(Hash.GET_SOUND_ID);
+            Function.Call(Hash.PLAY_SOUND_FRONTEND, soundId, "WAYPOINT_SET", "HUD_FRONTEND_DEFAULT_SOUNDSET", false);
+            Function.Call(Hash.RELEASE_SOUND_ID, soundId);
 
             // Activate voice navigation too
             _navigationActive = true;

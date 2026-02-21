@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using Newtonsoft.Json;
 
 namespace GrandTheftAccessibility
@@ -261,9 +260,8 @@ namespace GrandTheftAccessibility
 
             try
             {
-                if (_intSettings.ContainsKey(id) && IntSettingMaxValues.TryGetValue(id, out int maxValue))
+                if (_intSettings.TryGetValue(id, out int current) && IntSettingMaxValues.TryGetValue(id, out int maxValue))
                 {
-                    int current = _intSettings[id];
                     int next = (current + 1) % (maxValue + 1);
                     _intSettings[id] = next;
                     return next;

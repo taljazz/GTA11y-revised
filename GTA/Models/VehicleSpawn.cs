@@ -4,7 +4,7 @@ using GTA.Native;
 
 namespace GrandTheftAccessibility
 {
-    class VehicleSpawn : IComparable
+    public class VehicleSpawn : IComparable<VehicleSpawn>
     {
         #region Fields
         public string name;
@@ -12,10 +12,10 @@ namespace GrandTheftAccessibility
         public string vehicleClassName;
         #endregion
         #region Methods
-        public int CompareTo(object obj)
+        public int CompareTo(VehicleSpawn other)
         {
-            VehicleSpawn c2 = (VehicleSpawn)obj;
-            return name.CompareTo(c2.name);
+            if (other == null) return 1;
+            return name.CompareTo(other.name);
         }
         public VehicleSpawn(string name, VehicleHash id)
         {

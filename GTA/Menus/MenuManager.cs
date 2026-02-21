@@ -17,6 +17,7 @@ namespace GrandTheftAccessibility.Menus
         private readonly AutoDriveMenu _autoDriveMenu;
         private readonly AutoDriveManager _autoDriveManager;
         private readonly TurretCrewManager _turretCrewManager;
+        private readonly PedestrianNavigationManager _pedNav;
         private int _currentMenuIndex;
 
         public MenuManager(SettingsManager settings, AudioManager audio)
@@ -33,6 +34,9 @@ namespace GrandTheftAccessibility.Menus
 
             // Create AircraftLandingMenu with audio beacon support
             _aircraftLandingMenu = new AircraftLandingMenu(settings, audio);
+
+            // Create PedestrianNavigationManager for on-foot waypoint guidance
+            _pedNav = new PedestrianNavigationManager(audio, settings);
 
             // Initialize menus in order:
             // 1. Location (teleport)
@@ -54,7 +58,8 @@ namespace GrandTheftAccessibility.Menus
                 new VehicleModMenuProxy(settings),
                 new VehicleSaveLoadMenu(_saveManager, settings),
                 new FunctionsMenu(settings, _turretCrewManager),
-                new SettingsMenu(settings)
+                new SettingsMenu(settings),
+                new HelpMenu()
             };
 
             _currentMenuIndex = 0;
@@ -253,6 +258,24 @@ namespace GrandTheftAccessibility.Menus
             }
         }
 
+        // Pedestrian Navigation pass-through
+        public bool IsPedestrianNavigationActive => _pedNav.IsActive;
+
+        public void StartPedestrianNavigation()
+        {
+            _pedNav.StartNavigation();
+        }
+
+        public void StopPedestrianNavigation()
+        {
+            _pedNav.StopNavigation();
+        }
+
+        public void UpdatePedestrianNavigation(Ped player, GTA.Math.Vector3 position, long currentTick)
+        {
+            _pedNav.Update(player, position, currentTick);
+        }
+
         /// <summary>
         /// Cleanup resources on script unload to prevent leaks across script reloads
         /// </summary>
@@ -268,6 +291,9 @@ namespace GrandTheftAccessibility.Menus
 
                 if (_aircraftLandingMenu != null && _aircraftLandingMenu.IsNavigationActive)
                     _aircraftLandingMenu.CancelNavigation();
+
+                if (_pedNav != null && _pedNav.IsActive)
+                    _pedNav.StopNavigation();
             }
             catch (Exception ex)
             {

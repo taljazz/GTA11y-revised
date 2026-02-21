@@ -193,49 +193,5 @@ namespace GrandTheftAccessibility
             }
         }
 
-        /// <summary>
-        /// Format distance for speech in imperial units
-        /// </summary>
-        public static string FormatDistance(float meters)
-        {
-            float feet = meters * Constants.METERS_TO_FEET;
-
-            if (feet < 528) // Less than 0.1 miles
-            {
-                // Round to nearest 50 feet
-                int roundedFeet = ((int)(feet / 50) + 1) * 50;
-                return $"{roundedFeet} feet";
-            }
-            else if (feet < 1320) // 0.1 to 0.25 miles
-            {
-                return "quarter mile";
-            }
-            else if (feet < 2640) // 0.25 to 0.5 miles
-            {
-                return "half mile";
-            }
-            else
-            {
-                float miles = meters * Constants.METERS_TO_MILES;
-                return $"{miles:F1} miles";
-            }
-        }
-
-        /// <summary>
-        /// Get current ETA for status queries (without announcing)
-        /// </summary>
-        /// <param name="position">Current position</param>
-        /// <param name="waypointPos">Waypoint position</param>
-        /// <returns>Formatted ETA string</returns>
-        public string GetCurrentETAText(Vector3 position, Vector3 waypointPos)
-        {
-            float roadDistance = GetRoadDistanceToWaypoint(position, waypointPos);
-            float etaSeconds = _averageSpeed > 1f ? roadDistance / _averageSpeed : float.MaxValue;
-
-            if (etaSeconds == float.MaxValue)
-                return "unknown";
-
-            return FormatETA(etaSeconds);
-        }
     }
 }

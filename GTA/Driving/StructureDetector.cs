@@ -108,7 +108,7 @@ namespace GrandTheftAccessibility
             // Check if we've traveled enough distance to evaluate
             if (distance >= Constants.UTURN_DISTANCE_THRESHOLD)
             {
-                float headingChange = Math.Abs(NormalizeAngleDiff(currentHeading - _uturnTrackingHeading));
+                float headingChange = Math.Abs(RoadFeatureDetector.NormalizeAngleDiff(currentHeading - _uturnTrackingHeading));
 
                 if (headingChange >= Constants.UTURN_HEADING_THRESHOLD)
                 {
@@ -289,14 +289,5 @@ namespace GrandTheftAccessibility
             }
         }
 
-        /// <summary>
-        /// Normalize angle difference to -180 to 180 range
-        /// </summary>
-        private static float NormalizeAngleDiff(float angle)
-        {
-            while (angle > 180f) angle -= 360f;
-            while (angle < -180f) angle += 360f;
-            return angle;
-        }
     }
 }

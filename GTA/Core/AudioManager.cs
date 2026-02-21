@@ -53,7 +53,14 @@ namespace GrandTheftAccessibility
         private bool _beaconInitialized;
         private long _beaconStopTick;
 
+        // Collision proximity beep - square wave, frequency scales with warning level
+        private readonly WaveOutEvent _collisionBeepOut;
+        private readonly SignalGenerator _collisionBeepGenerator;
+        private bool _collisionBeepInitialized;
+        private long _collisionBeepStopTick;
+
         private bool _disposed;
+        private string _lastSpokenText = "";
 
         // Tolk state tracking for resilience
         private bool _tolkLoaded;
@@ -181,6 +188,16 @@ namespace GrandTheftAccessibility
             _beaconPanner = new PanningSampleProvider(beaconMono);
             _beaconOut = new WaveOutEvent();
             _beaconInitialized = false;
+
+            // Collision proximity beep - square wave for urgent, attention-grabbing tone
+            _collisionBeepGenerator = new SignalGenerator
+            {
+                Gain = Constants.COLLISION_BEEP_GAIN,
+                Frequency = Constants.COLLISION_BEEP_FREQ_FAR,
+                Type = SignalGeneratorType.Square
+            };
+            _collisionBeepOut = new WaveOutEvent();
+            _collisionBeepInitialized = false;
         }
 
         /// <summary>
@@ -247,6 +264,8 @@ namespace GrandTheftAccessibility
             if (string.IsNullOrEmpty(text))
                 return;
 
+            _lastSpokenText = text;
+
             try
             {
                 if (!_tolkLoaded)
@@ -279,6 +298,21 @@ namespace GrandTheftAccessibility
                         catch { /* Best-effort retry after reconnect */ }
                     }
                 }
+            }
+        }
+
+        /// <summary>
+        /// Repeat the last spoken TTS announcement
+        /// </summary>
+        public void RepeatLast()
+        {
+            if (!string.IsNullOrEmpty(_lastSpokenText))
+            {
+                Speak(_lastSpokenText, true);
+            }
+            else
+            {
+                Speak("Nothing to repeat");
             }
         }
 
@@ -539,6 +573,54 @@ namespace GrandTheftAccessibility
         }
 
         /// <summary>
+        /// Play collision proximity beep. Frequency scales with warning level.
+        /// Called from AutoDriveManager when CollisionDetector reports a warning.
+        /// </summary>
+        /// <param name="warningLevel">0=none, 1=far, 2=medium, 3=close, 4=imminent</param>
+        public void PlayCollisionBeep(int warningLevel)
+        {
+            if (_disposed || _collisionBeepOut == null || _collisionBeepGenerator == null) return;
+            if (warningLevel <= 0) return;
+
+            try
+            {
+                _collisionBeepOut.Stop();
+
+                double frequency;
+                switch (warningLevel)
+                {
+                    case 1: frequency = Constants.COLLISION_BEEP_FREQ_FAR; break;
+                    case 2: frequency = Constants.COLLISION_BEEP_FREQ_MEDIUM; break;
+                    case 3: frequency = Constants.COLLISION_BEEP_FREQ_CLOSE; break;
+                    default: frequency = Constants.COLLISION_BEEP_FREQ_IMMINENT; break;
+                }
+                _collisionBeepGenerator.Frequency = frequency;
+
+                if (!_collisionBeepInitialized)
+                {
+                    _collisionBeepOut.Init(_collisionBeepGenerator);
+                    _collisionBeepInitialized = true;
+                }
+
+                _collisionBeepOut.Play();
+                _collisionBeepStopTick = DateTime.Now.Ticks + (long)(Constants.COLLISION_BEEP_DURATION_SECONDS * 10_000_000);
+            }
+            catch (Exception ex)
+            {
+                Logger.Exception(ex, "PlayCollisionBeep");
+            }
+        }
+
+        /// <summary>
+        /// Stop collision beep immediately (e.g., when AutoDrive stops)
+        /// </summary>
+        public void StopCollisionBeep()
+        {
+            try { _collisionBeepOut?.Stop(); } catch { /* Expected */ }
+            _collisionBeepStopTick = 0;
+        }
+
+        /// <summary>
         /// Call this periodically to stop indicator audio after duration
         /// Should be called from OnTick - handles all timed audio stops
         /// </summary>
@@ -585,6 +667,13 @@ namespace GrandTheftAccessibility
                     try { _beaconOut?.Stop(); } catch { /* Expected - audio device may be unavailable */ }
                     _beaconStopTick = 0;
                 }
+
+                // Stop collision beep after duration
+                if (_collisionBeepStopTick > 0 && currentTick >= _collisionBeepStopTick)
+                {
+                    try { _collisionBeepOut?.Stop(); } catch { /* Expected - audio device may be unavailable */ }
+                    _collisionBeepStopTick = 0;
+                }
             }
             catch (Exception ex)
             {
@@ -609,6 +698,9 @@ namespace GrandTheftAccessibility
 
             try { _beaconOut?.Stop(); } catch { /* Expected during disposal */ }
             _beaconOut?.Dispose();
+
+            try { _collisionBeepOut?.Stop(); } catch { /* Expected during disposal */ }
+            _collisionBeepOut?.Dispose();
 
             _pedTargetSound?.Dispose();
             _vehicleTargetSound?.Dispose();

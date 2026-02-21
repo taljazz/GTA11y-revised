@@ -131,6 +131,14 @@ namespace GrandTheftAccessibility
         public const long BEACON_PULSE_CLOSE_TICKS = (long)(0.15f * 10_000_000);   // <0.25 mile
         public const long BEACON_PULSE_OVERHEAD_TICKS = (long)(0.06f * 10_000_000); // directly over
 
+        // Collision proximity beep (AutoDrive)
+        public const double COLLISION_BEEP_GAIN = 0.08;
+        public const double COLLISION_BEEP_DURATION_SECONDS = 0.05;
+        public const double COLLISION_BEEP_FREQ_FAR = 400.0;
+        public const double COLLISION_BEEP_FREQ_MEDIUM = 600.0;
+        public const double COLLISION_BEEP_FREQ_CLOSE = 900.0;
+        public const double COLLISION_BEEP_FREQ_IMMINENT = 1200.0;
+
         // Beacon distance thresholds (meters) - squared to avoid sqrt in distance check
         public const float BEACON_OVERHEAD_DISTANCE_SQ = 150f * 150f;   // ~500 feet
         public const float BEACON_CLOSE_DISTANCE_SQ = 400f * 400f;      // ~0.25 miles
@@ -192,42 +200,6 @@ namespace GrandTheftAccessibility
             -150975354,   // Blimp
             -613725916,   // Blimp2
             -1093422249   // Blimp3
-        };
-
-        // Helicopter vehicle model hashes (use HashSet for O(1) lookup) - Grok optimization
-        // For faster IsHelicopter() checks without needing VehicleClass lookup
-        public static readonly HashSet<int> HELICOPTER_HASHES = new HashSet<int>
-        {
-            // Standard helicopters
-            788747387,    // Buzzard (armed)
-            745926877,    // Buzzard2 (unarmed)
-            -1660661558,  // Savage
-            -1600252419,  // Valkyrie
-            -1660661558,  // Valkyrie2
-            -1216765807,  // Hunter
-            837858166,    // Akula
-            -339587598,   // Annihilator
-            -1628917549,  // Annihilator2
-            -1660537974,  // Cargobob
-            1394036463,   // Cargobob2
-            -50547061,    // Cargobob3
-            -1671539132,  // Cargobob4
-            -1009268949,  // Frogger
-            744705981,    // Frogger2
-            -1575939457,  // Maverick
-            -1207431159,  // Polmav (Police Maverick)
-            -2137348917,  // Swift
-            1075432268,   // Swift2
-            -1620126302,  // Skylift
-            -1845487887,  // Supervolito
-            710198397,    // Supervolito2
-            -1543762099,  // Volatus
-            // Newer DLC helicopters
-            1621617168,   // Havok
-            -1881846085,  // SeaSparrow
-            1229411063,   // SeaSparrow2
-            -782210057,   // Sparrow
-            1824333165    // Conada
         };
 
         // Native function hashes for VTOL nozzle position control
@@ -470,6 +442,7 @@ namespace GrandTheftAccessibility
         // Native for finding safe road position near waypoint
         public const ulong NATIVE_GET_CLOSEST_VEHICLE_NODE = 0x240A18690AE96513;
         public const ulong NATIVE_GET_NTH_CLOSEST_VEHICLE_NODE = 0xE50E52416CCF948B;  // For alternate road nodes
+        public const ulong NATIVE_GET_NTH_CLOSEST_VEHICLE_NODE_WITH_HEADING = 0x80CA6A8B6C094CC4;  // Returns position + heading + lane count
         public const ulong NATIVE_GET_SAFE_COORD_FOR_PED = 0xB61C8E878A4199CA;
         public const ulong NATIVE_GET_POINT_ON_ROAD_SIDE = 0x16F46FB18C8009E4;
 
@@ -478,122 +451,137 @@ namespace GrandTheftAccessibility
         // Driving style mode indices
         public const int DRIVING_STYLE_MODE_CAUTIOUS = 0;
         public const int DRIVING_STYLE_MODE_NORMAL = 1;
-        public const int DRIVING_STYLE_MODE_FAST = 2;
+        public const int DRIVING_STYLE_MODE_AGGRESSIVE = 2;
         public const int DRIVING_STYLE_MODE_RECKLESS = 3;
 
-        // ===== DRIVING STYLE FLAGS (Verified via binary analysis) =====
-        // Flag breakdown (CORRECTED bit positions):
-        //   Bit 0:  StopBeforeVehicles (1)
-        //   Bit 1:  StopBeforePeds (2)
-        //   Bit 2:  AvoidVehicles (4)
-        //   Bit 3:  AvoidEmptyVehicles (8)
-        //   Bit 4:  AvoidPeds (16)
-        //   Bit 5:  AvoidObjects (32)
-        //   Bit 7:  StopAtTrafficLights (128)
-        //   Bit 8:  UseBlinkers (256)
-        //   Bit 9:  AllowWrongWay (512) - uses wrong lane when stuck, self-corrects
-        //   Bit 10: Reverse (1024)
-        //   Bit 14: TakeShortestPath (16384) - uses all roads including dirt
-        //   Bit 15: Reckless (32768) - aggressive overtaking/ramming behavior
-        //   Bit 17: IgnoreRoads (131072) - local pathing only (~200m range)
-        //   Bit 19: IgnoreAllPathing (524288) - drives straight to destination (AVOID!)
-        //   Bit 24: AvoidHighways (16777216)
+        // ===== DRIVING STYLE FLAGS (VehicleDrivingFlags from SHVDN v3.6.0) =====
+        // Complete flag reference:
+        //   Bit 0  (1):          StopForVehicles - stop before hitting vehicles
+        //   Bit 1  (2):          StopForPeds - stop before hitting pedestrians
+        //   Bit 2  (4):          SwerveAroundAllVehicles - steer around all vehicles
+        //   Bit 3  (8):          SteerAroundStationaryVehicles - steer around parked vehicles
+        //   Bit 4  (16):         SteerAroundPeds - steer around pedestrians
+        //   Bit 5  (32):         SteerAroundObjects - steer around obstacles
+        //   Bit 6  (64):         DontSteerAroundPlayerPed - don't avoid player
+        //   Bit 7  (128):        StopAtTrafficLights - obey traffic signals
+        //   Bit 8  (256):        GoOffRoadWhenAvoiding / UseBlinkers
+        //   Bit 9  (512):        AllowGoingWrongWay - use wrong lane when stuck
+        //   Bit 10 (1024):       Reverse
+        //   Bit 11 (2048):       UseWanderFallbackInsteadOfStraightLine
+        //   Bit 14 (16384):      AdjustCruiseSpeedBasedOnRoadSpeed
+        //   Bit 18 (262144):     UseShortCutLinks - take shortest path
+        //   Bit 19 (524288):     ChangeLanesAroundObstructions
+        //   Bit 21 (2097152):    UseSwitchedOffNodes
+        //   Bit 25 (33554432):   UseStringPullingAtJunctions - smooth junction paths
+        //   Bit 29 (536870912):  TryToAvoidHighways
+        //   Bit 30 (1073741824): ForceJoinInRoadDirection
+        //   Bit 31 (2147483648): StopAtDestination
         //
-        // WARNING: Value 786603 (common in old mods) has IgnoreAllPathing enabled!
-        // This causes AI to drive off-road directly to destination. Don't use it.
-        //
-        // CORRECTED VALUES based on bit flag analysis:
-        // Bit 0 (1): StopBeforeVehicles    Bit 1 (2): StopBeforePeds
-        // Bit 2 (4): AvoidVehicles         Bit 3 (8): AvoidEmptyVehicles
-        // Bit 4 (16): AvoidPeds            Bit 5 (32): AvoidObjects
-        // Bit 7 (128): StopAtTrafficLights Bit 8 (256): UseBlinkers
-        // Bit 9 (512): AllowWrongWay       Bit 10 (1024): Reverse
-        // Bit 14 (16384): TakeShortestPath Bit 15 (32768): Reckless
-        //
-        // WARNING: 786603 has IgnoreAllPathing (bit 19) which makes AI drive off-road!
-        // Do NOT use 786603 for normal driving.
+        // VAutodrive research: Uses GTA's built-in DrivingStyle presets + SET_DRIVER_ABILITY
+        // + SET_DRIVER_AGGRESSIVENESS as the primary behavior differentiators.
+        // Key insight: Each style should have DISTINCT flag values for noticeably different behavior.
 
-        // Cautious: Maximum safety - stops for everything, avoids everything, obeys all laws
-        // = StopVeh(1) + StopPed(2) + AvoidVeh(4) + AvoidEmpty(8) + AvoidPed(16) + AvoidObj(32) + StopLight(128) + Blinkers(256)
-        public const int DRIVING_STYLE_CAUTIOUS = 447;
+        // Cautious: Maximum safety - stops for everything, obeys all laws
+        // = StopForVehicles(1) + StopForPeds(2) + SwerveAroundAllVehicles(4) +
+        //   SteerAroundStationaryVehicles(8) + SteerAroundPeds(16) + SteerAroundObjects(32) +
+        //   StopAtTrafficLights(128) +
+        //   AdjustCruiseSpeedBasedOnRoadSpeed(16384) + UseShortCutLinks(262144) +
+        //   ChangeLanesAroundObstructions(524288) +
+        //   AvoidAdverseConditions(67108864) + ForceJoinInRoadDirection(1073741824)
+        // Removed: GoOffRoadWhenAvoiding(256) - cautious drivers stay on road
+        // Removed: DontTerminateTaskWhenAchieved(2147483648) - causes circling at destination
+        // Added: AvoidAdverseConditions(67108864) - avoids hazards
+        public const int DRIVING_STYLE_CAUTIOUS = unchecked((int)(
+            1u + 2u + 4u + 8u + 16u + 32u + 128u +
+            16384u + 262144u + 524288u +
+            67108864u + 1073741824u));
 
-        // Normal: Uses SHVDN's AvoidTrafficExtremely (1074528293)
-        // Reference: AutoDriveScript uses this as base for all styles - proven to work
-        public const int DRIVING_STYLE_NORMAL = 1074528293;
+        // Normal: Balanced driving - stops for vehicles and peds, obeys lights, smooth junctions
+        // Based on SHVDN DrivingModeStopForVehicles (786603) but with ForceJoinRoadDirection
+        // = StopForVehicles(1) + StopForPeds(2) + SwerveAroundAllVehicles(4) +
+        //   SteerAroundStationaryVehicles(8) + SteerAroundPeds(16) + SteerAroundObjects(32) +
+        //   StopAtTrafficLights(128) +
+        //   AdjustCruiseSpeedBasedOnRoadSpeed(16384) + UseShortCutLinks(262144) +
+        //   ChangeLanesAroundObstructions(524288) +
+        //   UseStringPullingAtJunctions(33554432) + ForceJoinInRoadDirection(1073741824)
+        // Added: SwerveAroundAllVehicles(4), SteerAroundPeds(16) - complete obstacle avoidance
+        public const int DRIVING_STYLE_NORMAL = unchecked((int)(
+            1u + 2u + 4u + 8u + 16u + 32u + 128u +
+            16384u + 262144u + 524288u +
+            33554432u + 1073741824u));
 
-        // Fast: Same as Normal but with speed multiplier difference
-        // Reference: AutoDriveScript uses same base style, speed multiplier makes the difference
-        public const int DRIVING_STYLE_FAST = 1074528293;
+        // Aggressive: Ignores lights, swerves around traffic, allows wrong way, overtakes
+        // Distinct from Normal - more assertive, skips traffic lights, takes shortcuts
+        // = StopForVehicles(1) + SwerveAroundAllVehicles(4) + SteerAroundObjects(32) +
+        //   AllowGoingWrongWay(512) +
+        //   AdjustCruiseSpeedBasedOnRoadSpeed(16384) + UseShortCutLinks(262144) +
+        //   ChangeLanesAroundObstructions(524288) + UseSwitchedOffNodes(2097152) +
+        //   UseStringPullingAtJunctions(33554432) + ForceJoinInRoadDirection(1073741824)
+        public const int DRIVING_STYLE_AGGRESSIVE = unchecked((int)(
+            1u + 4u + 32u + 512u +
+            16384u + 262144u + 524288u + 2097152u +
+            33554432u + 1073741824u));
 
-        // Reckless: Aggressive driving - NO traffic light stops, uses Reckless flag
-        // = AvoidPeds(16) + AvoidObj(32) + Reckless(32768) = 32816
-        // NOTE: 2883621 (SHVDN Rushed) still has StopAtTrafficLights! Don't use it.
-        public const int DRIVING_STYLE_RECKLESS = 32816;
-
-        // Legacy constant (kept for compatibility)
-        public const int DRIVING_STYLE_RUSHED = 1074528293;
-
-        // ===== SPECIALIZED DRIVING STYLES =====
-
-        // Cruise/Wander optimized style - smooth, relaxed driving for aimless cruising
-        // = StopVeh(1) + StopPed(2) + AvoidVeh(4) + AvoidEmpty(8) + AvoidPed(16) + AvoidObj(32)
-        //   + StopLight(128) + Blinkers(256) + AllowWrongWay(512)
-        // AllowWrongWay helps when AI gets stuck, will correct itself
-        public const int DRIVING_STYLE_CRUISE = 959;
-
-        // Longrange driving style (for distant waypoints >500m)
-        // Same as Normal - safe driving with efficient pathing
-        public const int DRIVING_STYLE_LONGRANGE = 16831;
+        // Reckless: Swerves around traffic without braking, dodges peds/objects, takes any path
+        // Based on SHVDN DrivingModeAvoidVehiclesReckless — "doesn't use brakes AT ALL for steering"
+        // = SwerveAroundAllVehicles(4) + SteerAroundPeds(16) + SteerAroundObjects(32) +
+        //   AllowGoingWrongWay(512) + UseShortCutLinks(262144) +
+        //   ChangeLanesAroundObstructions(524288) + UseSwitchedOffNodes(2097152) +
+        //   ForceJoinInRoadDirection(1073741824)
+        // No speed limits, no stopping for cars, no traffic lights. AI handles all speed management.
+        public const int DRIVING_STYLE_RECKLESS = unchecked((int)(
+            4u + 16u + 32u + 512u +
+            262144u + 524288u + 2097152u + 1073741824u));
 
         // Driving style values array (indexed by mode)
         public static readonly int[] DRIVING_STYLE_VALUES = new int[]
         {
-            DRIVING_STYLE_CAUTIOUS,   // 0 - Cautious
-            DRIVING_STYLE_NORMAL,     // 1 - Normal
-            DRIVING_STYLE_FAST,       // 2 - Fast
-            DRIVING_STYLE_RECKLESS    // 3 - Reckless
+            DRIVING_STYLE_CAUTIOUS,    // 0 - Cautious
+            DRIVING_STYLE_NORMAL,      // 1 - Normal
+            DRIVING_STYLE_AGGRESSIVE,  // 2 - Aggressive
+            DRIVING_STYLE_RECKLESS     // 3 - Reckless
         };
 
         // Speed multipliers per style (applied to target speed)
-        // Reference: AutoDriveScript2.cs uses 0.7f (Cautious), 1.0f (Normal), 1.2f (Aggressive)
-        // This is the PRIMARY differentiator between styles!
+        // VAutodrive research: speed + driving flags + ability/aggressiveness together
+        // create distinct driving personalities
         public static readonly float[] DRIVING_STYLE_SPEED_MULTIPLIERS = new float[]
         {
             0.7f,   // Cautious - 70% of target speed (slower, safer)
             1.0f,   // Normal - 100% of target speed
-            1.2f,   // Fast - 120% of target speed (faster, more aggressive)
-            1.3f    // Reckless - 130% of target speed (maximum speed)
+            1.2f,   // Aggressive - 120% of target speed (faster, more assertive)
+            1.5f    // Reckless - 150% of target speed (all-out speed, AI handles curves/traffic)
         };
 
         // Driver ability per style (0.0 - 1.0)
-        // Research: 1.0 = best vehicle control, smoother driving
-        // Higher values = better lane keeping, smoother turns
+        // VAutodrive research: SET_DRIVER_ABILITY controls curve handling quality
+        // 1.0 = best vehicle control, smoother turns, better lane keeping
         public static readonly float[] DRIVING_STYLE_ABILITIES = new float[]
         {
             1.0f,   // Cautious - maximum control for safe driving
             1.0f,   // Normal - maximum control
-            1.0f,   // Fast - maximum control needed at speed
-            0.8f    // Reckless - slightly less control for chaotic feel
+            0.9f,   // Aggressive - slightly less precise at higher speeds
+            0.7f    // Reckless - noticeably less control for chaotic feel
         };
 
         // Driver aggressiveness per style (0.0 - 1.0)
-        // Research: Higher = more lane changes, closer following, more assertive
-        // This has a BIG impact on observable driving behavior
+        // VAutodrive research: SET_DRIVER_AGGRESSIVENESS controls traffic interaction
+        // Higher = more lane changes, closer following, more assertive overtaking
         public static readonly float[] DRIVING_STYLE_AGGRESSIVENESS = new float[]
         {
             0.0f,   // Cautious - completely passive, no lane changes
-            0.0f,   // Normal - calm driving (reference uses 0.0 for smooth driving)
-            0.5f,   // Fast - more assertive for overtaking
+            0.3f,   // Normal - mild assertiveness, occasional lane changes
+            0.7f,   // Aggressive - frequent overtaking and lane changes
             1.0f    // Reckless - maximum aggression, constant lane changes
         };
 
         // Display names for menu
         public static readonly string[] DRIVING_STYLE_NAMES = new string[]
         {
-            "Cautious",      // Maximum safety, obey traffic
-            "Normal",        // Balanced driving
-            "Fast",          // Ignore traffic lights, still avoid collisions
-            "Reckless"       // Ram through vehicles, for tanks and heavy vehicles
+            "Cautious",      // Maximum safety, obey traffic, stop at lights
+            "Normal",        // Balanced driving, obey lights, smooth driving
+            "Aggressive",    // Ignore traffic lights, overtake, allow wrong way
+            "Reckless"       // Ram through vehicles, ignore everything
         };
 
         // Native for changing driving style mid-task (without re-issuing)
@@ -615,14 +603,12 @@ namespace GrandTheftAccessibility
 
         // Proactive curve slowdown - speed-dependent distances
         // At 40 m/s (90 mph), need 4+ seconds to safely slow down
-        public const float CURVE_SLOWDOWN_FACTOR = 0.6f;                  // Reduce to 60% speed for curves
-        public const float SHARP_CURVE_SLOWDOWN_FACTOR = 0.4f;            // Reduce to 40% speed for sharp curves
-        public const float CURVE_SLOWDOWN_DISTANCE = 80f;                 // Start slowing this far before curve (legacy)
         public const float CURVE_SLOWDOWN_DISTANCE_BASE = 100f;           // Base distance to start slowing
         public const float CURVE_SLOWDOWN_DISTANCE_SPEED_FACTOR = 4.0f;   // Multiply speed by this for lookahead
         public const float CURVE_SLOWDOWN_DISTANCE_MIN = 50f;             // Minimum slowdown distance
         public const float CURVE_SLOWDOWN_DISTANCE_MAX = 200f;            // Maximum slowdown distance
-        public const long CURVE_SLOWDOWN_DURATION = 40_000_000;           // 4 seconds of reduced speed
+        public const long CURVE_SLOWDOWN_MAX_DURATION = 80_000_000;       // 8 second safety timeout (condition-based end is primary)
+        public const float CURVE_REALIGN_LOOKAHEAD = 15f;                  // Meters ahead to check road alignment for curve end
 
         // Smooth arrival deceleration (waypoint mode)
         public const float ARRIVAL_SLOWDOWN_DISTANCE = 100f;              // Start slowing 100m from destination
@@ -640,17 +626,33 @@ namespace GrandTheftAccessibility
         public const ulong NATIVE_GET_VEHICLE_NODE_PROPERTIES = 0x0568566ACBB5DEDC;
         public const ulong NATIVE_GENERATE_DIRECTIONS_TO_COORD = 0xF90125F1F79ECDF8;
         public const ulong NATIVE_CLEAR_PED_TASKS = 0xE1EF3C1216AFF2CD;
+        public const ulong NATIVE_CLEAR_PED_TASKS_IMMEDIATELY = 0xAAA34F8A7CB32098;
 
         // ===== ROAD TYPE DETECTION =====
 
-        // Road node flags (from GET_VEHICLE_NODE_PROPERTIES)
+        // Road node flags (from GET_VEHICLE_NODE_PROPERTIES - eVehicleNodeProperties)
         public const int ROAD_FLAG_OFF_ROAD = 1;           // Bit 0: Dirt roads, trails, alleys
+        public const int ROAD_FLAG_ON_PLAYERS_ROAD = 2;    // Bit 1: On player's current road
+        public const int ROAD_FLAG_NO_BIG_VEHICLES = 4;    // Bit 2: Narrow road, no large vehicles
+        public const int ROAD_FLAG_SWITCHED_OFF = 8;       // Bit 3: Disabled/inactive node
         public const int ROAD_FLAG_TUNNEL = 16;            // Bit 4: Tunnel or interior
         public const int ROAD_FLAG_DEAD_END = 32;          // Bit 5: Dead end road
         public const int ROAD_FLAG_HIGHWAY = 64;           // Bit 6: Highway/freeway
         public const int ROAD_FLAG_JUNCTION = 128;         // Bit 7: Intersection
         public const int ROAD_FLAG_TRAFFIC_LIGHT = 256;    // Bit 8: Has traffic light
         public const int ROAD_FLAG_GIVE_WAY = 512;         // Bit 9: Yield sign
+        public const int ROAD_FLAG_WATER = 1024;           // Bit 10: Water route node
+
+        // eGetClosestNodeFlags - used with GET_CLOSEST_VEHICLE_NODE_WITH_HEADING etc.
+        // NOTE: These are NOT the same as eVehicleNodeProperties above
+        public const int NODE_FLAG_INCLUDE_SWITCHED_OFF = 1;   // Include disabled/inactive nodes
+        public const int NODE_FLAG_INCLUDE_BOAT_NODES = 2;     // Include boat/water nodes
+        public const int NODE_FLAG_IGNORE_SLIPLANES = 4;       // Skip slip lanes
+        public const int NODE_FLAG_ACTIVE_NODES_ONLY = 0;      // Default: only active road nodes
+
+        // Lane count thresholds for road classification
+        public const int ROAD_LANES_HIGHWAY_MIN = 3;           // 3+ lanes = likely highway
+        public const int ROAD_LANES_CITY_MIN = 2;              // 2+ lanes = city/main road
 
         // Road density thresholds (0-15 from GET_VEHICLE_NODE_PROPERTIES)
         public const int ROAD_DENSITY_RURAL_MAX = 3;       // 0-3 = Rural/empty
@@ -682,16 +684,19 @@ namespace GrandTheftAccessibility
         public const long ROAD_TYPE_ANNOUNCE_COOLDOWN = 100_000_000;     // 10s between same type announcements
 
         // Road type speed multipliers (indexed by ROAD_TYPE_* values)
-        // Multiplied by target speed to get appropriate speed for road type
+        // Note: DF_ADJUST_CRUISE_SPEED_BASED_ON_ROAD_SPEED (flag 16384) in driving styles
+        // already tells the AI to adjust speed for road types. These multipliers are kept
+        // minimal to avoid fighting the AI's built-in road speed adjustment.
+        // Only dirt road retains a significant reduction since the AI flag doesn't handle it well.
         public static readonly float[] ROAD_TYPE_SPEED_MULTIPLIERS = new float[]
         {
-            0.8f,   // 0 - Unknown: cautious
-            1.0f,   // 1 - Highway: full speed
-            0.65f,  // 2 - City street: slower for pedestrians/traffic
-            0.8f,   // 3 - Suburban: moderate
-            0.85f,  // 4 - Rural: slightly slower
-            0.5f,   // 5 - Dirt road: much slower
-            0.7f    // 6 - Tunnel: cautious
+            1.0f,   // 0 - Unknown: let AI decide
+            1.0f,   // 1 - Highway: AI handles via flag 16384
+            1.0f,   // 2 - City street: AI handles via flag 16384
+            1.0f,   // 3 - Suburban: AI handles via flag 16384
+            1.0f,   // 4 - Rural: AI handles via flag 16384
+            0.6f,   // 5 - Dirt road: AI flag doesn't slow enough for unpaved
+            1.0f    // 6 - Tunnel: AI handles normally
         };
 
         // Road type to driving style mapping (dynamic style switching)
@@ -700,7 +705,7 @@ namespace GrandTheftAccessibility
         public static readonly int[] ROAD_TYPE_DRIVING_STYLES = new int[]
         {
             DRIVING_STYLE_MODE_NORMAL,    // 0 - Unknown: normal driving
-            DRIVING_STYLE_MODE_FAST,      // 1 - Highway: faster, more overtaking
+            DRIVING_STYLE_MODE_AGGRESSIVE,      // 1 - Highway: faster, more overtaking
             DRIVING_STYLE_MODE_CAUTIOUS,  // 2 - City street: careful of pedestrians
             DRIVING_STYLE_MODE_NORMAL,    // 3 - Suburban: normal driving
             DRIVING_STYLE_MODE_NORMAL,    // 4 - Rural: normal driving
@@ -754,6 +759,13 @@ namespace GrandTheftAccessibility
         public const long ANNOUNCE_COOLDOWN_LOW = 50_000_000;        // 5 seconds
         public const long ANNOUNCE_GLOBAL_COOLDOWN = 5_000_000;      // 0.5 second minimum between any announcements
 
+        // Waypoint bearing announcements (standalone, between milestones)
+        public const long BEARING_ANNOUNCE_INTERVAL = 300_000_000;  // 30 seconds
+
+        // Speed change announcements (catch-all for combined multiplier changes)
+        public const float SPEED_ANNOUNCE_CHANGE_THRESHOLD = 2.2f;  // m/s (~5 mph)
+        public const long SPEED_ANNOUNCE_COOLDOWN = 150_000_000;    // 15 seconds
+
         // ===== ROAD SEEKING =====
 
         // Seek modes
@@ -777,10 +789,7 @@ namespace GrandTheftAccessibility
 
         // Road seeking parameters
         public const long TICK_INTERVAL_ROAD_SEEK_SCAN = 30_000_000;     // 3.0s between scans
-        public const float ROAD_SEEK_SCAN_RADIUS = 300f;                 // Search radius in meters
-        public const float ROAD_SEEK_SAMPLE_ANGLE = 30f;                 // Sample every 30 degrees
-        public const float ROAD_SEEK_SAMPLE_DISTANCE = 50f;              // Sample every 50m outward
-        public const int ROAD_SEEK_MAX_SAMPLES = 72;                     // 12 angles * 6 distances
+        public const int ROAD_SEEK_MAX_NODES = 30;                       // Check 30 closest road nodes per scan
         public const float ROAD_SEEK_ARRIVAL_THRESHOLD = 30f;            // Within 30m = arrived
 
         // ===== AUTODRIVE RECOVERY SYSTEM =====
@@ -812,51 +821,29 @@ namespace GrandTheftAccessibility
         public const float VEHICLE_CRITICAL_HEALTH = 300f;                // Health below this = critical damage
         public const float VEHICLE_UNDRIVEABLE_HEALTH = 100f;             // Health below this = undriveable
 
-        // Recovery action parameters - multi-stage with escalation
-        public const float RECOVERY_REVERSE_SPEED = 5f;                   // m/s when reversing
-        public const float RECOVERY_REVERSE_DISTANCE = 10f;               // meters to reverse
-        public const long RECOVERY_REVERSE_DURATION = 20_000_000;         // 2 seconds of reversing (legacy)
-        public const long RECOVERY_REVERSE_DURATION_SHORT = 15_000_000;   // 1.5 seconds (first attempt)
-        public const long RECOVERY_REVERSE_DURATION_MEDIUM = 25_000_000;  // 2.5 seconds (second attempt)
-        public const long RECOVERY_REVERSE_DURATION_LONG = 35_000_000;    // 3.5 seconds (third+ attempt)
-        public const long RECOVERY_TURN_DURATION = 15_000_000;            // 1.5 seconds of turning
-        public const float RECOVERY_TURN_ANGLE = 45f;                     // degrees to turn during recovery
-        public const int RECOVERY_MAX_ATTEMPTS = 5;                       // max recovery attempts before giving up (increased)
-        public const long RECOVERY_COOLDOWN = 30_000_000;                 // 3 seconds between recovery attempts (reduced)
-
-        // Recovery escalation - try different strategies based on attempt number
-        public const int RECOVERY_STRATEGY_REVERSE_TURN = 1;              // Attempt 1-2: reverse + turn
-        public const int RECOVERY_STRATEGY_FORWARD_TURN = 2;              // Attempt 3: forward + turn opposite
-        public const int RECOVERY_STRATEGY_THREE_POINT = 3;               // Attempt 4-5: three-point turn
-
-        // Recovery states
-        public const int RECOVERY_STATE_NONE = 0;
-        public const int RECOVERY_STATE_REVERSING = 1;
-        public const int RECOVERY_STATE_TURNING = 2;
-        public const int RECOVERY_STATE_RESUMING = 3;
-        public const int RECOVERY_STATE_FAILED = 4;
-        public const int RECOVERY_STATE_FORWARD = 5;           // Forward maneuver state
-        public const int RECOVERY_STATE_THREE_POINT_TURN = 6;  // Sharp turn phase of three-point
-
-        // Native function hashes for recovery
-        public const ulong NATIVE_TASK_VEHICLE_TEMP_ACTION = 0xC429DCEEB339E129;
-        public const ulong NATIVE_IS_VEHICLE_STUCK_ON_ROOF = 0xB497F06B288DCFDF;
-        public const ulong NATIVE_IS_ENTITY_IN_WATER = 0xCFB0A0D8EDD145A3;  // Correct hash for IS_ENTITY_IN_WATER
+        // Native function hashes for vehicle control
+        public const ulong NATIVE_IS_ENTITY_IN_WATER = 0xCFB0A0D8EDD145A3;
         // NOTE: Use vehicle.UpVector.Z for upright detection (no native needed)
         public const ulong NATIVE_SET_VEHICLE_ON_GROUND_PROPERLY = 0x49733E92263139D1;
         public const ulong NATIVE_SET_VEHICLE_FORWARD_SPEED = 0xAB54A438726D25D5;
+        // Hard speed ceiling the AI will never exceed (cooperative with AI driving task)
+        public const ulong NATIVE_SET_DRIVE_TASK_MAX_CRUISE_SPEED = 0x404A5AA9B9F0B746;
 
-        // Temp action values for TASK_VEHICLE_TEMP_ACTION
-        public const int TEMP_ACTION_REVERSE = 3;                         // Reverse
-        public const int TEMP_ACTION_TURN_LEFT = 7;                       // Turn hard left
-        public const int TEMP_ACTION_TURN_RIGHT = 8;                      // Turn hard right
-        public const int TEMP_ACTION_REVERSE_LEFT = 13;                   // Reverse + turn left
-        public const int TEMP_ACTION_REVERSE_RIGHT = 14;                  // Reverse + turn right
-
-        // Dead-end detection and handling
+        // Dead-end detection
         public const long TICK_INTERVAL_DEAD_END_CHECK = 20_000_000;      // 2 seconds between checks
         public const float DEAD_END_ESCAPE_DISTANCE = 50f;                // meters from entry to consider escaped
         // Note: ROAD_FLAG_DEAD_END is defined in Road Type Detection section
+
+        // Cooperative recovery system — re-issues driving task to escape node behind vehicle
+        public const float RECOVERY_ESCAPE_BASE_DISTANCE = 30f;           // meters behind vehicle (attempt 1)
+        public const float RECOVERY_ESCAPE_DISTANCE_INCREMENT = 30f;      // +30m per attempt (2=60m, 3=90m...)
+        public const float RECOVERY_ESCAPE_MAX_DISTANCE = 150f;           // max search distance
+        public const float RECOVERY_ESCAPE_ARRIVAL_RADIUS = 12f;          // generous arrival threshold
+        public const float RECOVERY_ESCAPE_SPEED = 8f;                    // m/s (~18 mph) cautious escape
+        public const long RECOVERY_ESCAPE_TIMEOUT = 150_000_000;          // 15 seconds to reach escape node
+        public const long RECOVERY_COOLDOWN = 50_000_000;                 // 5s cooldown after success
+        public const int RECOVERY_MAX_ATTEMPTS = 5;                       // stop after 5 failures
+        public const int RECOVERY_NODE_SCAN_COUNT = 5;                    // scan 5 nearest nodes to find one behind
 
         // ===== WEATHER-BASED DRIVING =====
 
@@ -923,11 +910,6 @@ namespace GrandTheftAccessibility
         public const float FOLLOWING_DISTANCE_CLOSE = 1.5f;    // Too close
         public const float FOLLOWING_DISTANCE_TAILGATING = 0.8f; // Dangerous
 
-        // Native for raycast
-        public const ulong NATIVE_GET_CLOSEST_VEHICLE_IN_DIRECTION = 0x2E2ADB65E51A3B78;
-        public const ulong NATIVE_START_SHAPE_TEST_LOS_PROBE = 0x7EE9F5D83DD4F90E;
-        public const ulong NATIVE_GET_SHAPE_TEST_RESULT = 0x3D87450E15D98694;
-
         // ===== TIME-OF-DAY AWARENESS =====
 
         // Time periods (24-hour format)
@@ -955,11 +937,6 @@ namespace GrandTheftAccessibility
         public const float EMERGENCY_YIELD_DISTANCE = 30f;     // meters to start yielding
         public const long TICK_INTERVAL_EMERGENCY_CHECK = 10_000_000;  // 1 second
         public const long EMERGENCY_YIELD_DURATION = 50_000_000;  // 5 seconds of yielding
-
-        // Emergency vehicle blip types
-        public const int BLIP_POLICE = 60;
-        public const int BLIP_AMBULANCE = 61;
-        public const int BLIP_FIRE = 68;
 
         // Native for siren check
         public const ulong NATIVE_IS_VEHICLE_SIREN_ON = 0x4C9BF537BE2634B2;
@@ -992,7 +969,6 @@ namespace GrandTheftAccessibility
         public const long PAUSE_RESUME_DELAY = 10_000_000;         // 1 second delay before resuming
 
         // Native for braking
-        public const ulong NATIVE_SET_VEHICLE_BRAKE = 0xE1E4E9B7FC841C5C;
         public const ulong NATIVE_SET_VEHICLE_HANDBRAKE = 0x684785568EF26A22;
 
         // ===== FOLLOWING DISTANCE FEEDBACK =====
@@ -1149,7 +1125,10 @@ namespace GrandTheftAccessibility
 
         // Native call parameters for road node lookup
         public const float ROAD_NODE_SEARCH_CONNECTION_DISTANCE = 3.0f;   // meters - connection distance for node search
-        public const int ROAD_NODE_TYPE_ALL = 1;                          // Node type: 1 = All road types
+        // IMPORTANT: This value is eGetClosestNodeFlags, NOT a "road type".
+        // Value 1 = GCNF_INCLUDE_SWITCHED_OFF_NODES (includes parking lots, alleys, disabled nodes).
+        // Use NODE_FLAG_ACTIVE_NODES_ONLY (0) if you only want active road nodes.
+        public const int ROAD_NODE_TYPE_ALL = 1;                          // eGetClosestNodeFlags: includes switched-off nodes
         public const int SAFE_COORD_FLAGS = 16;                           // Flags for GET_SAFE_COORD_FOR_PED
 
         // Road distance sanity check
@@ -1358,9 +1337,26 @@ namespace GrandTheftAccessibility
         };
 
         // Turret engagement parameters
-        public const float TURRET_FULL_AUTO_RANGE = 50f;        // meters - full auto engagement within this range
+        public const float TURRET_MIN_ENGAGEMENT_RANGE = 25f;   // meters - dead zone to prevent self-damage from splash
+        public const float TURRET_FULL_AUTO_RANGE = 80f;        // meters - full auto engagement (expanded from 50)
         public const float TURRET_AIM_RANGE = 150f;             // meters - aim at targets within this range
         public const float TURRET_CREW_DAMAGE_THRESHOLD = 0.5f; // 50% health threshold for damage warning
+
+        // Turret engagement range squared (avoid sqrt in distance comparisons)
+        public const float TURRET_MIN_ENGAGEMENT_RANGE_SQ = TURRET_MIN_ENGAGEMENT_RANGE * TURRET_MIN_ENGAGEMENT_RANGE;
+        public const float TURRET_FULL_AUTO_RANGE_SQ = TURRET_FULL_AUTO_RANGE * TURRET_FULL_AUTO_RANGE;
+        public const float TURRET_AIM_RANGE_SQ = TURRET_AIM_RANGE * TURRET_AIM_RANGE;
+
+        // Turret target priority scores (higher = more threatening)
+        public const int TURRET_PRIORITY_ATTACKING = 100;       // Currently shooting at player
+        public const int TURRET_PRIORITY_ARMED_VEHICLE = 75;    // In hostile vehicle with weapons
+        public const int TURRET_PRIORITY_ARMED_ON_FOOT = 50;    // Armed hostile on foot
+        public const int TURRET_PRIORITY_UNARMED = 25;          // Hostile but unarmed
+
+        // Turret combat tuning
+        public const int TURRET_CREW_ACCURACY = 75;             // 0-100 accuracy scale
+        public const int TURRET_COMBAT_ABILITY_PROFESSIONAL = 2; // SET_PED_COMBAT_ABILITY level
+        public const int TURRET_COMBAT_RANGE_FAR = 2;           // SET_PED_COMBAT_RANGE level
 
         // Turret tick intervals
         public const long TICK_INTERVAL_TURRET_UPDATE = 500_000;          // 0.05s - turret AI update
@@ -1374,7 +1370,12 @@ namespace GrandTheftAccessibility
         // Natives for turret crew behavior
         public const ulong NATIVE_SET_PED_FIRING_PATTERN = 0x9AC577F5A12AD8A9;
         public const ulong NATIVE_TASK_VEHICLE_SHOOT_AT_COORD = 0x5190796ED39C9B6D;
-        public const ulong NATIVE_IS_TURRET_SEAT = 0xE33FFA906CE74880;  // IS_TURRET_SEAT(Vehicle vehicle, int seatIndex)
+        public const ulong NATIVE_IS_TURRET_SEAT = 0xE33FFA906CE74880;
+        public const ulong NATIVE_TASK_COMBAT_HATED_TARGETS = 0x2BBA30B854534A0C;
+        public const ulong NATIVE_HAS_ENTITY_BEEN_DAMAGED_BY = 0xC86D67D52A707CF8;
+        public const ulong NATIVE_IS_PED_IN_COMBAT = 0x4859F1FC66A6278E;
+        public const ulong NATIVE_SET_PED_COMBAT_ABILITY = 0xC7622C0D36B2FDA8;
+        public const ulong NATIVE_SET_PED_COMBAT_RANGE = 0x3C606747B23E497B;
 
         // Firing patterns (uint values)
         public const uint FIRING_PATTERN_FULL_AUTO = 0xC6EE6B4C;

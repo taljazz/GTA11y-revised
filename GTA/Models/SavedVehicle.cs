@@ -128,7 +128,7 @@ namespace GrandTheftAccessibility
             parts.Add(DisplayName);
 
             // Add notable mods
-            if (Mods.TryGetValue(11, out int engineLevel) && engineLevel >= 0)
+            if (Mods.TryGetValue(11 /* VehicleModType.Engine */, out int engineLevel) && engineLevel >= 0)
                 parts.Add($"Engine Level {engineLevel + 1}");
 
             if (HasTurbo)

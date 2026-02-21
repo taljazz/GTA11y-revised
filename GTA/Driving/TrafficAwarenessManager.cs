@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using GTA;
 using GTA.Math;
-using GTA.Native;
 
 namespace GrandTheftAccessibility
 {
@@ -40,6 +39,7 @@ namespace GrandTheftAccessibility
         private int _lastFollowingState;
         private long _lastFollowingCheckTick;
         private long _lastFollowingAnnounceTick;
+        private int _pendingFollowingAnnouncement;  // 0=none, 1=road clear, 3=too close, 4=dangerous
 
         // External state references (passed in via Update)
         private float _lastVehicleAheadDistance = float.MaxValue;
@@ -86,6 +86,7 @@ namespace GrandTheftAccessibility
             _lastFollowingState = 0;
             _lastFollowingCheckTick = 0;
             _lastFollowingAnnounceTick = 0;
+            _pendingFollowingAnnouncement = 0;
             _lastVehicleAheadDistance = float.MaxValue;
         }
 
@@ -305,7 +306,7 @@ namespace GrandTheftAccessibility
 
                 // Cleanup stale entries
                 _handleRemovalList.Clear();
-                long staleThreshold = currentTick - 100_000_000;
+                long staleThreshold = currentTick - 30_000_000;
                 foreach (var kvp in _overtakeTracking)
                 {
                     if (!_visibleHandles.Contains(kvp.Key) || kvp.Value.FirstSeenTick < staleThreshold)
@@ -332,11 +333,11 @@ namespace GrandTheftAccessibility
         }
 
         /// <summary>
-        /// Check following distance using 2-3 second rule
+        /// Check following distance using 2-3 second rule.
+        /// Detection and announcements only — the AI handles braking/swerving
+        /// via driving flags (DF_STOP_FOR_CARS or SwerveAroundAllVehicles).
         /// </summary>
-        public void CheckFollowingDistance(Vehicle vehicle, long currentTick, float targetSpeed,
-            float roadTypeSpeedMultiplier, float weatherSpeedMultiplier, float timeSpeedMultiplier,
-            int drivingStyleMode, bool taskIssued)
+        public void CheckFollowingDistance(Vehicle vehicle, long currentTick)
         {
             if (currentTick - _lastFollowingCheckTick < Constants.TICK_INTERVAL_FOLLOWING_CHECK)
                 return;
@@ -375,120 +376,44 @@ namespace GrandTheftAccessibility
                     followingState = 4;
             }
 
-            if (taskIssued)
+            // FIX: Track state transitions separately from announcements.
+            // Previously, when state changed during cooldown the else branch silently
+            // updated _lastFollowingState, losing "Road clear" announcements.
+            if (followingState != _lastFollowingState)
             {
-                AdjustSpeedForFollowing(vehicle, followingState, vehicleSpeed, targetSpeed,
-                    roadTypeSpeedMultiplier, weatherSpeedMultiplier, timeSpeedMultiplier, drivingStyleMode);
+                int previousState = _lastFollowingState;
+                _lastFollowingState = followingState;
+
+                // Queue announcement based on state transition
+                if (followingState == 0 && previousState >= 3)
+                    _pendingFollowingAnnouncement = 1;  // "Road clear ahead"
+                else if (followingState == 3)
+                    _pendingFollowingAnnouncement = 3;  // "Following too closely"
+                else if (followingState == 4)
+                    _pendingFollowingAnnouncement = 4;  // "Dangerously close"
             }
 
-            if (followingState != _lastFollowingState &&
+            // Deliver pending announcement when cooldown allows
+            if (_pendingFollowingAnnouncement > 0 &&
                 currentTick - _lastFollowingAnnounceTick > Constants.FOLLOWING_ANNOUNCE_COOLDOWN)
             {
                 _lastFollowingAnnounceTick = currentTick;
 
-                int previousState = _lastFollowingState;
-                _lastFollowingState = followingState;
-
-                if (followingState == 0 && previousState >= 3)
+                switch (_pendingFollowingAnnouncement)
                 {
-                    _announcementQueue.TryAnnounce("Road clear ahead", Constants.ANNOUNCE_PRIORITY_LOW, currentTick, "announceTrafficAwareness");
+                    case 1:
+                        _announcementQueue.TryAnnounce("Road clear ahead", Constants.ANNOUNCE_PRIORITY_LOW, currentTick, "announceTrafficAwareness");
+                        break;
+                    case 3:
+                        _announcementQueue.TryAnnounce("Following too closely", Constants.ANNOUNCE_PRIORITY_MEDIUM, currentTick, "announceTrafficAwareness");
+                        break;
+                    case 4:
+                        _announcementQueue.TryAnnounce("Dangerously close", Constants.ANNOUNCE_PRIORITY_HIGH, currentTick, "announceTrafficAwareness");
+                        break;
                 }
-                else if (followingState == 3)
-                {
-                    _announcementQueue.TryAnnounce("Following too closely", Constants.ANNOUNCE_PRIORITY_MEDIUM, currentTick, "announceTrafficAwareness");
-                }
-                else if (followingState == 4)
-                {
-                    _announcementQueue.TryAnnounce("Dangerously close", Constants.ANNOUNCE_PRIORITY_HIGH, currentTick, "announceTrafficAwareness");
-                }
-            }
-            else
-            {
-                _lastFollowingState = followingState;
+                _pendingFollowingAnnouncement = 0;
             }
         }
 
-        private void AdjustSpeedForFollowing(Vehicle vehicle, int followingState, float currentSpeed,
-            float targetSpeed, float roadTypeMultiplier, float weatherMultiplier, float timeMultiplier,
-            int drivingStyleMode)
-        {
-            float adjustedTargetSpeed = CalculateTargetSpeedForFollowing(followingState, currentSpeed,
-                targetSpeed, roadTypeMultiplier, weatherMultiplier, timeMultiplier, drivingStyleMode);
-
-            ApplySmoothSpeedTransition(vehicle, adjustedTargetSpeed, currentSpeed, drivingStyleMode);
-        }
-
-        private float CalculateTargetSpeedForFollowing(int followingState, float currentSpeed,
-            float targetSpeed, float roadTypeMultiplier, float weatherMultiplier, float timeMultiplier,
-            int drivingStyleMode)
-        {
-            float baseTargetSpeed = targetSpeed * roadTypeMultiplier * weatherMultiplier * timeMultiplier;
-
-            switch (followingState)
-            {
-                case 0:
-                    return Math.Min(baseTargetSpeed, currentSpeed + GetAccelerationRate(drivingStyleMode));
-                case 1:
-                    return Math.Min(baseTargetSpeed, currentSpeed + (GetAccelerationRate(drivingStyleMode) * 0.5f));
-                case 2:
-                    return Math.Max(baseTargetSpeed * 0.9f, Math.Min(baseTargetSpeed, currentSpeed));
-                case 3:
-                    return Math.Max(baseTargetSpeed * 0.75f, currentSpeed - GetDecelerationRate(drivingStyleMode));
-                case 4:
-                    return Math.Max(Constants.AUTODRIVE_MIN_SPEED, currentSpeed - (GetDecelerationRate(drivingStyleMode) * 2f));
-            }
-
-            return baseTargetSpeed;
-        }
-
-        private void ApplySmoothSpeedTransition(Vehicle vehicle, float targetSpeed, float currentSpeed, int drivingStyleMode)
-        {
-            float speedDiff = targetSpeed - currentSpeed;
-
-            if (Math.Abs(speedDiff) < 0.5f) return;
-
-            float maxChangeRate = speedDiff > 0 ? GetAccelerationRate(drivingStyleMode) : GetDecelerationRate(drivingStyleMode);
-            float actualChange = Math.Max(-maxChangeRate, Math.Min(maxChangeRate, speedDiff));
-
-            float newSpeed = currentSpeed + actualChange;
-            newSpeed = Math.Max(Constants.AUTODRIVE_MIN_SPEED, Math.Min(Constants.AUTODRIVE_MAX_SPEED, newSpeed));
-
-            try
-            {
-                Ped player = Game.Player.Character;
-                if (player != null && player.IsInVehicle())
-                {
-                    Function.Call(Hash.SET_DRIVE_TASK_CRUISE_SPEED, player.Handle, newSpeed);
-                }
-            }
-            catch (Exception ex)
-            {
-                Logger.Exception(ex, "TrafficAwarenessManager.ApplySmoothSpeedTransition");
-            }
-        }
-
-        private float GetAccelerationRate(int drivingStyleMode)
-        {
-            switch (drivingStyleMode)
-            {
-                case Constants.DRIVING_STYLE_MODE_CAUTIOUS: return 1.0f;
-                case Constants.DRIVING_STYLE_MODE_NORMAL: return 2.0f;
-                case Constants.DRIVING_STYLE_MODE_FAST: return 3.0f;
-                case Constants.DRIVING_STYLE_MODE_RECKLESS: return 4.0f;
-                default: return 2.0f;
-            }
-        }
-
-        private float GetDecelerationRate(int drivingStyleMode)
-        {
-            switch (drivingStyleMode)
-            {
-                case Constants.DRIVING_STYLE_MODE_CAUTIOUS: return 2.0f;
-                case Constants.DRIVING_STYLE_MODE_NORMAL: return 3.0f;
-                case Constants.DRIVING_STYLE_MODE_FAST: return 4.0f;
-                case Constants.DRIVING_STYLE_MODE_RECKLESS: return 5.0f;
-                default: return 3.0f;
-            }
-        }
     }
 }

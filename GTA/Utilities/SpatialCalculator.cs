@@ -14,27 +14,17 @@ namespace GrandTheftAccessibility
         /// </summary>
         public static double CalculateAngle(double x1, double y1, double x2, double y2)
         {
-            double x = x1 - x2;
-            double y = y2 - y1;
+            double dx = x1 - x2;
+            double dy = y2 - y1;
 
-            if (x == 0 && y == 0)
+            if (dx == 0 && dy == 0)
                 return 0;
 
-            double rad = Math.Atan2(y, x);
-            double arctan = rad / Math.PI * 180;
-            double fdeg;
+            double deg = Math.Atan2(dx, dy) * (180.0 / Math.PI);
+            if (deg < 0)
+                deg += 360.0;
 
-            if (x > 0)
-                fdeg = 90 - arctan;
-            else if (x < 0)
-                fdeg = 270 - arctan;
-            else // x == 0
-                fdeg = y > 0 ? 0 : 180;
-
-            if (fdeg < 0)
-                fdeg += 360;
-
-            return Math.Floor(fdeg);
+            return Math.Floor(deg);
         }
 
         /// <summary>

@@ -21,18 +21,18 @@ namespace GrandTheftAccessibility.Menus
 
         public void NavigatePrevious(bool fastScroll = false)
         {
-            if (_currentIndex > 0)
-                _currentIndex--;
-            else
-                _currentIndex = _settingIds.Count - 1;
+            int step = fastScroll ? 5 : 1;
+            _currentIndex -= step;
+            if (_currentIndex < 0)
+                _currentIndex = (((_currentIndex % _settingIds.Count) + _settingIds.Count) % _settingIds.Count);
         }
 
         public void NavigateNext(bool fastScroll = false)
         {
-            if (_currentIndex < _settingIds.Count - 1)
-                _currentIndex++;
-            else
-                _currentIndex = 0;
+            int step = fastScroll ? 5 : 1;
+            _currentIndex += step;
+            if (_currentIndex >= _settingIds.Count)
+                _currentIndex = _currentIndex % _settingIds.Count;
         }
 
         public string GetCurrentItemText()

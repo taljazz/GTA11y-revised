@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using GTA;
+using DavyKager;
 
 namespace GrandTheftAccessibility.Menus
 {
@@ -140,9 +142,19 @@ namespace GrandTheftAccessibility.Menus
             switch (_currentIndex)
             {
                 case ITEM_WANDER:
+                    if (Game.Player.Character?.CurrentVehicle == null)
+                    {
+                        Tolk.Speak("Not in a vehicle");
+                        return;
+                    }
                     _manager.StartWander();
                     break;
                 case ITEM_WAYPOINT:
+                    if (Game.Player.Character?.CurrentVehicle == null)
+                    {
+                        Tolk.Speak("Not in a vehicle");
+                        return;
+                    }
                     _manager.StartWaypoint();
                     break;
                 case ITEM_SEEK_ROAD:

@@ -13,9 +13,7 @@ namespace GrandTheftAccessibility
     {
         // PERFORMANCE: Pre-cached Hash values to avoid repeated casting
         private static readonly Hash _getVehicleNodePropsHash = (Hash)Constants.NATIVE_GET_VEHICLE_NODE_PROPERTIES;
-        private static readonly Hash _setCruiseSpeedHash = (Hash)Constants.NATIVE_SET_DRIVE_TASK_CRUISE_SPEED;
         private static readonly Hash _clearPedTasksHash = (Hash)Constants.NATIVE_CLEAR_PED_TASKS;
-        private static readonly Hash _taskVehicleTempActionHash = (Hash)Constants.NATIVE_TASK_VEHICLE_TEMP_ACTION;
         private static readonly Hash _taskVehicleDriveWanderHash = (Hash)Constants.NATIVE_TASK_VEHICLE_DRIVE_WANDER;
 
         private readonly AudioManager _audio;
@@ -32,7 +30,6 @@ namespace GrandTheftAccessibility
         // Dead-end state
         private bool _inDeadEnd;
         private long _lastDeadEndCheckTick;
-        private int _deadEndTurnCount;
         private Vector3 _deadEndEntryPosition;
 
         // Pre-allocated OutputArguments
@@ -75,29 +72,49 @@ namespace GrandTheftAccessibility
 
             _inDeadEnd = false;
             _lastDeadEndCheckTick = 0;
-            _deadEndTurnCount = 0;
             _deadEndEntryPosition = Vector3.Zero;
         }
 
         /// <summary>
-        /// Classify road type based on node flags, density, and additional heuristics
+        /// Classify road type based on node flags and density (no lane count available)
         /// </summary>
-        private int ClassifyRoadType(int flags, int density)
+        public int ClassifyRoadType(int flags, int density)
         {
+            return ClassifyRoadType(flags, density, -1);
+        }
+
+        /// <summary>
+        /// Classify road type based on node flags, density, and lane count.
+        /// Lane count from GET_NTH_CLOSEST_VEHICLE_NODE_WITH_HEADING improves
+        /// highway detection (3+ lanes without flags still likely = highway).
+        /// </summary>
+        /// <param name="flags">eVehicleNodeProperties flags from GET_VEHICLE_NODE_PROPERTIES</param>
+        /// <param name="density">Traffic density 0-15 from GET_VEHICLE_NODE_PROPERTIES</param>
+        /// <param name="laneCount">Total lanes from GET_NTH_CLOSEST_VEHICLE_NODE_WITH_HEADING, or -1 if unavailable</param>
+        public int ClassifyRoadType(int flags, int density, int laneCount)
+        {
+            // Skip water route nodes
+            if ((flags & Constants.ROAD_FLAG_WATER) != 0)
+                return Constants.ROAD_TYPE_UNKNOWN;
+
+            // Skip switched-off nodes (parking lots, disabled paths)
+            if ((flags & Constants.ROAD_FLAG_SWITCHED_OFF) != 0)
+                return Constants.ROAD_TYPE_UNKNOWN;
+
             // Priority 1: Explicit road type flags (most reliable)
             if ((flags & Constants.ROAD_FLAG_TUNNEL) != 0)
                 return Constants.ROAD_TYPE_TUNNEL;
 
-            // Highway detection with multi-signal confirmation
+            // Highway detection: flag + optional lane count confirmation
             if ((flags & Constants.ROAD_FLAG_HIGHWAY) != 0)
+                return Constants.ROAD_TYPE_HIGHWAY;
+
+            // Lane-count highway detection: no highway flag but 3+ lanes and no traffic lights
+            // This catches unmarked highway segments that GTA doesn't flag
+            if (laneCount >= Constants.ROAD_LANES_HIGHWAY_MIN &&
+                (flags & Constants.ROAD_FLAG_TRAFFIC_LIGHT) == 0 &&
+                density <= Constants.ROAD_DENSITY_SUBURBAN_MAX)
             {
-                // Confirm highway - highways have low density and no traffic lights
-                if (density <= Constants.ROAD_DENSITY_SUBURBAN_MAX &&
-                    (flags & Constants.ROAD_FLAG_TRAFFIC_LIGHT) == 0)
-                {
-                    return Constants.ROAD_TYPE_HIGHWAY;
-                }
-                // Highway flag but with traffic light = freeway on-ramp or city expressway
                 return Constants.ROAD_TYPE_HIGHWAY;
             }
 
@@ -131,20 +148,11 @@ namespace GrandTheftAccessibility
 
             // Priority 5: Density-based classification for unmarked roads
             if (density <= 1)
-            {
-                // Very low density with no flags = rural backroad
                 return Constants.ROAD_TYPE_RURAL;
-            }
             else if (density <= Constants.ROAD_DENSITY_RURAL_MAX)
-            {
-                // Low density = rural area
                 return Constants.ROAD_TYPE_RURAL;
-            }
             else if (density <= Constants.ROAD_DENSITY_SUBURBAN_MAX)
-            {
-                // Medium density = suburban
                 return Constants.ROAD_TYPE_SUBURBAN;
-            }
 
             // High density = city street (default for urban areas)
             return Constants.ROAD_TYPE_CITY_STREET;
@@ -175,50 +183,22 @@ namespace GrandTheftAccessibility
         }
 
         /// <summary>
-        /// Apply road type speed adjustment when road type changes
+        /// Update cached speed multiplier for the new road type.
+        /// Actual speed application is handled by SpeedArbiter via RoadTypeSpeedMultiplier property.
         /// </summary>
-        /// <param name="roadType">New road type</param>
-        /// <param name="targetSpeed">Current target speed</param>
-        /// <param name="curveSlowdownActive">Whether curve slowdown is active</param>
-        /// <param name="arrivalSlowdownActive">Whether arrival slowdown is active</param>
-        /// <returns>True if speed was adjusted</returns>
-        public bool ApplyRoadTypeSpeedAdjustment(int roadType, float targetSpeed,
-            bool curveSlowdownActive, bool arrivalSlowdownActive)
+        private bool UpdateRoadTypeMultiplier(int roadType)
         {
             if (roadType == _lastSpeedAdjustedRoadType) return false;
             if (roadType < 0 || roadType >= Constants.ROAD_TYPE_SPEED_MULTIPLIERS.Length) return false;
 
             float newMultiplier = Constants.GetRoadTypeSpeedMultiplier(roadType);
 
-            // Only apply if multiplier changed significantly
             if (Math.Abs(newMultiplier - _roadTypeSpeedMultiplier) > 0.1f)
             {
                 _roadTypeSpeedMultiplier = newMultiplier;
                 _lastSpeedAdjustedRoadType = roadType;
 
-                // Apply new speed (unless curve or arrival slowdown active)
-                if (!curveSlowdownActive && !arrivalSlowdownActive)
-                {
-                    try
-                    {
-                        Ped player = Game.Player.Character;
-                        if (player != null && player.IsInVehicle())
-                        {
-                            float adjustedSpeed = targetSpeed * _roadTypeSpeedMultiplier;
-                            Function.Call(
-                                _setCruiseSpeedHash,
-                                player.Handle,
-                                adjustedSpeed);
-
-                            string roadName = Constants.GetRoadTypeName(roadType);
-                            if (Logger.IsDebugEnabled) Logger.Debug($"Road type speed: {roadName} -> {adjustedSpeed:F1} m/s ({_roadTypeSpeedMultiplier:P0})");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.Exception(ex, "RoadTypeManager.ApplyRoadTypeSpeedAdjustment");
-                    }
-                }
+                if (Logger.IsDebugEnabled) Logger.Debug($"Road type multiplier: {Constants.GetRoadTypeName(roadType)} -> {_roadTypeSpeedMultiplier:P0}");
 
                 return true;
             }
@@ -232,12 +212,8 @@ namespace GrandTheftAccessibility
         /// <param name="position">Current position</param>
         /// <param name="currentTick">Current game tick</param>
         /// <param name="announceEnabled">Whether to announce changes</param>
-        /// <param name="targetSpeed">Current target speed</param>
-        /// <param name="curveSlowdownActive">Whether curve slowdown is active</param>
-        /// <param name="arrivalSlowdownActive">Whether arrival slowdown is active</param>
         /// <returns>True if road type changed</returns>
-        public bool CheckRoadTypeChange(Vector3 position, long currentTick, bool announceEnabled,
-            float targetSpeed, bool curveSlowdownActive, bool arrivalSlowdownActive)
+        public bool CheckRoadTypeChange(Vector3 position, long currentTick, bool announceEnabled)
         {
             // Defensive: Validate tick value
             if (currentTick < 0)
@@ -270,8 +246,8 @@ namespace GrandTheftAccessibility
                 int previousRoadType = _currentRoadType;
                 _currentRoadType = roadType;
 
-                // Apply speed adjustment for new road type
-                ApplyRoadTypeSpeedAdjustment(roadType, targetSpeed, curveSlowdownActive, arrivalSlowdownActive);
+                // Update speed multiplier for new road type
+                UpdateRoadTypeMultiplier(roadType);
 
                 // Announce change if enabled and cooldown passed
                 if (announceEnabled && roadType != _lastAnnouncedRoadType &&
@@ -336,10 +312,10 @@ namespace GrandTheftAccessibility
         /// <param name="position">Current position</param>
         /// <param name="currentTick">Current game tick</param>
         /// <param name="wanderMode">Whether in wander mode</param>
-        /// <param name="onTurnaround">Callback when turnaround is needed</param>
+        /// <param name="onDeadEndDetected">Callback when dead-end is detected</param>
         /// <returns>True if at dead-end</returns>
         public bool CheckDeadEnd(Vehicle vehicle, Vector3 position, long currentTick,
-            bool wanderMode, Action<Vehicle, long, int> onTurnaround)
+            bool wanderMode, Action<Vehicle, long> onDeadEndDetected)
         {
             if (!wanderMode) return false;
 
@@ -376,16 +352,14 @@ namespace GrandTheftAccessibility
 
                 if (isDeadEnd && !_inDeadEnd)
                 {
-                    // Just entered a dead-end
+                    // Just entered a dead-end — delegate recovery to AutoDriveManager
                     _inDeadEnd = true;
                     _deadEndEntryPosition = position;
-                    _deadEndTurnCount = 0;
-                    _announcementQueue.TryAnnounce("Approaching dead end, turning around",
+                    _announcementQueue.TryAnnounce("Approaching dead end, attempting recovery",
                         Constants.ANNOUNCE_PRIORITY_MEDIUM, currentTick, "announceRoadType");
-                    Logger.Info("Dead-end detected, initiating turnaround");
+                    Logger.Info("Dead-end detected, requesting cooperative recovery");
 
-                    // Request turnaround
-                    StartDeadEndTurnaround(vehicle, currentTick, onTurnaround);
+                    onDeadEndDetected?.Invoke(vehicle, currentTick);
                     return true;
                 }
                 else if (!isDeadEnd && _inDeadEnd)
@@ -395,7 +369,6 @@ namespace GrandTheftAccessibility
                     if (!float.IsNaN(distanceFromEntry) && distanceFromEntry > Constants.DEAD_END_ESCAPE_DISTANCE)
                     {
                         _inDeadEnd = false;
-                        _deadEndTurnCount = 0;
                         Logger.Info("Successfully escaped dead-end");
                     }
                 }
@@ -406,61 +379,6 @@ namespace GrandTheftAccessibility
             }
 
             return _inDeadEnd;
-        }
-
-        /// <summary>
-        /// Initiate turnaround maneuver when at a dead-end
-        /// </summary>
-        private void StartDeadEndTurnaround(Vehicle vehicle, long currentTick,
-            Action<Vehicle, long, int> onTurnaround)
-        {
-            // Defensive: Validate vehicle
-            if (vehicle == null || !vehicle.Exists())
-            {
-                Logger.Warning("StartDeadEndTurnaround: vehicle is null or doesn't exist");
-                return;
-            }
-
-            try
-            {
-                Ped player = Game.Player.Character;
-
-                // Defensive: Validate player
-                if (player == null || !player.Exists())
-                {
-                    Logger.Warning("StartDeadEndTurnaround: player is null or doesn't exist");
-                    return;
-                }
-
-                // Clear current task
-                Function.Call(_clearPedTasksHash, player.Handle);
-
-                // Perform a reverse and turn maneuver
-                _deadEndTurnCount++;
-
-                // Defensive: Prevent runaway turn count
-                if (_deadEndTurnCount > 100)
-                {
-                    Logger.Warning("StartDeadEndTurnaround: excessive turn count, resetting");
-                    _deadEndTurnCount = 1;
-                }
-
-                // Alternate turn direction on repeated attempts
-                int action = (_deadEndTurnCount % 2 == 1) ?
-                    Constants.TEMP_ACTION_REVERSE_LEFT :
-                    Constants.TEMP_ACTION_REVERSE_RIGHT;
-
-                Function.Call(
-                    _taskVehicleTempActionHash,
-                    player.Handle, vehicle.Handle, action, 2500);  // 2.5 second reverse
-
-                // Notify parent about turnaround for recovery state
-                onTurnaround?.Invoke(vehicle, currentTick, _deadEndTurnCount);
-            }
-            catch (Exception ex)
-            {
-                Logger.Exception(ex, "RoadTypeManager.StartDeadEndTurnaround");
-            }
         }
 
         /// <summary>
@@ -477,7 +395,7 @@ namespace GrandTheftAccessibility
             int drivingStyleMode, bool wanderMode, float targetSpeed)
         {
             // Only check in cautious/normal modes where AvoidRestrictedAreas is active
-            if (drivingStyleMode == Constants.DRIVING_STYLE_MODE_FAST ||
+            if (drivingStyleMode == Constants.DRIVING_STYLE_MODE_AGGRESSIVE ||
                 drivingStyleMode == Constants.DRIVING_STYLE_MODE_RECKLESS)
                 return false;
 

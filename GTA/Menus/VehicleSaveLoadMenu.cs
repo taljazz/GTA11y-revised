@@ -50,10 +50,10 @@ namespace GrandTheftAccessibility.Menus
             if (_inSubmenu)
             {
                 // Navigate slots
-                if (_currentSlotIndex > 0)
-                    _currentSlotIndex--;
-                else
-                    _currentSlotIndex = Constants.VEHICLE_SAVE_SLOT_COUNT - 1;
+                int step = fastScroll ? 5 : 1;
+                _currentSlotIndex -= step;
+                if (_currentSlotIndex < 0)
+                    _currentSlotIndex = (((_currentSlotIndex % Constants.VEHICLE_SAVE_SLOT_COUNT) + Constants.VEHICLE_SAVE_SLOT_COUNT) % Constants.VEHICLE_SAVE_SLOT_COUNT);
             }
             else
             {
@@ -70,10 +70,10 @@ namespace GrandTheftAccessibility.Menus
             if (_inSubmenu)
             {
                 // Navigate slots
-                if (_currentSlotIndex < Constants.VEHICLE_SAVE_SLOT_COUNT - 1)
-                    _currentSlotIndex++;
-                else
-                    _currentSlotIndex = 0;
+                int step = fastScroll ? 5 : 1;
+                _currentSlotIndex += step;
+                if (_currentSlotIndex >= Constants.VEHICLE_SAVE_SLOT_COUNT)
+                    _currentSlotIndex = _currentSlotIndex % Constants.VEHICLE_SAVE_SLOT_COUNT;
             }
             else
             {

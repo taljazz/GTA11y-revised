@@ -1,6 +1,7 @@
 using GTA;
 using GTA.Math;
 using GTA.Native;
+using DavyKager;
 using GrandTheftAccessibility.Data;
 
 namespace GrandTheftAccessibility.Menus
@@ -93,12 +94,15 @@ namespace GrandTheftAccessibility.Menus
                 // Enter submenu
                 _inSubmenu = true;
                 _currentLocationIndex = 0;
+                var categoryNames = LocationDataLoader.GetTeleportCategoryNames();
+                var locations = LocationDataLoader.GetTeleportLocationsByCategory(_currentCategoryIndex);
+                Tolk.Speak($"{categoryNames[_currentCategoryIndex]}, {locations.Length} locations");
                 return;
             }
 
             // Teleport to selected location
-            var locations = LocationDataLoader.GetTeleportLocationsByCategory(_currentCategoryIndex);
-            var location = locations[_currentLocationIndex];
+            var locs = LocationDataLoader.GetTeleportLocationsByCategory(_currentCategoryIndex);
+            var location = locs[_currentLocationIndex];
 
             TeleportToLocation(location.Coords, location.Name);
         }
@@ -212,6 +216,7 @@ namespace GrandTheftAccessibility.Menus
                     Logger.Warning($"Teleport may have failed - entity is {distanceFromTarget:F2}m from destination");
                 }
 
+                Tolk.Speak($"Teleported to {locationName}");
                 Logger.Info($"=== TELEPORT COMPLETE: {locationName} ===");
             }
             catch (System.Exception ex)

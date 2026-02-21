@@ -113,7 +113,7 @@ namespace GrandTheftAccessibility
                     return Constants.WEATHER_SPEED_THUNDER;
                 if (weatherHash == Constants.WEATHER_FOGGY)
                     return Constants.WEATHER_SPEED_FOGGY;
-                if (weatherHash == Constants.WEATHER_XMAS || weatherHash == Constants.WEATHER_SNOWLIGHT)
+                if (weatherHash == Constants.WEATHER_SNOW || weatherHash == Constants.WEATHER_XMAS || weatherHash == Constants.WEATHER_SNOWLIGHT)
                     return Constants.WEATHER_SPEED_SNOW;
                 if (weatherHash == Constants.WEATHER_BLIZZARD)
                     return Constants.WEATHER_SPEED_BLIZZARD;
@@ -144,7 +144,7 @@ namespace GrandTheftAccessibility
                     return "Smoggy";
                 if (weatherHash == Constants.WEATHER_FOGGY)
                     return "Foggy";
-                if (weatherHash == Constants.WEATHER_XMAS || weatherHash == Constants.WEATHER_SNOWLIGHT)
+                if (weatherHash == Constants.WEATHER_SNOW || weatherHash == Constants.WEATHER_XMAS || weatherHash == Constants.WEATHER_SNOWLIGHT)
                     return "Snowy";
                 if (weatherHash == Constants.WEATHER_BLIZZARD)
                     return "Blizzard";
@@ -182,6 +182,7 @@ namespace GrandTheftAccessibility
                     friction *= 0.6f; // Heavy rain
                 }
                 else if (_currentWeatherHash == Constants.WEATHER_SNOW ||
+                         _currentWeatherHash == Constants.WEATHER_XMAS ||
                          _currentWeatherHash == Constants.WEATHER_SNOWLIGHT)
                 {
                     friction *= 0.3f; // Snow/ice

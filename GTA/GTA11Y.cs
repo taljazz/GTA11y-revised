@@ -25,12 +25,17 @@ namespace GrandTheftAccessibility
         private readonly SettingsManager _settings;
         private readonly EntityScanner _scanner;
         private readonly MenuManager _menu;
+        private readonly HealthArmorManager _healthArmor;
+        private readonly VehicleDamageManager _vehicleDamage;
+        private readonly CombatAssistManager _combat;
+        private readonly BlipManager _blips;
+        private readonly GameStateManager _gameState;
 
         // Cached state (to avoid repeated lookups)
         private WeaponHash _currentWeaponHash;  // Use enum directly, not string (avoids ToString() allocation)
         private string _currentStreet;
         private string _currentZone;
-        private int _currentWantedLevel;
+
         private float _lastAltitude;
         private float _lastPitch;
         private bool _timeAnnounced;
@@ -103,6 +108,13 @@ namespace GrandTheftAccessibility
                 Logger.Debug("Initializing MenuManager...");
                 _menu = new MenuManager(_settings, _audio);
 
+                // Initialize new accessibility managers
+                _healthArmor = new HealthArmorManager(_audio, _settings);
+                _vehicleDamage = new VehicleDamageManager(_audio, _settings);
+                _combat = new CombatAssistManager(_audio, _settings);
+                _blips = new BlipManager(_audio, _settings);
+                _gameState = new GameStateManager(_audio);
+
                 // Initialize state tracking
                 _headingSlices = new bool[Constants.HEADING_SLICE_COUNT];
                 _keyStates = new bool[20];
@@ -116,6 +128,10 @@ namespace GrandTheftAccessibility
                 Aborted += OnAborted;
 
                 Logger.Info("GTA11Y initialized successfully");
+
+                // Log session diagnostics for troubleshooting
+                Logger.LogSessionInfo("1.0.0", "3.4.0.0");
+                Logger.LogSettings(_settings.AllBoolSettings, _settings.AllIntSettings);
 
                 // Announce mod ready
                 _audio.Speak("Mod Ready");
@@ -198,13 +214,7 @@ namespace GrandTheftAccessibility
                 }
             }
 
-            // Wanted level changes
-            int wantedLevel = Game.Player.WantedLevel;
-            if (wantedLevel != _currentWantedLevel && !_settings.GetSetting("neverWanted"))
-            {
-                _currentWantedLevel = wantedLevel;
-                _audio.Speak($"Wanted level is now {wantedLevel}");
-            }
+            // Wanted level changes are handled by BlipManager.Update() below
 
             // Radio control - use IsInVehicle() to avoid stale CurrentVehicle references
             Vehicle currentVehicle = null;
@@ -467,6 +477,37 @@ namespace GrandTheftAccessibility
                 _lastTolkHealthCheckTick = currentTick;
                 _audio.CheckTolkHealth();
             }
+
+            // Health and armor monitoring (throttled internally to 1s)
+            _healthArmor.Update(player, currentTick);
+
+            // Vehicle damage monitoring (when in vehicle)
+            if (currentVehicle != null && currentVehicle.Exists())
+            {
+                _vehicleDamage.Update(currentVehicle, currentTick);
+            }
+
+            // Combat assistance (damage direction, combat state)
+            _combat.Update(player, playerPos, currentTick);
+
+            // Wanted level and blip monitoring (throttled internally)
+            _blips.Update(currentTick);
+
+            // Game state monitoring (cutscenes, phone, loading - throttled internally to 500ms)
+            _gameState.Update(currentTick);
+
+            // Pedestrian navigation (when on foot and active)
+            if (_menu.IsPedestrianNavigationActive && currentVehicle == null)
+            {
+                try
+                {
+                    _menu.UpdatePedestrianNavigation(player, playerPos, currentTick);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Exception(ex, "Pedestrian navigation update");
+                }
+            }
         }
 
         /// <summary>
@@ -512,7 +553,7 @@ namespace GrandTheftAccessibility
                     try
                     {
                         float nozzlePosition = Function.Call<float>(
-                            (Hash)Constants.NATIVE_GET_VEHICLE_FLIGHT_NOZZLE_POSITION,
+                            _getFlightNozzlePositionHash,
                             vehicle);
 
                         return nozzlePosition > Constants.VTOL_HOVER_THRESHOLD
@@ -743,6 +784,9 @@ namespace GrandTheftAccessibility
             }
         }
 
+        // PERFORMANCE: Pre-cached Hash for native calls
+        private static readonly Hash _getFlightNozzlePositionHash = (Hash)Constants.NATIVE_GET_VEHICLE_FLIGHT_NOZZLE_POSITION;
+
         // PERFORMANCE: Pre-cached Hash for MP map natives
         private static readonly Hash _onEnterMPHash = (Hash)Constants.NATIVE_ON_ENTER_MP;
         private static readonly Hash _onEnterSPHash = (Hash)Constants.NATIVE_ON_ENTER_SP;
@@ -819,7 +863,7 @@ namespace GrandTheftAccessibility
 
             if (time.Minutes == 0)
             {
-                if ((time.Hours == 3 || time.Hours == 6 || time.Hours == 9 ||
+                if ((time.Hours == 0 || time.Hours == 3 || time.Hours == 6 || time.Hours == 9 ||
                      time.Hours == 12 || time.Hours == 15 || time.Hours == 18 ||
                      time.Hours == 21) && !_timeAnnounced)
                 {
@@ -900,6 +944,30 @@ namespace GrandTheftAccessibility
         }
 
         /// <summary>
+        /// Play a frontend sound with proper sound ID lifecycle.
+        /// GTA.Audio.PlaySoundFrontend() leaks sound IDs (calls GET_SOUND_ID
+        /// but never RELEASE_SOUND_ID), exhausting the ~100 ID pool after
+        /// enough menu navigations. This method gets, plays, and immediately releases.
+        /// </summary>
+        private static void PlayFrontendSound(string soundName, string soundSet)
+        {
+            int id = -1;
+            try
+            {
+                id = Function.Call<int>(Hash.GET_SOUND_ID);
+                Function.Call(Hash.PLAY_SOUND_FRONTEND, id, soundName, soundSet, false);
+            }
+            catch { }
+            finally
+            {
+                if (id >= 0)
+                {
+                    try { Function.Call(Hash.RELEASE_SOUND_ID, id); } catch { }
+                }
+            }
+        }
+
+        /// <summary>
         /// Key down event handler
         /// </summary>
         private void OnKeyDown(object sender, KeyEventArgs e)
@@ -936,56 +1004,109 @@ namespace GrandTheftAccessibility
 
                     case Keys.NumPad1 when keyIndex >= 0 && keyIndex < _keyStates.Length && !_keyStates[keyIndex]:
                         _keyStates[keyIndex] = true;
-                        try { GTA.Audio.PlaySoundFrontend("NAV_LEFT_RIGHT", "HUD_FRONTEND_DEFAULT_SOUNDSET"); } catch { }
+                        PlayFrontendSound("NAV_LEFT_RIGHT", "HUD_FRONTEND_DEFAULT_SOUNDSET");
                         _menu.NavigatePreviousItem(_controlHeld);
                         _audio.Speak(_menu.GetCurrentItemText());
                         break;
 
                     case Keys.NumPad2 when !_controlHeld && keyIndex >= 0 && keyIndex < _keyStates.Length && !_keyStates[keyIndex]:
                         _keyStates[keyIndex] = true;
-                        try { GTA.Audio.PlaySoundFrontend("SELECT", "HUD_FRONTEND_DEFAULT_SOUNDSET"); } catch { }
+                        PlayFrontendSound("SELECT", "HUD_FRONTEND_DEFAULT_SOUNDSET");
                         _menu.ExecuteSelection();
                         break;
 
                     case Keys.NumPad3 when keyIndex >= 0 && keyIndex < _keyStates.Length && !_keyStates[keyIndex]:
                         _keyStates[keyIndex] = true;
-                        try { GTA.Audio.PlaySoundFrontend("NAV_LEFT_RIGHT", "HUD_FRONTEND_DEFAULT_SOUNDSET"); } catch { }
+                        PlayFrontendSound("NAV_LEFT_RIGHT", "HUD_FRONTEND_DEFAULT_SOUNDSET");
                         _menu.NavigateNextItem(_controlHeld);
                         _audio.Speak(_menu.GetCurrentItemText());
                         break;
 
                     case Keys.NumPad4 when keyIndex >= 0 && keyIndex < _keyStates.Length && !_keyStates[keyIndex]:
                         _keyStates[keyIndex] = true;
-                        HandleNearbyVehicles();
+                        if (_controlHeld)
+                        {
+                            // Ctrl+NumPad4: Health and armor status
+                            Ped p4 = Game.Player?.Character;
+                            if (p4 != null && p4.Exists()) _healthArmor.AnnounceStatus(p4);
+                        }
+                        else
+                        {
+                            HandleNearbyVehicles();
+                        }
                         break;
 
                     case Keys.NumPad5 when keyIndex >= 0 && keyIndex < _keyStates.Length && !_keyStates[keyIndex]:
                         _keyStates[keyIndex] = true;
-                        HandleNearbyDoors();
+                        if (_controlHeld)
+                        {
+                            // Ctrl+NumPad5: Repeat last announcement
+                            _audio.RepeatLast();
+                        }
+                        else
+                        {
+                            HandleNearbyDoors();
+                        }
                         break;
 
                     case Keys.NumPad6 when keyIndex >= 0 && keyIndex < _keyStates.Length && !_keyStates[keyIndex]:
                         _keyStates[keyIndex] = true;
-                        HandleNearbyPedestrians();
+                        if (_controlHeld)
+                        {
+                            // Ctrl+NumPad6: Nearest enemy
+                            Ped p6 = Game.Player?.Character;
+                            if (p6 != null && p6.Exists()) _combat.AnnounceNearestEnemy(p6, p6.Position);
+                        }
+                        else
+                        {
+                            HandleNearbyPedestrians();
+                        }
                         break;
 
                     case Keys.NumPad7 when keyIndex >= 0 && keyIndex < _keyStates.Length && !_keyStates[keyIndex]:
                         _keyStates[keyIndex] = true;
-                        try { GTA.Audio.PlaySoundFrontend("NAV_UP_DOWN", "HUD_FRONTEND_DEFAULT_SOUNDSET"); } catch { }
-                        _menu.NavigatePreviousMenu();
-                        _audio.Speak(_menu.GetCurrentMenuDescription(), true);
+                        if (_controlHeld)
+                        {
+                            // Ctrl+NumPad7: Nearby points of interest
+                            Ped p7 = Game.Player?.Character;
+                            if (p7 != null && p7.Exists()) _blips.AnnounceNearbyBlips(p7.Position);
+                        }
+                        else
+                        {
+                            PlayFrontendSound("NAV_UP_DOWN", "HUD_FRONTEND_DEFAULT_SOUNDSET");
+                            _menu.NavigatePreviousMenu();
+                            _audio.Speak(_menu.GetCurrentMenuDescription(), true);
+                        }
                         break;
 
                     case Keys.NumPad8 when keyIndex >= 0 && keyIndex < _keyStates.Length && !_keyStates[keyIndex]:
                         _keyStates[keyIndex] = true;
-                        HandleNearbyObjects();
+                        if (_controlHeld)
+                        {
+                            // Ctrl+NumPad8: Ammo count
+                            Ped p8 = Game.Player?.Character;
+                            if (p8 != null && p8.Exists()) _combat.AnnounceAmmo(p8);
+                        }
+                        else
+                        {
+                            HandleNearbyObjects();
+                        }
                         break;
 
                     case Keys.NumPad9 when keyIndex >= 0 && keyIndex < _keyStates.Length && !_keyStates[keyIndex]:
                         _keyStates[keyIndex] = true;
-                        try { GTA.Audio.PlaySoundFrontend("NAV_UP_DOWN", "HUD_FRONTEND_DEFAULT_SOUNDSET"); } catch { }
-                        _menu.NavigateNextMenu();
-                        _audio.Speak(_menu.GetCurrentMenuDescription(), true);
+                        if (_controlHeld)
+                        {
+                            // Ctrl+NumPad9: Mission objective location
+                            Ped p9 = Game.Player?.Character;
+                            if (p9 != null && p9.Exists()) _blips.AnnounceMissionBlip(p9.Position);
+                        }
+                        else
+                        {
+                            PlayFrontendSound("NAV_UP_DOWN", "HUD_FRONTEND_DEFAULT_SOUNDSET");
+                            _menu.NavigateNextMenu();
+                            _audio.Speak(_menu.GetCurrentMenuDescription(), true);
+                        }
                         break;
 
                     case Keys.Decimal when keyIndex >= 0 && keyIndex < _keyStates.Length && !_keyStates[keyIndex]:
@@ -993,7 +1114,7 @@ namespace GrandTheftAccessibility
                         // Back/Exit submenu
                         if (_menu.HasActiveSubmenu())
                         {
-                            try { GTA.Audio.PlaySoundFrontend("BACK", "HUD_FRONTEND_DEFAULT_SOUNDSET"); } catch { }
+                            PlayFrontendSound("BACK", "HUD_FRONTEND_DEFAULT_SOUNDSET");
                             _menu.ExitSubmenu();
                             _audio.Speak(_menu.GetCurrentMenuDescription());
                         }
@@ -1052,7 +1173,7 @@ namespace GrandTheftAccessibility
         {
             try
             {
-                if (!e.Control)
+                if (!e.Control || e.KeyCode == Keys.ControlKey)
                 {
                     _controlHeld = false;
                 }
@@ -1089,6 +1210,9 @@ namespace GrandTheftAccessibility
                 _menu?.Dispose();
                 _audio?.Dispose();
                 Logger.Info("Cleanup complete");
+
+                // Shutdown logger last - flushes pending logs and stops background writer thread
+                Logger.Shutdown();
             }
             catch (Exception ex)
             {
@@ -1113,9 +1237,15 @@ namespace GrandTheftAccessibility
 
                 if (controlHeld)
                 {
-                    // Ctrl+NumPad0: Show heading (moved from Decimal)
-                    string direction = SpatialCalculator.GetDirectionFromHeading(player.Heading);
-                    _audio.Speak($"facing {direction}");
+                    // Ctrl+NumPad0: Toggle pedestrian navigation to waypoint
+                    if (_menu.IsPedestrianNavigationActive)
+                    {
+                        _menu.StopPedestrianNavigation();
+                    }
+                    else
+                    {
+                        _menu.StartPedestrianNavigation();
+                    }
                 }
                 else
                 {
@@ -1129,7 +1259,7 @@ namespace GrandTheftAccessibility
                     else
                     {
                         string vehicleName = "vehicle";
-                        try { vehicleName = vehicle.DisplayName; } catch { }
+                        try { vehicleName = vehicle.LocalizedName ?? vehicle.DisplayName; } catch { }
                         _audio.Speak($"Current location: Inside of a {vehicleName} at {World.GetStreetName(pos)}");
                     }
                 }
@@ -1257,30 +1387,6 @@ namespace GrandTheftAccessibility
             {
                 Logger.Exception(ex, "HandleNearbyObjects");
                 _audio.Speak("Error scanning objects");
-            }
-        }
-
-        /// <summary>
-        /// Get Keys enum value for index
-        /// </summary>
-        private Keys GetKeyForIndex(int index)
-        {
-            if (index < 0 || index > 10) return Keys.None;
-
-            switch (index)
-            {
-                case 0: return Keys.NumPad0;
-                case 1: return Keys.NumPad1;
-                case 2: return Keys.NumPad2;
-                case 3: return Keys.NumPad3;
-                case 4: return Keys.NumPad4;
-                case 5: return Keys.NumPad5;
-                case 6: return Keys.NumPad6;
-                case 7: return Keys.NumPad7;
-                case 8: return Keys.NumPad8;
-                case 9: return Keys.NumPad9;
-                case 10: return Keys.Decimal;
-                default: return Keys.None;
             }
         }
 

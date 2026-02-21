@@ -26,7 +26,15 @@ namespace GrandTheftAccessibility.Menus
         /// </summary>
         private void UpdateModMenu()
         {
-            Vehicle currentVehicle = Game.Player.Character.CurrentVehicle;
+            Ped player = Game.Player?.Character;
+            if (player == null || !player.Exists())
+            {
+                _modMenu = null;
+                _lastVehicleHandle = 0;
+                return;
+            }
+
+            Vehicle currentVehicle = player.CurrentVehicle;
 
             if (currentVehicle == null)
             {
@@ -91,8 +99,15 @@ namespace GrandTheftAccessibility.Menus
         public string GetMenuName()
         {
             // Check if player left vehicle - reset menu state if so
-            // This is a lightweight check (no native calls, just property access)
-            Vehicle currentVehicle = Game.Player.Character.CurrentVehicle;
+            Ped player = Game.Player?.Character;
+            if (player == null || !player.Exists())
+            {
+                _modMenu = null;
+                _lastVehicleHandle = 0;
+                return "Vehicle Mods";
+            }
+
+            Vehicle currentVehicle = player.CurrentVehicle;
             if (currentVehicle == null && _modMenu != null)
             {
                 _modMenu = null;
@@ -111,7 +126,15 @@ namespace GrandTheftAccessibility.Menus
             get
             {
                 // Check if player left vehicle - reset menu state if so
-                Vehicle currentVehicle = Game.Player.Character.CurrentVehicle;
+                Ped player = Game.Player?.Character;
+                if (player == null || !player.Exists())
+                {
+                    _modMenu = null;
+                    _lastVehicleHandle = 0;
+                    return false;
+                }
+
+                Vehicle currentVehicle = player.CurrentVehicle;
                 if (currentVehicle == null && _modMenu != null)
                 {
                     _modMenu = null;

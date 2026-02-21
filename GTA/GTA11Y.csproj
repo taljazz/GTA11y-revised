@@ -32,6 +32,7 @@
     <DefineConstants>TRACE</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
+    <PlatformTarget>x64</PlatformTarget>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'">
     <DebugSymbols>true</DebugSymbols>
@@ -98,12 +99,15 @@
     <Compile Include="Core\EntityScanner.cs" />
     <Compile Include="Core\VehicleSaveManager.cs" />
     <Compile Include="Core\TurretCrewManager.cs" />
+    <Compile Include="Core\HealthArmorManager.cs" />
+    <Compile Include="Core\VehicleDamageManager.cs" />
+    <Compile Include="Core\CombatAssistManager.cs" />
+    <Compile Include="Core\BlipManager.cs" />
+    <Compile Include="Core\GameStateManager.cs" />
     <!-- Driving -->
     <Compile Include="Driving\AutoDriveManager.cs" />
     <Compile Include="Driving\WeatherManager.cs" />
     <Compile Include="Driving\CollisionDetector.cs" />
-    <Compile Include="Driving\CurveAnalyzer.cs" />
-    <Compile Include="Driving\RecoveryManager.cs" />
     <Compile Include="Driving\AnnouncementQueue.cs" />
     <Compile Include="Driving\NavigationManager.cs" />
     <Compile Include="Driving\RoadFeatureDetector.cs" />
@@ -113,10 +117,10 @@
     <Compile Include="Driving\StructureDetector.cs" />
     <Compile Include="Driving\RoadTypeManager.cs" />
     <Compile Include="Driving\ETACalculator.cs" />
+    <Compile Include="Driving\SpeedArbiter.cs" />
+    <Compile Include="Driving\PedestrianNavigationManager.cs" />
     <!-- Models -->
-    <Compile Include="Models\setting.cs" />
     <Compile Include="Models\VehicleSpawn.cs" />
-    <Compile Include="Models\Location.cs" />
     <Compile Include="Models\Result.cs" />
     <Compile Include="Models\SavedVehicle.cs" />
     <Compile Include="Models\CurveTypes.cs" />
@@ -140,6 +144,7 @@
     <Compile Include="Menus\FunctionsMenu.cs" />
     <Compile Include="Menus\SettingsMenu.cs" />
     <Compile Include="Menus\AutoDriveMenu.cs" />
+    <Compile Include="Menus\HelpMenu.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />

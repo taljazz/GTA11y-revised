@@ -35,7 +35,7 @@ namespace GrandTheftAccessibility
             }
 
             // Ensure HashManager is initialized (will load hashes on first access)
-            Logger.Debug($"EntityScanner using HashManager with {HashManager.Count} hashes");
+            if (Logger.IsDebugEnabled) Logger.Debug($"EntityScanner using HashManager with {HashManager.Count} hashes");
         }
 
         /// <summary>
@@ -353,12 +353,12 @@ namespace GrandTheftAccessibility
                     if (result == null) continue;
 
                     // Batch the main format together
-                    _resultBuilder.Append(result.xyDistance).Append(" meters ")
+                    _resultBuilder.Append(Math.Round(result.xyDistance)).Append(" meters ")
                         .Append(result.direction ?? "unknown").Append(", ");
 
                     if (result.zDistance != 0)
                     {
-                        double absZDistance = Math.Abs(result.zDistance);
+                        double absZDistance = Math.Round(Math.Abs(result.zDistance));
                         _resultBuilder.Append(absZDistance).Append(" meters ")
                             .Append(result.zDistance > 0 ? "above" : "below").Append(", ");
                     }

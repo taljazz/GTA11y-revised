@@ -19,7 +19,6 @@ namespace GrandTheftAccessibility
         // PERFORMANCE: Pre-cached Hash values
         private static readonly Hash _getClosestNodeWithHeadingHash = (Hash)Constants.NATIVE_GET_CLOSEST_VEHICLE_NODE_WITH_HEADING;
         private static readonly Hash _getVehicleNodePropsHash = (Hash)Constants.NATIVE_GET_VEHICLE_NODE_PROPERTIES;
-        private static readonly Hash _setCruiseSpeedHash = (Hash)Constants.NATIVE_SET_DRIVE_TASK_CRUISE_SPEED;
 
         // Curve detection state
         private long _lastCurveAnnounceTick;
@@ -28,8 +27,7 @@ namespace GrandTheftAccessibility
 
         // Curve slowdown state
         private bool _curveSlowdownActive;
-        private long _curveSlowdownEndTick;
-        private float _originalSpeed;
+        private long _curveSlowdownStartTick;
         private float _curveSlowdownSpeed;
 
         // Intersection tracking
@@ -37,17 +35,15 @@ namespace GrandTheftAccessibility
         private float _preIntersectionHeading;
         private Vector3 _intersectionPosition;
 
-        // Traffic light state (reserved for future use)
-        private Vector3 _trafficLightStopPosition;
-
         // Pre-allocated OutputArguments
         private readonly OutputArgument _nodePos = new OutputArgument();
         private readonly OutputArgument _nodeHeading = new OutputArgument();
         private readonly OutputArgument _density = new OutputArgument();
         private readonly OutputArgument _flags = new OutputArgument();
 
-        // PERFORMANCE: Pre-allocated vector to avoid per-frame allocations in loop
-        private Vector3 _lookAheadOffset;
+        // Road-node chaining: second pair for projecting from current node to next
+        private readonly OutputArgument _chainNodePos = new OutputArgument();
+        private readonly OutputArgument _chainNodeHeading = new OutputArgument();
 
         /// <summary>
         /// Whether curve slowdown is currently active
@@ -81,13 +77,11 @@ namespace GrandTheftAccessibility
             _lastIntersectionAnnounceTick = 0;
             _lastTrafficLightAnnounceTick = 0;
             _curveSlowdownActive = false;
-            _curveSlowdownEndTick = 0;
-            _originalSpeed = 0;
+            _curveSlowdownStartTick = 0;
             _curveSlowdownSpeed = 0;
             _inIntersection = false;
             _preIntersectionHeading = 0;
             _intersectionPosition = Vector3.Zero;
-            _trafficLightStopPosition = Vector3.Zero;
         }
 
         /// <summary>
@@ -106,10 +100,10 @@ namespace GrandTheftAccessibility
             float speed = vehicle.Speed;
             if (speed < Constants.ROAD_FEATURE_MIN_SPEED) return;
 
-            // Check if curve slowdown should expire
-            if (_curveSlowdownActive && currentTick > _curveSlowdownEndTick)
+            // Check if curve slowdown should end (condition-based with safety timeout)
+            if (_curveSlowdownActive)
             {
-                EndCurveSlowdown();
+                CheckCurveSlowdownEnd(vehicle, currentTick);
             }
 
             float vehicleHeading = vehicle.Heading;
@@ -121,54 +115,69 @@ namespace GrandTheftAccessibility
 
             long cooldown = CalculateSpeedScaledCooldown(speed);
 
-            // Look ahead at multiple distances
-            // PERFORMANCE: Calculate radians once outside the loop, use pre-calculated DEG_TO_RAD
-            float radians = (90f - vehicleHeading) * Constants.DEG_TO_RAD;
-            float cosRadians = (float)Math.Cos(radians);
-            float sinRadians = (float)Math.Sin(radians);
+            // === Road-node chaining lookahead ===
+            // Instead of projecting straight ahead from vehicle heading (which misses winding roads),
+            // we chain from one road node to the next using each node's heading to project the next query point.
 
-            for (float distance = Constants.ROAD_SAMPLE_INTERVAL; distance <= lookaheadDistance; distance += Constants.ROAD_SAMPLE_INTERVAL)
+            // Step 0: Get starting road node at vehicle position
+            bool startFound = Function.Call<bool>(
+                _getClosestNodeWithHeadingHash,
+                position.X, position.Y, position.Z,
+                _nodePos, _nodeHeading, 1, 3f, 0f);
+
+            if (!startFound) return;
+
+            Vector3 currentNodePos = _nodePos.GetResult<Vector3>();
+            float currentNodeHeading = _nodeHeading.GetResult<float>();
+            float cumulativeDistance = 0f;
+
+            for (float step = Constants.ROAD_SAMPLE_INTERVAL; step <= lookaheadDistance; step += Constants.ROAD_SAMPLE_INTERVAL)
             {
-                // PERFORMANCE: Reuse pre-allocated vector instead of allocating new one
-                _lookAheadOffset.X = cosRadians * distance;
-                _lookAheadOffset.Y = sinRadians * distance;
-                _lookAheadOffset.Z = 0f;
-                Vector3 lookAheadPos = position + _lookAheadOffset;
+                // Project from current node along its heading to find next node
+                float nodeRad = (90f - currentNodeHeading) * Constants.DEG_TO_RAD;
+                float projX = currentNodePos.X + (float)Math.Cos(nodeRad) * Constants.ROAD_SAMPLE_INTERVAL;
+                float projY = currentNodePos.Y + (float)Math.Sin(nodeRad) * Constants.ROAD_SAMPLE_INTERVAL;
 
                 bool found = Function.Call<bool>(
                     _getClosestNodeWithHeadingHash,
-                    lookAheadPos.X, lookAheadPos.Y, lookAheadPos.Z,
-                    _nodePos, _nodeHeading, 1, 3f, 0f);
+                    projX, projY, currentNodePos.Z,
+                    _chainNodePos, _chainNodeHeading, 1, 3f, 0f);
 
-                if (!found) continue;
+                if (!found) break;
 
-                float roadHeading = _nodeHeading.GetResult<float>();
+                Vector3 nextNodePos = _chainNodePos.GetResult<Vector3>();
+                float nextNodeHeading = _chainNodeHeading.GetResult<float>();
 
-                CurveInfo curveInfo = AnalyzeCurveCharacteristics(vehicleHeading, roadHeading, distance, speed, drivingStyleMode);
+                // Accumulate actual distance along the chain
+                cumulativeDistance += (nextNodePos - currentNodePos).Length();
+
+                // Analyze curve: compare vehicle heading with this node's heading
+                CurveInfo curveInfo = AnalyzeCurveCharacteristics(vehicleHeading, nextNodeHeading, cumulativeDistance, speed, drivingStyleMode);
 
                 if (curveInfo.Severity != CurveSeverity.None)
                 {
                     if (currentTick - _lastCurveAnnounceTick > cooldown)
                     {
                         _lastCurveAnnounceTick = currentTick;
-                        string announcement = GenerateCurveAnnouncement(curveInfo, distance);
+                        string announcement = GenerateCurveAnnouncement(curveInfo, cumulativeDistance);
                         _announcementQueue.TryAnnounce(announcement, Constants.ANNOUNCE_PRIORITY_MEDIUM, currentTick, "roadFeatureAnnouncements");
 
                         float curveSlowdownDistance = CalculateCurveSlowdownDistance(speed, curveInfo.Severity);
 
-                        if (autoDriveActive && distance <= curveSlowdownDistance && !_curveSlowdownActive)
+                        if (autoDriveActive && cumulativeDistance <= curveSlowdownDistance && !_curveSlowdownActive)
                         {
                             ApplyIntelligentCurveSlowdown(curveInfo, speed, targetSpeed, currentTick);
                         }
 
+                        // Advance chain state before returning
                         return;
                     }
                 }
 
-                Vector3 nodePosition = _nodePos.GetResult<Vector3>();
+                // Check for intersections and traffic lights at this node
                 Function.Call(
                     _getVehicleNodePropsHash,
-                    nodePosition.X, nodePosition.Y, nodePosition.Z,
+                    nextNodePos.X, nextNodePos.Y, nextNodePos.Z,
                     _density, _flags);
 
                 int nodeFlags = _flags.GetResult<int>();
@@ -177,7 +186,7 @@ namespace GrandTheftAccessibility
                 if (hasTrafficLight && currentTick - _lastTrafficLightAnnounceTick > cooldown)
                 {
                     _lastTrafficLightAnnounceTick = currentTick;
-                    string distanceText = FormatDistance(distance);
+                    string distanceText = FormatDistance(cumulativeDistance);
                     _announcementQueue.TryAnnounce($"Traffic light ahead, {distanceText}",
                         Constants.ANNOUNCE_PRIORITY_MEDIUM, currentTick, "announceTrafficLights");
                     return;
@@ -187,11 +196,15 @@ namespace GrandTheftAccessibility
                 if (isJunction && !hasTrafficLight && currentTick - _lastIntersectionAnnounceTick > cooldown)
                 {
                     _lastIntersectionAnnounceTick = currentTick;
-                    string distanceText = FormatDistance(distance);
+                    string distanceText = FormatDistance(cumulativeDistance);
                     _announcementQueue.TryAnnounce($"Intersection ahead, {distanceText}",
                         Constants.ANNOUNCE_PRIORITY_MEDIUM, currentTick, "roadFeatureAnnouncements");
                     return;
                 }
+
+                // Chain to next node
+                currentNodePos = nextNodePos;
+                currentNodeHeading = nextNodeHeading;
             }
 
             UpdateIntersectionTracking(vehicle, position, currentTick);
@@ -294,25 +307,11 @@ namespace GrandTheftAccessibility
 
         private void StartCurveSlowdown(float slowdownFactor, float targetSpeed, long currentTick)
         {
-            try
-            {
-                _originalSpeed = targetSpeed;
-                _curveSlowdownSpeed = targetSpeed * slowdownFactor;
-                _curveSlowdownActive = true;
-                _curveSlowdownEndTick = currentTick + Constants.CURVE_SLOWDOWN_DURATION;
+            _curveSlowdownSpeed = targetSpeed * slowdownFactor;
+            _curveSlowdownActive = true;
+            _curveSlowdownStartTick = currentTick;
 
-                Ped player = Game.Player.Character;
-                Function.Call(
-                    _setCruiseSpeedHash,
-                    player.Handle,
-                    _curveSlowdownSpeed);
-
-                if (Logger.IsDebugEnabled) Logger.Debug($"Curve slowdown: {_originalSpeed:F1} -> {_curveSlowdownSpeed:F1} m/s");
-            }
-            catch (Exception ex)
-            {
-                Logger.Exception(ex, "RoadFeatureDetector.StartCurveSlowdown");
-            }
+            if (Logger.IsDebugEnabled) Logger.Debug($"Curve slowdown: {targetSpeed:F1} -> {_curveSlowdownSpeed:F1} m/s");
         }
 
         /// <summary>
@@ -322,7 +321,52 @@ namespace GrandTheftAccessibility
         {
             if (!_curveSlowdownActive) return;
             _curveSlowdownActive = false;
-            Logger.Debug($"Curve slowdown ended");
+            if (Logger.IsDebugEnabled) Logger.Debug("Curve slowdown ended");
+        }
+
+        /// <summary>
+        /// Check if curve slowdown should end based on heading alignment or safety timeout.
+        /// Condition-based: ends when vehicle heading matches road heading ahead.
+        /// </summary>
+        private void CheckCurveSlowdownEnd(Vehicle vehicle, long currentTick)
+        {
+            // Safety timeout: end slowdown after max duration regardless
+            if (currentTick - _curveSlowdownStartTick > Constants.CURVE_SLOWDOWN_MAX_DURATION)
+            {
+                if (Logger.IsDebugEnabled) Logger.Debug("Curve slowdown ended (safety timeout)");
+                EndCurveSlowdown();
+                return;
+            }
+
+            // Heading alignment check: query road node ahead and compare with vehicle heading
+            try
+            {
+                float vehicleHeading = vehicle.Heading;
+                float headingRad = (90f - vehicleHeading) * Constants.DEG_TO_RAD;
+                float aheadX = vehicle.Position.X + (float)Math.Cos(headingRad) * Constants.CURVE_REALIGN_LOOKAHEAD;
+                float aheadY = vehicle.Position.Y + (float)Math.Sin(headingRad) * Constants.CURVE_REALIGN_LOOKAHEAD;
+
+                bool found = Function.Call<bool>(
+                    _getClosestNodeWithHeadingHash,
+                    aheadX, aheadY, vehicle.Position.Z,
+                    _nodePos, _nodeHeading, 1, 3f, 0f);
+
+                if (found)
+                {
+                    float roadHeading = _nodeHeading.GetResult<float>();
+                    float headingDiff = Math.Abs(NormalizeAngleDiff(vehicleHeading - roadHeading));
+
+                    if (headingDiff < Constants.CURVE_HEADING_THRESHOLD)
+                    {
+                        if (Logger.IsDebugEnabled) Logger.Debug($"Curve slowdown ended (aligned, diff={headingDiff:F1}°)");
+                        EndCurveSlowdown();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Exception(ex, "RoadFeatureDetector.CheckCurveSlowdownEnd");
+            }
         }
 
         private CurveInfo AnalyzeCurveCharacteristics(float vehicleHeading, float roadHeading,
@@ -367,7 +411,7 @@ namespace GrandTheftAccessibility
                     return 0.8f;
                 case Constants.DRIVING_STYLE_MODE_NORMAL:
                     return 0.9f;
-                case Constants.DRIVING_STYLE_MODE_FAST:
+                case Constants.DRIVING_STYLE_MODE_AGGRESSIVE:
                     return 1.0f;
                 case Constants.DRIVING_STYLE_MODE_RECKLESS:
                     return 1.1f;

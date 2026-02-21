@@ -19,6 +19,9 @@ namespace GrandTheftAccessibility
         private static readonly Hash _clearPedTasksHash = (Hash)Constants.NATIVE_CLEAR_PED_TASKS;
         private static readonly Hash _setHandbrakeHash = (Hash)Constants.NATIVE_SET_VEHICLE_HANDBRAKE;
 
+        // PERFORMANCE: Pre-allocated vector to avoid per-frame allocations
+        private Vector3 _cachedForward;
+
         // Emergency vehicle state
         private bool _yieldingToEmergency;
         private long _emergencyYieldStartTick;
@@ -126,7 +129,9 @@ namespace GrandTheftAccessibility
                 // PERFORMANCE: Use pre-calculated DEG_TO_RAD constant
                 float ourHeading = vehicle.Heading;
                 float ourRadians = (90f - ourHeading) * Constants.DEG_TO_RAD;
-                Vector3 ourForward = new Vector3((float)Math.Cos(ourRadians), (float)Math.Sin(ourRadians), 0f);
+                _cachedForward.X = (float)Math.Cos(ourRadians);
+                _cachedForward.Y = (float)Math.Sin(ourRadians);
+                _cachedForward.Z = 0f;
 
                 foreach (Vehicle v in nearbyVehicles)
                 {
@@ -140,7 +145,7 @@ namespace GrandTheftAccessibility
                     // Found emergency vehicle with siren - determine direction
                     Vector3 toEmergency = v.Position - position;
                     float distance = toEmergency.Length();
-                    float dot = distance > 0.1f ? Vector3.Dot(Vector3.Normalize(toEmergency), ourForward) : 0f;
+                    float dot = distance > 0.1f ? Vector3.Dot(Vector3.Normalize(toEmergency), _cachedForward) : 0f;
 
                     // Determine if emergency vehicle is approaching from behind, in front, or side
                     string direction;

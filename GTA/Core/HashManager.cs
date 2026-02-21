@@ -25,7 +25,7 @@ namespace GrandTheftAccessibility
             get
             {
                 EnsureInitialized();
-                return _hashes ?? new Dictionary<int, string>();
+                return _hashes ?? (_hashes = new Dictionary<int, string>());
             }
         }
 

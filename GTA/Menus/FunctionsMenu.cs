@@ -61,18 +61,18 @@ namespace GrandTheftAccessibility.Menus
 
         public void NavigatePrevious(bool fastScroll = false)
         {
-            if (_currentIndex > 0)
-                _currentIndex--;
-            else
-                _currentIndex = _functions.Count - 1;
+            int step = fastScroll ? 5 : 1;
+            _currentIndex -= step;
+            if (_currentIndex < 0)
+                _currentIndex = (((_currentIndex % _functions.Count) + _functions.Count) % _functions.Count);
         }
 
         public void NavigateNext(bool fastScroll = false)
         {
-            if (_currentIndex < _functions.Count - 1)
-                _currentIndex++;
-            else
-                _currentIndex = 0;
+            int step = fastScroll ? 5 : 1;
+            _currentIndex += step;
+            if (_currentIndex >= _functions.Count)
+                _currentIndex = _currentIndex % _functions.Count;
         }
 
         public string GetCurrentItemText()
@@ -136,6 +136,9 @@ namespace GrandTheftAccessibility.Menus
             if (vehicles == null || vehicles.Length == 0)
                 return;
 
+            Vehicle playerVehicle = player.CurrentVehicle;
+            int explodedCount = 0;
+
             foreach (Vehicle v in vehicles)
             {
                 // Defensive: Check vehicle is valid
@@ -143,7 +146,6 @@ namespace GrandTheftAccessibility.Menus
 
                 // Temporarily disable god mode on player vehicle if needed
                 // Compare by Handle - SHVDN returns new wrapper objects each call
-                Vehicle playerVehicle = Game.Player.Character.CurrentVehicle;
                 if (!_settings.GetSetting("vehicleGodMode") && playerVehicle != null && playerVehicle.Handle == v.Handle)
                 {
                     v.CanBeVisiblyDamaged = true;
@@ -159,7 +161,10 @@ namespace GrandTheftAccessibility.Menus
 
                 v.Explode();
                 v.MarkAsNoLongerNeeded();
+                explodedCount++;
             }
+
+            Tolk.Speak($"Exploded {explodedCount} vehicles");
         }
 
         private void MakePedsAttackEachOther()
@@ -174,12 +179,8 @@ namespace GrandTheftAccessibility.Menus
 
             for (int i = 0; i < eligiblePeds.Count; i++)
             {
-                // Pick a random target (not self)
-                int targetIndex = _random.Next(0, eligiblePeds.Count);
-                while (targetIndex == i)
-                {
-                    targetIndex = _random.Next(0, eligiblePeds.Count);
-                }
+                // Pick a random target (not self) - avoid potential infinite loop
+                int targetIndex = (i + 1 + _random.Next(eligiblePeds.Count - 1)) % eligiblePeds.Count;
 
                 Ped ped = eligiblePeds[i];
                 ped.Task.ClearAllImmediately();
@@ -190,6 +191,8 @@ namespace GrandTheftAccessibility.Menus
                 ped.AlwaysKeepTask = true;
                 ped.BlockPermanentEvents = true;
             }
+
+            Tolk.Speak($"{eligiblePeds.Count} peds attacking each other");
         }
 
         private void KillAllNearbyPeds()
@@ -200,17 +203,27 @@ namespace GrandTheftAccessibility.Menus
             {
                 ped.Kill();
             }
+
+            Tolk.Speak($"Killed {eligiblePeds.Count} peds");
         }
 
         private void RaiseWantedLevel()
         {
             if (Game.Player.WantedLevel < 5)
+            {
                 Game.Player.WantedLevel++;
+                Tolk.Speak($"Wanted level {Game.Player.WantedLevel}");
+            }
+            else
+            {
+                Tolk.Speak("Already at maximum wanted level");
+            }
         }
 
         private void ClearWantedLevel()
         {
             Game.Player.WantedLevel = 0;
+            Tolk.Speak("Wanted level cleared");
         }
 
         private void MarkWaypointToMissionObjective()
@@ -274,7 +287,9 @@ namespace GrandTheftAccessibility.Menus
             {
                 // Set waypoint to the mission objective
                 Function.Call(Hash.SET_NEW_WAYPOINT, closestBlipPos.X, closestBlipPos.Y);
-                GTA.Audio.PlaySoundFrontend("WAYPOINT_SET", "HUD_FRONTEND_DEFAULT_SOUNDSET");
+                int soundId = Function.Call<int>(Hash.GET_SOUND_ID);
+                Function.Call(Hash.PLAY_SOUND_FRONTEND, soundId, "WAYPOINT_SET", "HUD_FRONTEND_DEFAULT_SOUNDSET", false);
+                Function.Call(Hash.RELEASE_SOUND_ID, soundId);
 
                 // Announce distance
                 float distanceMiles = closestDistance * Constants.METERS_TO_MILES;

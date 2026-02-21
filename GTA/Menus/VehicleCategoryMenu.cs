@@ -17,6 +17,9 @@ namespace GrandTheftAccessibility.Menus
         private bool _inSubmenu;
         private VehicleSpawnMenu _currentSubmenu;
 
+        // Cache constructed VehicleSpawnMenu instances to avoid reconstructing on every submenu entry
+        private readonly Dictionary<string, VehicleSpawnMenu> _submenuCache = new Dictionary<string, VehicleSpawnMenu>();
+
         /// <summary>
         /// Represents a vehicle category with display name
         /// Supports both VehicleClass-based and special name-set-based categories
@@ -159,19 +162,25 @@ namespace GrandTheftAccessibility.Menus
                 // Enter submenu for current category
                 VehicleCategory category = _categories[_currentCategoryIndex];
 
-                if (category.IsSpecial)
+                if (!_submenuCache.TryGetValue(category.Name, out _currentSubmenu))
                 {
-                    // Special category - use name-based filtering
-                    if (category.Name == "Weaponized")
+                    if (category.IsSpecial)
                     {
-                        _currentSubmenu = new VehicleSpawnMenu(_settings, Constants.WEAPONIZED_VEHICLE_NAMES, category.Name);
+                        // Special category - use name-based filtering
+                        if (category.Name == "Weaponized")
+                        {
+                            _currentSubmenu = new VehicleSpawnMenu(_settings, Constants.WEAPONIZED_VEHICLE_NAMES, category.Name);
+                        }
+                        // Add more special categories here as needed
                     }
-                    // Add more special categories here as needed
-                }
-                else
-                {
-                    // Standard category - use VehicleClass filtering
-                    _currentSubmenu = new VehicleSpawnMenu(_settings, category.Class, category.Name);
+                    else
+                    {
+                        // Standard category - use VehicleClass filtering
+                        _currentSubmenu = new VehicleSpawnMenu(_settings, category.Class, category.Name);
+                    }
+
+                    if (_currentSubmenu != null)
+                        _submenuCache[category.Name] = _currentSubmenu;
                 }
 
                 _inSubmenu = true;

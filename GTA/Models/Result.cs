@@ -2,7 +2,7 @@
 
 namespace GrandTheftAccessibility
 {
-    public class Result : IComparable
+    public class Result : IComparable<Result>
     {
         #region Fields
         public string name;
@@ -12,10 +12,10 @@ namespace GrandTheftAccessibility
         public double totalDistance;
         #endregion
         #region Methods
-        public int CompareTo(object obj)
+        public int CompareTo(Result other)
         {
-            Result c2 = (Result)obj;
-            return totalDistance.CompareTo(c2.totalDistance);
+            if (other == null) return 1;
+            return totalDistance.CompareTo(other.totalDistance);
         }
         public Result(string name, double xyDistance, double zDistance, string direction)
         {

@@ -229,7 +229,7 @@ namespace GrandTheftAccessibility.Menus
                     _categories.Add(new ModCategory(name, modType, count));
                 }
             }
-            catch { /* Some mod types not available for all vehicles */ }
+            catch (Exception ex) { Logger.Debug($"Mod type {modType} ({name}) not available: {ex.Message}"); }
         }
 
         public void NavigatePrevious(bool fastScroll = false)
@@ -415,8 +415,9 @@ namespace GrandTheftAccessibility.Menus
                         return GetModLevelName(category.ModType, currentMod);
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                Logger.Debug($"GetCurrentModValue failed for {category.Name}: {ex.Message}");
                 return "N/A";
             }
         }
@@ -483,7 +484,10 @@ namespace GrandTheftAccessibility.Menus
                         return displayName;
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Logger.Debug($"GetModLevelName failed for type {modType} index {index}: {ex.Message}");
+            }
 
             // Fallback based on mod type
             string typeName = Constants.GetModTypeName(modType);
@@ -692,8 +696,9 @@ namespace GrandTheftAccessibility.Menus
                         return Function.Call<int>(Hash.GET_VEHICLE_MOD, _vehicle, category.ModType);
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                Logger.Debug($"GetCurrentModIndex failed for {category.Name}: {ex.Message}");
                 return 0;
             }
         }
