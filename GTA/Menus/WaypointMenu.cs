@@ -1,5 +1,6 @@
 using GTA;
 using GTA.Native;
+using DavyKager;
 using GrandTheftAccessibility.Data;
 
 namespace GrandTheftAccessibility.Menus
@@ -26,20 +27,19 @@ namespace GrandTheftAccessibility.Menus
 
         public void NavigatePrevious(bool fastScroll = false)
         {
+            if (_destinations.Length == 0) return;
+
             int step = fastScroll ? 10 : 1;
 
             _currentIndex -= step;
             if (_currentIndex < 0)
-            {
-                // Wrap around to end
-                _currentIndex = _destinations.Length + _currentIndex;
-                if (_currentIndex < 0)
-                    _currentIndex = _destinations.Length - 1;
-            }
+                _currentIndex = ((_currentIndex % _destinations.Length) + _destinations.Length) % _destinations.Length;
         }
 
         public void NavigateNext(bool fastScroll = false)
         {
+            if (_destinations.Length == 0) return;
+
             int step = fastScroll ? 10 : 1;
 
             _currentIndex += step;
@@ -49,6 +49,8 @@ namespace GrandTheftAccessibility.Menus
 
         public string GetCurrentItemText()
         {
+            if (_destinations.Length == 0) return "No destinations available";
+
             int displayIndex = _currentIndex + 1;
             var dest = _destinations[_currentIndex];
             return $"{displayIndex} of {_destinations.Length}: {dest.Name}";
@@ -56,14 +58,19 @@ namespace GrandTheftAccessibility.Menus
 
         public void ExecuteSelection()
         {
+            if (_destinations.Length == 0) return;
+
             var dest = _destinations[_currentIndex];
 
             // Set GPS waypoint on the map (uses X, Y coordinates only)
             Function.Call(_setNewWaypointHash, dest.Coords.X, dest.Coords.Y);
 
-            // Play confirmation sound
-            GTA.Audio.PlaySoundFrontend("WAYPOINT_SET", "HUD_FRONTEND_DEFAULT_SOUNDSET");
+            // Play confirmation sound (get ID, play, release to avoid sound ID leak)
+            int soundId = Function.Call<int>(Hash.GET_SOUND_ID);
+            Function.Call(Hash.PLAY_SOUND_FRONTEND, soundId, "WAYPOINT_SET", "HUD_FRONTEND_DEFAULT_SOUNDSET", false);
+            Function.Call(Hash.RELEASE_SOUND_ID, soundId);
 
+            Tolk.Speak($"Waypoint set to {dest.Name}");
             Logger.Info($"Set waypoint to {dest.Name}");
         }
 

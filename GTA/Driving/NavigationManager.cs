@@ -12,7 +12,7 @@ namespace GrandTheftAccessibility
     public class NavigationManager
     {
         // PERFORMANCE: Pre-cached Hash values to avoid repeated casting
-        private static readonly Hash _setCruiseSpeedHash = (Hash)Constants.NATIVE_SET_DRIVE_TASK_CRUISE_SPEED;
+        private static readonly Hash _isWaypointActiveHash = Hash.IS_WAYPOINT_ACTIVE;
         private static readonly Hash _getClosestNodeWithHeadingHash = (Hash)Constants.NATIVE_GET_CLOSEST_VEHICLE_NODE_WITH_HEADING;
         private static readonly Hash _getClosestNodeHash = (Hash)Constants.NATIVE_GET_CLOSEST_VEHICLE_NODE;
         private static readonly Hash _getNthClosestNodeHash = (Hash)Constants.NATIVE_GET_NTH_CLOSEST_VEHICLE_NODE;
@@ -35,6 +35,9 @@ namespace GrandTheftAccessibility
         private bool _arrivalSlowdownActive;
         private float _lastArrivalSpeed;
         private int _lastAnnouncedArrivalDistance;
+
+        // Bearing announcement throttle
+        private long _lastBearingAnnounceTick;
 
         // Pre-allocated OutputArguments to avoid allocations
         private readonly OutputArgument _safeArrivalPosArg = new OutputArgument();
@@ -72,6 +75,12 @@ namespace GrandTheftAccessibility
         /// </summary>
         public float LastDistanceToWaypoint => _lastDistanceToWaypoint;
 
+        /// <summary>
+        /// Current arrival slowdown speed cap. Returns float.MaxValue if no slowdown active.
+        /// Used by SpeedArbiter to set arrival cap without NavigationManager calling SET_CRUISE_SPEED.
+        /// </summary>
+        public float ArrivalSlowdownSpeed => _arrivalSlowdownActive ? _lastArrivalSpeed : float.MaxValue;
+
         public NavigationManager(AudioManager audio, AnnouncementQueue announcementQueue)
         {
             _audio = audio;
@@ -92,6 +101,7 @@ namespace GrandTheftAccessibility
             _arrivalSlowdownActive = false;
             _lastArrivalSpeed = 0f;
             _lastAnnouncedArrivalDistance = int.MaxValue;
+            _lastBearingAnnounceTick = 0;
         }
 
         /// <summary>
@@ -117,27 +127,24 @@ namespace GrandTheftAccessibility
 
         /// <summary>
         /// Update waypoint progress and check for arrival.
-        /// Returns true if arrived at destination.
         /// </summary>
         /// <param name="position">Current vehicle position</param>
-        /// <param name="targetSpeed">Current target speed for restoration</param>
-        /// <param name="curveSlowdownActive">Whether curve slowdown is active</param>
         /// <param name="currentTick">Current game tick</param>
         /// <param name="shouldStop">Output: true if AutoDrive should stop</param>
         /// <param name="shouldRestart">Output: true if navigation should restart</param>
         /// <returns>True if still navigating, false if arrived or stopped</returns>
-        public bool UpdateProgress(Vector3 position, float targetSpeed, bool curveSlowdownActive,
-            long currentTick, out bool shouldStop, out bool shouldRestart)
+        public bool UpdateProgress(Vector3 position, long currentTick,
+            out bool shouldStop, out bool shouldRestart)
         {
             shouldStop = false;
             shouldRestart = false;
 
             // Check if waypoint was removed
-            if (!Function.Call<bool>(Hash.IS_WAYPOINT_ACTIVE))
+            if (!Function.Call<bool>(_isWaypointActiveHash))
             {
                 _announcementQueue.TryAnnounce("Waypoint removed. AutoDrive stopping.",
                     Constants.ANNOUNCE_PRIORITY_CRITICAL, currentTick, "announceNavigation");
-                EndArrivalSlowdown(targetSpeed, curveSlowdownActive, false);
+                EndArrivalSlowdown();
                 shouldStop = true;
                 return false;
             }
@@ -149,7 +156,7 @@ namespace GrandTheftAccessibility
                 _announcementQueue.TryAnnounce("Waypoint moved. Recalculating route.",
                     Constants.ANNOUNCE_PRIORITY_HIGH, currentTick, "announceNavigation");
                 _inFinalApproach = false;
-                EndArrivalSlowdown(targetSpeed, curveSlowdownActive, false);
+                EndArrivalSlowdown();
                 shouldRestart = true;
                 return false;
             }
@@ -164,12 +171,7 @@ namespace GrandTheftAccessibility
             {
                 _inFinalApproach = true;
                 if (Logger.IsDebugEnabled) Logger.Debug($"Entering final approach at {distance:F0}m");
-
-                Ped player = Game.Player.Character;
-                Function.Call(
-                    _setCruiseSpeedHash,
-                    player.Handle,
-                    Constants.AUTODRIVE_FINAL_APPROACH_SPEED);
+                // Speed is now handled by SpeedArbiter via ArrivalSlowdownSpeed property
             }
 
             // Check for arrival
@@ -182,7 +184,7 @@ namespace GrandTheftAccessibility
                 _announcementQueue.TryAnnounce("You have arrived at your destination.",
                     Constants.ANNOUNCE_PRIORITY_CRITICAL, currentTick, "announceNavigation");
                 _inFinalApproach = false;
-                EndArrivalSlowdown(targetSpeed, curveSlowdownActive, false);
+                EndArrivalSlowdown();
                 shouldStop = true;
                 return false;
             }
@@ -205,26 +207,41 @@ namespace GrandTheftAccessibility
                     }
 
                     _lastArrivalSpeed = targetArrivalSpeed;
-                    ApplyArrivalSpeed(targetArrivalSpeed);
+                    if (Logger.IsDebugEnabled) Logger.Debug($"Arrival speed cap set to {targetArrivalSpeed:F1} m/s");
                 }
             }
             else if (_arrivalSlowdownActive)
             {
-                EndArrivalSlowdown(targetSpeed, curveSlowdownActive, true);
+                EndArrivalSlowdown();
             }
 
-            // Announce distance milestones
+            // Announce distance milestones (with compass bearing)
             float distanceMiles = distance * Constants.METERS_TO_MILES;
             float lastMiles = _lastDistanceToWaypoint * Constants.METERS_TO_MILES;
+            bool milestoneAnnounced = false;
 
             if (distanceMiles < 0.5f)
             {
-                CheckGranularArrivalAnnouncements(distance, currentTick);
+                milestoneAnnounced = CheckGranularArrivalAnnouncements(distance, position, currentTick);
             }
             else if ((int)(lastMiles * 2) > (int)(distanceMiles * 2))
             {
-                _announcementQueue.TryAnnounce($"{distanceMiles:F1} miles to destination",
+                string bearing = SpatialCalculator.GetDirectionTo(position, _originalWaypointPos);
+                _announcementQueue.TryAnnounce($"{distanceMiles:F1} miles, {bearing}",
                     Constants.ANNOUNCE_PRIORITY_LOW, currentTick, "announceNavigation");
+                _lastBearingAnnounceTick = currentTick;
+                milestoneAnnounced = true;
+            }
+
+            // Standalone bearing announcement for long stretches without milestones
+            if (!milestoneAnnounced && distance > 50f &&
+                currentTick - _lastBearingAnnounceTick > Constants.BEARING_ANNOUNCE_INTERVAL)
+            {
+                string bearing = SpatialCalculator.GetDirectionTo(position, _originalWaypointPos);
+                string distText = FormatDistance(distance);
+                _announcementQueue.TryAnnounce($"Destination {bearing}, {distText}",
+                    Constants.ANNOUNCE_PRIORITY_LOW, currentTick, "announceNavigation");
+                _lastBearingAnnounceTick = currentTick;
             }
 
             _lastDistanceToWaypoint = distance;
@@ -232,59 +249,22 @@ namespace GrandTheftAccessibility
         }
 
         /// <summary>
-        /// Apply arrival speed to the driving task
+        /// End arrival slowdown (SpeedArbiter will clear arrival cap automatically)
         /// </summary>
-        private void ApplyArrivalSpeed(float speed)
-        {
-            try
-            {
-                Ped player = Game.Player.Character;
-                Function.Call(
-                    _setCruiseSpeedHash,
-                    player.Handle,
-                    speed);
-
-                if (Logger.IsDebugEnabled) Logger.Debug($"Arrival speed adjusted to {speed:F1} m/s");
-            }
-            catch (Exception ex)
-            {
-                Logger.Exception(ex, "NavigationManager.ApplyArrivalSpeed");
-            }
-        }
-
-        /// <summary>
-        /// End arrival slowdown and restore normal speed
-        /// </summary>
-        public void EndArrivalSlowdown(float targetSpeed, bool curveSlowdownActive, bool stillDriving)
+        public void EndArrivalSlowdown()
         {
             if (!_arrivalSlowdownActive) return;
 
             _arrivalSlowdownActive = false;
             _lastArrivalSpeed = 0f;
-
-            if (stillDriving && !curveSlowdownActive)
-            {
-                try
-                {
-                    Ped player = Game.Player.Character;
-                    Function.Call(
-                        _setCruiseSpeedHash,
-                        player.Handle,
-                        targetSpeed);
-
-                    if (Logger.IsDebugEnabled) Logger.Debug($"Arrival slowdown ended, restored to {targetSpeed:F1} m/s");
-                }
-                catch (Exception ex)
-                {
-                    Logger.Exception(ex, "NavigationManager.EndArrivalSlowdown");
-                }
-            }
+            if (Logger.IsDebugEnabled) Logger.Debug("Arrival slowdown ended");
         }
 
         /// <summary>
-        /// Check for granular arrival distance announcements
+        /// Check for granular arrival distance announcements.
+        /// Returns true if a milestone was announced.
         /// </summary>
-        private void CheckGranularArrivalAnnouncements(float distanceMeters, long currentTick)
+        private bool CheckGranularArrivalAnnouncements(float distanceMeters, Vector3 position, long currentTick)
         {
             int distanceFeet = (int)(distanceMeters * Constants.METERS_TO_FEET);
 
@@ -293,9 +273,11 @@ namespace GrandTheftAccessibility
                 if (distanceFeet <= milestone && _lastAnnouncedArrivalDistance > milestone)
                 {
                     _lastAnnouncedArrivalDistance = milestone;
-                    _announcementQueue.TryAnnounce($"{milestone} feet to destination",
+                    string bearing = SpatialCalculator.GetDirectionTo(position, _originalWaypointPos);
+                    _announcementQueue.TryAnnounce($"{milestone} feet, {bearing}",
                         Constants.ANNOUNCE_PRIORITY_MEDIUM, currentTick, "announceNavigation");
-                    return;
+                    _lastBearingAnnounceTick = currentTick;
+                    return true;
                 }
             }
 
@@ -303,6 +285,7 @@ namespace GrandTheftAccessibility
             {
                 _lastAnnouncedArrivalDistance = distanceFeet;
             }
+            return false;
         }
 
         /// <summary>
@@ -389,7 +372,7 @@ namespace GrandTheftAccessibility
                     Vector3 safe = _safePedCoordArg.GetResult<Vector3>();
                     if (safe != Vector3.Zero && (safe - waypointPos).Length() < Constants.SAFE_ARRIVAL_SAFE_COORD_MAX_DISTANCE)
                     {
-                        Logger.Debug($"Found safe coord for waypoint arrival");
+                        if (Logger.IsDebugEnabled) Logger.Debug("Found safe coord for waypoint arrival");
                         return safe;
                     }
                 }
@@ -406,7 +389,7 @@ namespace GrandTheftAccessibility
                     Vector3 roadSide = _roadSidePosArg.GetResult<Vector3>();
                     if (roadSide != Vector3.Zero && (roadSide - waypointPos).Length() < Constants.SAFE_ARRIVAL_ROAD_SIDE_MAX_DISTANCE)
                     {
-                        Logger.Debug($"Found road side position for waypoint arrival");
+                        if (Logger.IsDebugEnabled) Logger.Debug("Found road side position for waypoint arrival");
                         return roadSide;
                     }
                 }
@@ -416,7 +399,7 @@ namespace GrandTheftAccessibility
                 Logger.Exception(ex, "NavigationManager.GetSafeArrivalPosition");
             }
 
-            Logger.Debug("Using original waypoint position (no safe position found)");
+            if (Logger.IsDebugEnabled) Logger.Debug("Using original waypoint position (no safe position found)");
             return waypointPos;
         }
 

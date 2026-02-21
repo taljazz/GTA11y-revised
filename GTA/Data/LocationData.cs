@@ -241,7 +241,7 @@ namespace GrandTheftAccessibility.Data
         /// <summary>
         /// Returns all teleport locations for a given category index
         /// </summary>
-        public static TeleportLocation[] GetTeleportLocationsByCategory(int categoryIndex)
+        internal static TeleportLocation[] GetTeleportLocationsByCategory(int categoryIndex)
         {
             switch (categoryIndex)
             {
@@ -295,7 +295,7 @@ namespace GrandTheftAccessibility.Data
             // ===== PIERS & DOCKS =====
             new WaypointDestination("Del Perro Pier", -1850.127f, -1231.751f, 13.017f),
             new WaypointDestination("Chumash Historic Pier", -3426.683f, 967.738f, 8.347f),
-            new WaypointDestination("Paleto Bay Pier", -275.522f, 6635.835f, 7.425f),
+            new WaypointDestination("Paleto Bay Pier", -243.89f, 6574.23f, 10.58f),
             new WaypointDestination("Merryweather Dock", 486.417f, -3339.692f, 6.07f),
             new WaypointDestination("Cargo Ship Dock", 899.678f, -2882.191f, 19.013f),
 
@@ -330,7 +330,7 @@ namespace GrandTheftAccessibility.Data
             new WaypointDestination("Fort Zancudo - Main Gate", -2047.4f, 3132.1f, 32.8f),
             new WaypointDestination("Fort Zancudo - ATC", -2344.373f, 3267.498f, 32.811f),
             new WaypointDestination("NOOSE Headquarters", 2535.243f, -383.799f, 92.993f),
-            new WaypointDestination("Humane Labs Entrance", 3619.749f, 2742.740f, 28.690f),
+            new WaypointDestination("Humane Labs Entrance", 3619.749f, 3731.5f, 28.690f),
 
             // ===== EMERGENCY SERVICES =====
             new WaypointDestination("Police Station - Mission Row", 436.491f, -982.172f, 30.699f),
