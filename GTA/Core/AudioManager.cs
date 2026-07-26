@@ -651,6 +651,33 @@ namespace GrandTheftAccessibility
         #region Update and Disposal
 
         /// <summary>
+        /// Silence every timed indicator tone at once and clear its stop deadline.
+        /// The altitude, pitch, attitude, beacon, and collision tones are continuous
+        /// generators that only fall silent when UpdateAircraftIndicators sees their
+        /// deadline pass, so anything that stops servicing those deadlines - the
+        /// player dying, a character switch - would leave the last tone ringing.
+        /// </summary>
+        public void StopIndicatorTones()
+        {
+            if (_disposed) return;
+
+            // Bare catches intentional - Stop() may fail if the audio device is gone
+            try { _altitudeOut?.Stop(); } catch { /* Expected - audio device may be unavailable */ }
+            try { _pitchOut?.Stop(); } catch { /* Expected - audio device may be unavailable */ }
+            try { _aircraftPitchOut?.Stop(); } catch { /* Expected - audio device may be unavailable */ }
+            try { _aircraftRollOut?.Stop(); } catch { /* Expected - audio device may be unavailable */ }
+            try { _beaconOut?.Stop(); } catch { /* Expected - audio device may be unavailable */ }
+            try { _collisionBeepOut?.Stop(); } catch { /* Expected - audio device may be unavailable */ }
+
+            _altitudeStopTick = 0;
+            _pitchStopTick = 0;
+            _aircraftPitchStopTick = 0;
+            _aircraftRollStopTick = 0;
+            _beaconStopTick = 0;
+            _collisionBeepStopTick = 0;
+        }
+
+        /// <summary>
         /// Call this periodically to stop indicator audio after duration
         /// Should be called from OnTick - handles all timed audio stops
         /// </summary>

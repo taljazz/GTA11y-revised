@@ -36,6 +36,7 @@ namespace GrandTheftAccessibility
         private readonly HotkeyMapper _hotkeys;
 
         // Cached state (to avoid repeated lookups)
+        private bool _playerUnavailable;        // Player dead or missing - indicator tones already cut
         private WeaponHash _currentWeaponHash;  // Use enum directly, not string (avoids ToString() allocation)
         private string _currentStreet;
         private string _currentZone;
@@ -175,7 +176,29 @@ namespace GrandTheftAccessibility
         {
             // Guard: Ensure player exists and is valid
             Ped player = Game.Player?.Character;
-            if (player == null || !player.Exists() || player.IsDead) return;
+            if (player == null || !player.Exists() || player.IsDead)
+            {
+                // Ticks keep coming while dead or mid character switch, but the rest
+                // of this method is skipped - including the timed stop for the
+                // indicator tones. Cut them here (once, on the transition) or the
+                // last one rings on until the player is back. Falling with the
+                // altitude tone on hits this every time.
+                if (!_playerUnavailable)
+                {
+                    _playerUnavailable = true;
+                    _audio.StopIndicatorTones();
+                }
+
+                // Health monitoring is the one thing that must keep running while
+                // dead - it owns the "Wasted" announcement and the _wasDead flag
+                // that "Respawned" depends on. Safe with a null or missing ped:
+                // its subject validation rejects those, and it deliberately allows
+                // a dead one. Gated by the announceHealth setting like the rest.
+                _healthArmor.Update(player, Game.GameTime);
+                return;
+            }
+
+            _playerUnavailable = false;
 
             long currentTick = Game.GameTime;
             Vector3 playerPos = player.Position;
