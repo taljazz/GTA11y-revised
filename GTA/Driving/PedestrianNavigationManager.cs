@@ -12,6 +12,8 @@ namespace GrandTheftAccessibility
     /// </summary>
     public class PedestrianNavigationManager
     {
+        #region Fields
+
         // PERFORMANCE: Pre-cached native hashes
         private static readonly Hash _isWaypointActiveHash = Hash.IS_WAYPOINT_ACTIVE;
         private static readonly Hash _getClosestNodeHash = (Hash)Constants.NATIVE_GET_CLOSEST_VEHICLE_NODE;
@@ -28,7 +30,7 @@ namespace GrandTheftAccessibility
         private long _lastBeaconPulseTick;
 
         // Direction announcement interval (4 seconds in .NET ticks)
-        private const long DIRECTION_ANNOUNCE_INTERVAL = 40_000_000;
+        private const long DIRECTION_ANNOUNCE_INTERVAL = 4_000;
 
         // Arrival threshold in meters
         private const float ARRIVAL_DISTANCE = 5f;
@@ -47,7 +49,7 @@ namespace GrandTheftAccessibility
         // Road crossing detection distance (meters)
         private const float ROAD_CROSSING_LOOKAHEAD = 15f;
         private long _lastRoadCrossingAnnounceTick;
-        private const long ROAD_CROSSING_COOLDOWN = 100_000_000; // 10 seconds
+        private const long ROAD_CROSSING_COOLDOWN = 10_000; // 10 seconds
 
         // Pre-allocated OutputArgument to avoid per-call allocation
         private readonly OutputArgument _roadNodeArg = new OutputArgument();
@@ -55,10 +57,14 @@ namespace GrandTheftAccessibility
         // Beacon audio parameters
         private const float BEACON_FREQUENCY = 500f;
         private const float BEACON_GAIN = 1.0f;
-        private const long BEACON_PULSE_FAR = 10_000_000;       // 1.0 second when far
-        private const long BEACON_PULSE_MEDIUM = 7_000_000;     // 0.7 seconds
-        private const long BEACON_PULSE_CLOSE = 4_000_000;      // 0.4 seconds
-        private const long BEACON_PULSE_VERY_CLOSE = 2_000_000; // 0.2 seconds
+        private const long BEACON_PULSE_FAR = 1_000;       // 1.0 second when far
+        private const long BEACON_PULSE_MEDIUM = 700;      // 0.7 seconds
+        private const long BEACON_PULSE_CLOSE = 400;       // 0.4 seconds
+        private const long BEACON_PULSE_VERY_CLOSE = 200;  // 0.2 seconds
+
+        #endregion
+
+        #region Properties and Construction
 
         /// <summary>
         /// Whether pedestrian navigation is currently active.
@@ -70,6 +76,10 @@ namespace GrandTheftAccessibility
             _audio = audio;
             _settings = settings;
         }
+
+        #endregion
+
+        #region Public API - start, stop, update
 
         /// <summary>
         /// Start pedestrian navigation toward the current map waypoint.
@@ -116,7 +126,7 @@ namespace GrandTheftAccessibility
         /// </summary>
         /// <param name="player">The player ped</param>
         /// <param name="playerPos">Current player position</param>
-        /// <param name="currentTick">Current tick (DateTime.Now.Ticks)</param>
+        /// <param name="currentTick">Current game-time in milliseconds (Game.GameTime)</param>
         public void Update(Ped player, Vector3 playerPos, long currentTick)
         {
             if (!_isActive) return;
@@ -183,6 +193,10 @@ namespace GrandTheftAccessibility
                 Logger.Exception(ex, "PedestrianNavigationManager.Update");
             }
         }
+
+        #endregion
+
+        #region Guidance Helpers
 
         /// <summary>
         /// Announce the relative direction and distance to the waypoint.
@@ -385,5 +399,7 @@ namespace GrandTheftAccessibility
 
             return $"{miles:F1} miles";
         }
+
+        #endregion
     }
 }

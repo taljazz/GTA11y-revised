@@ -13,17 +13,16 @@ namespace GrandTheftAccessibility
     /// priority-based targeting, and combat effectiveness tuning.
     /// PERFORMANCE OPTIMIZED: Manual loops, HashSet for O(1) lookups, squared distances
     /// </summary>
-    public class TurretCrewManager
+    public class TurretCrewManager : MonitorBase
     {
-        private readonly SettingsManager _settings;
-        private readonly AudioManager _audio;
+        #region Fields
 
         // Active turret crew state
         private Vehicle _vehicle;
         private int _vehicleHandle;
         private List<Ped> _turretPeds;
         private HashSet<int> _turretPedHandles;  // O(1) lookup for turret ped contains check
-        private Dictionary<Ped, int> _turretPedStates;  // TurretPedState enum values
+        private Dictionary<Ped, TurretCrewState> _turretPedStates;  // Enum-tracked combat state per ped
         private Dictionary<Ped, int> _turretPedLastHealth;
         private bool _isSpawned;
 
@@ -32,15 +31,16 @@ namespace GrandTheftAccessibility
         private long _lastRelationshipGroupUpdate;
         private int _cachedPlayerHandle;
 
-        // Message tracking to prevent spam
+        // Message tracking to prevent spam (death cooldown in game-time ms)
         private bool _hasEngagedMessagePlayed;
         private bool _hasOutOfRangeMessagePlayed;
         private bool _hasDamagedMessagePlayed;
         private bool _hasTooCloseMessagePlayed;
-        private DateTime _lastDeathMessageTime;
+        private long _lastDeathMessageTime;
 
-        // Tick throttling
-        private long _lastUpdateTick;
+        #endregion
+
+        #region Constants
 
         // Pre-cached Hash values to avoid repeated casting
         private static readonly Hash _setFiringPatternHash = (Hash)Constants.NATIVE_SET_PED_FIRING_PATTERN;
@@ -52,28 +52,39 @@ namespace GrandTheftAccessibility
         private static readonly Hash _setCombatAbilityHash = (Hash)Constants.NATIVE_SET_PED_COMBAT_ABILITY;
         private static readonly Hash _setCombatRangeHash = (Hash)Constants.NATIVE_SET_PED_COMBAT_RANGE;
 
+        #endregion
+
+        #region Construction
+
         public TurretCrewManager(SettingsManager settings, AudioManager audio)
+            : base(audio, settings)
         {
-            _settings = settings;
-            _audio = audio;
             _turretPeds = new List<Ped>(8);
             _turretPedHandles = new HashSet<int>();
-            _turretPedStates = new Dictionary<Ped, int>(8);
+            _turretPedStates = new Dictionary<Ped, TurretCrewState>(8);
             _turretPedLastHealth = new Dictionary<Ped, int>(8);
             _isSpawned = false;
             _hasEngagedMessagePlayed = false;
             _hasOutOfRangeMessagePlayed = false;
             _hasDamagedMessagePlayed = false;
             _hasTooCloseMessagePlayed = false;
-            _lastDeathMessageTime = DateTime.MinValue;
+            _lastDeathMessageTime = 0;
             _cachedPlayerRelationshipGroup = default;
             _lastRelationshipGroupUpdate = 0;
             _cachedPlayerHandle = 0;
         }
 
+        #endregion
+
+        #region Properties
+
         public bool IsSpawned => _isSpawned;
 
         public int CrewCount => _turretPeds?.Count ?? 0;
+
+        #endregion
+
+        #region Public API - spawn and destroy
 
         /// <summary>
         /// Toggle turret crew - spawn if not active, destroy if active
@@ -174,7 +185,7 @@ namespace GrandTheftAccessibility
                     }
 
                     Vector3 spawnPos = _vehicle.Position + _vehicle.RightVector * (spawnedCount + 1) * 2f;
-                    Ped ped = World.CreatePed(PedHash.Blackops01SMY, spawnPos);
+                    Ped ped = Ped.Create(PedHash.Blackops01SMY, spawnPos);
 
                     if (ped == null || !ped.Exists())
                     {
@@ -187,7 +198,7 @@ namespace GrandTheftAccessibility
 
                     _turretPeds.Add(ped);
                     _turretPedHandles.Add(ped.Handle);
-                    _turretPedStates[ped] = Constants.TURRET_STATE_IDLE;
+                    _turretPedStates[ped] = TurretCrewState.Idle;
                     _turretPedLastHealth[ped] = ped.MaxHealth;
                     spawnedCount++;
                 }
@@ -223,6 +234,12 @@ namespace GrandTheftAccessibility
             Logger.Info("TurretCrewManager: Turret crew destroyed");
         }
 
+        #endregion
+
+        #region Update Loop
+
+        protected override long UpdateIntervalMs => Constants.TICK_INTERVAL_TURRET_UPDATE;
+
         /// <summary>
         /// Update turret crew behavior - call from main tick
         /// </summary>
@@ -231,11 +248,9 @@ namespace GrandTheftAccessibility
             if (!_isSpawned || _turretPeds == null || _turretPeds.Count == 0)
                 return;
 
-            // Throttle updates
-            if (currentTick - _lastUpdateTick < Constants.TICK_INTERVAL_TURRET_UPDATE)
+            // Throttle updates (shared MonitorBase plumbing)
+            if (!TryBeginUpdate(currentTick))
                 return;
-
-            _lastUpdateTick = currentTick;
 
             try
             {
@@ -249,7 +264,7 @@ namespace GrandTheftAccessibility
                 }
 
                 // Update cached player info periodically
-                if (currentTick - _lastRelationshipGroupUpdate > 10_000_000) // 1 second
+                if (currentTick - _lastRelationshipGroupUpdate > 1_000) // 1 second
                 {
                     Ped player = Game.Player?.Character;
                     if (player != null && player.Exists())
@@ -299,6 +314,10 @@ namespace GrandTheftAccessibility
             }
         }
 
+        #endregion
+
+        #region Crew Configuration and Seat Detection
+
         /// <summary>
         /// Configure a turret ped with proper combat settings
         /// </summary>
@@ -307,7 +326,7 @@ namespace GrandTheftAccessibility
             try
             {
                 // Make ped persistent and reliable
-                ped.AlwaysKeepTask = true;
+                ped.KeepTaskWhenMarkedAsNoLongerNeeded = true;
                 ped.BlockPermanentEvents = true;
                 ped.IsPersistent = true;
                 ped.CanRagdoll = false;
@@ -426,6 +445,10 @@ namespace GrandTheftAccessibility
             }
         }
 
+        #endregion
+
+        #region Combat State Machine
+
         /// <summary>
         /// Update a turret ped's combat state with priority-based targeting and minimum range enforcement.
         /// 3-tier engagement: dead zone (0-25m), full auto (25-80m), aimed fire (80-150m)
@@ -434,7 +457,9 @@ namespace GrandTheftAccessibility
         {
             try
             {
-                int currentState = _turretPedStates.TryGetValue(ped, out int state) ? state : Constants.TURRET_STATE_IDLE;
+                TurretCrewState currentState = _turretPedStates.TryGetValue(ped, out TurretCrewState state)
+                    ? state
+                    : TurretCrewState.Idle;
 
                 // Find the best target using priority system
                 float distanceToEnemy;
@@ -446,20 +471,20 @@ namespace GrandTheftAccessibility
 
                 switch (currentState)
                 {
-                    case Constants.TURRET_STATE_IDLE:
+                    case TurretCrewState.Idle:
                         if (bestTarget != null)
                         {
                             if (distanceToEnemy <= Constants.TURRET_FULL_AUTO_RANGE)
                             {
                                 EngageTarget(ped, bestTarget);
-                                _turretPedStates[ped] = Constants.TURRET_STATE_FIGHTING;
+                                _turretPedStates[ped] = TurretCrewState.Fighting;
                                 anyFighting = true;
                                 anyInRange = true;
                             }
                             else if (distanceToEnemy <= Constants.TURRET_AIM_RANGE)
                             {
-                                ped.Task.AimAt(bestTarget, -1);
-                                _turretPedStates[ped] = Constants.TURRET_STATE_AIMING;
+                                ped.Task.AimGunAtEntity(bestTarget, -1);
+                                _turretPedStates[ped] = TurretCrewState.Aiming;
                             }
                         }
                         else if (!enemyInDeadZone)
@@ -469,29 +494,29 @@ namespace GrandTheftAccessibility
                         }
                         break;
 
-                    case Constants.TURRET_STATE_AIMING:
+                    case TurretCrewState.Aiming:
                         if (bestTarget != null)
                         {
                             if (distanceToEnemy <= Constants.TURRET_FULL_AUTO_RANGE)
                             {
                                 EngageTarget(ped, bestTarget);
-                                _turretPedStates[ped] = Constants.TURRET_STATE_FIGHTING;
+                                _turretPedStates[ped] = TurretCrewState.Fighting;
                                 anyFighting = true;
                                 anyInRange = true;
                             }
                             else
                             {
-                                ped.Task.AimAt(bestTarget, -1);
+                                ped.Task.AimGunAtEntity(bestTarget, -1);
                             }
                         }
                         else
                         {
                             DisengageTarget(ped);
-                            _turretPedStates[ped] = Constants.TURRET_STATE_IDLE;
+                            _turretPedStates[ped] = TurretCrewState.Idle;
                         }
                         break;
 
-                    case Constants.TURRET_STATE_FIGHTING:
+                    case TurretCrewState.Fighting:
                         if (bestTarget != null)
                         {
                             if (distanceToEnemy <= Constants.TURRET_FULL_AUTO_RANGE)
@@ -505,14 +530,14 @@ namespace GrandTheftAccessibility
                             {
                                 // Out of full auto range - fall back to aiming
                                 Function.Call(_setFiringPatternHash, ped, Constants.FIRING_PATTERN_DEFAULT);
-                                ped.Task.AimAt(bestTarget, -1);
-                                _turretPedStates[ped] = Constants.TURRET_STATE_AIMING;
+                                ped.Task.AimGunAtEntity(bestTarget, -1);
+                                _turretPedStates[ped] = TurretCrewState.Aiming;
                             }
                         }
                         else
                         {
                             DisengageTarget(ped);
-                            _turretPedStates[ped] = Constants.TURRET_STATE_IDLE;
+                            _turretPedStates[ped] = TurretCrewState.Idle;
                         }
                         break;
                 }
@@ -542,7 +567,7 @@ namespace GrandTheftAccessibility
         private void EngageTarget(Ped ped, Ped target)
         {
             Function.Call(_setFiringPatternHash, ped, Constants.FIRING_PATTERN_FULL_AUTO);
-            ped.Task.FightAgainst(target);
+            ped.Task.Combat(target);
         }
 
         /// <summary>
@@ -816,19 +841,23 @@ namespace GrandTheftAccessibility
             }
         }
 
+        #endregion
+
+        #region Announcements
+
         /// <summary>
         /// Handle collective announcement messages including "too close" warning
         /// </summary>
         private void UpdateCollectiveMessages(bool anyFighting, bool anyInRange, bool anyDamaged, bool anyTooClose)
         {
-            int announceMode = _settings.GetIntSetting("turretCrewAnnouncements");
-            if (announceMode == Constants.TURRET_ANNOUNCE_OFF)
+            TurretAnnounceMode announceMode = (TurretAnnounceMode)Settings.GetIntSetting("turretCrewAnnouncements");
+            if (announceMode == TurretAnnounceMode.Off)
                 return;
 
-            bool announceFiring = (announceMode == Constants.TURRET_ANNOUNCE_FIRING_ONLY ||
-                                   announceMode == Constants.TURRET_ANNOUNCE_BOTH);
-            bool announceApproaching = (announceMode == Constants.TURRET_ANNOUNCE_APPROACHING_ONLY ||
-                                        announceMode == Constants.TURRET_ANNOUNCE_BOTH);
+            bool announceFiring = (announceMode == TurretAnnounceMode.FiringOnly ||
+                                   announceMode == TurretAnnounceMode.Both);
+            bool announceApproaching = (announceMode == TurretAnnounceMode.ApproachingOnly ||
+                                        announceMode == TurretAnnounceMode.Both);
 
             // "Too close" warning (firing category)
             if (announceFiring)
@@ -874,6 +903,10 @@ namespace GrandTheftAccessibility
             }
         }
 
+        #endregion
+
+        #region Cleanup
+
         /// <summary>
         /// Handle a turret ped death
         /// </summary>
@@ -881,14 +914,14 @@ namespace GrandTheftAccessibility
         {
             try
             {
-                int announceMode = _settings.GetIntSetting("turretCrewAnnouncements");
-                bool announceApproaching = (announceMode == Constants.TURRET_ANNOUNCE_APPROACHING_ONLY ||
-                                            announceMode == Constants.TURRET_ANNOUNCE_BOTH);
+                TurretAnnounceMode announceMode = (TurretAnnounceMode)Settings.GetIntSetting("turretCrewAnnouncements");
+                bool announceApproaching = (announceMode == TurretAnnounceMode.ApproachingOnly ||
+                                            announceMode == TurretAnnounceMode.Both);
 
-                if (announceApproaching && (DateTime.Now - _lastDeathMessageTime).TotalSeconds > 5)
+                if (announceApproaching && Game.GameTime - _lastDeathMessageTime > 5_000)
                 {
                     Announce("Turret crew member killed", false, false);
-                    _lastDeathMessageTime = DateTime.Now;
+                    _lastDeathMessageTime = Game.GameTime;
                 }
 
                 RemoveTurretPed(index);
@@ -917,10 +950,12 @@ namespace GrandTheftAccessibility
                     {
                         ped.Delete();
                     }
+
+                    // Dictionary keys cannot be null - only remove when ped is valid
+                    _turretPedStates.Remove(ped);
+                    _turretPedLastHealth.Remove(ped);
                 }
 
-                _turretPedStates.Remove(ped);
-                _turretPedLastHealth.Remove(ped);
                 _turretPeds.RemoveAt(index);
             }
             catch (Exception ex)
@@ -971,7 +1006,7 @@ namespace GrandTheftAccessibility
             _hasOutOfRangeMessagePlayed = false;
             _hasDamagedMessagePlayed = false;
             _hasTooCloseMessagePlayed = false;
-            _lastDeathMessageTime = DateTime.MinValue;
+            _lastDeathMessageTime = 0;
         }
 
         /// <summary>
@@ -983,14 +1018,14 @@ namespace GrandTheftAccessibility
             {
                 if (ignoreSettings)
                 {
-                    _audio?.Speak(message, forceAnnounce);
+                    Audio?.Speak(message, forceAnnounce);
                     return;
                 }
 
-                int announceMode = _settings.GetIntSetting("turretCrewAnnouncements");
-                if (announceMode != Constants.TURRET_ANNOUNCE_OFF)
+                TurretAnnounceMode announceMode = (TurretAnnounceMode)Settings.GetIntSetting("turretCrewAnnouncements");
+                if (announceMode != TurretAnnounceMode.Off)
                 {
-                    _audio?.Speak(message, forceAnnounce);
+                    Audio?.Speak(message, forceAnnounce);
                 }
             }
             catch (Exception ex)
@@ -998,6 +1033,10 @@ namespace GrandTheftAccessibility
                 Logger.Exception(ex, "Announce");
             }
         }
+
+        #endregion
+
+        #region Public API - queries
 
         /// <summary>
         /// Check if player's current vehicle supports turret crew.
@@ -1042,5 +1081,7 @@ namespace GrandTheftAccessibility
 
             return $"Turret Crew: {_turretPeds.Count} gunner(s) active";
         }
+
+        #endregion
     }
 }

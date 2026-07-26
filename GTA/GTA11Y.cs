@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Windows.Forms;
 using GTA;
+using GTA.Chrono;
 using GTA.Math;
 using GTA.Native;
 using GrandTheftAccessibility.Menus;
@@ -20,6 +21,8 @@ namespace GrandTheftAccessibility
     /// </summary>
     public class GTA11Y : Script
     {
+        #region Fields
+
         // Manager classes
         private readonly AudioManager _audio;
         private readonly SettingsManager _settings;
@@ -30,6 +33,7 @@ namespace GrandTheftAccessibility
         private readonly CombatAssistManager _combat;
         private readonly BlipManager _blips;
         private readonly GameStateManager _gameState;
+        private readonly HotkeyMapper _hotkeys;
 
         // Cached state (to avoid repeated lookups)
         private WeaponHash _currentWeaponHash;  // Use enum directly, not string (avoids ToString() allocation)
@@ -47,6 +51,11 @@ namespace GrandTheftAccessibility
         private long _lastAircraftPitchPulseTick;   // Last time pitch pulse played
         private long _lastAircraftRollPulseTick;    // Last time roll pulse played
         private bool _wasInverted;                  // Track inverted state for announcements
+
+        // Landing gear tracking (enum-tracked, reset when aircraft changes)
+        private VehicleLandingGearState _lastGearState;
+        private int _lastGearVehicleHandle;
+        private long _lastGearCheckTick;
 
         // Heading tracking (8-slice compass)
         private readonly bool[] _headingSlices;
@@ -87,6 +96,15 @@ namespace GrandTheftAccessibility
         private long _lastAutoDriveTick;
         private long _lastRoadFeatureTick;
 
+        // PERFORMANCE: Pre-cached Hash for MP map natives
+        private static readonly Hash _onEnterMPHash = (Hash)Constants.NATIVE_ON_ENTER_MP;
+        private static readonly Hash _onEnterSPHash = (Hash)Constants.NATIVE_ON_ENTER_SP;
+        private static readonly Hash _setInstancePriorityModeHash = (Hash)Constants.NATIVE_SET_INSTANCE_PRIORITY_MODE;
+
+        #endregion
+
+        #region Construction
+
         public GTA11Y()
         {
             // Initialize logging first
@@ -105,8 +123,11 @@ namespace GrandTheftAccessibility
                 Logger.Debug("Initializing EntityScanner...");
                 _scanner = new EntityScanner();
 
+                Logger.Debug("Initializing HotkeyMapper...");
+                _hotkeys = new HotkeyMapper(_settings);
+
                 Logger.Debug("Initializing MenuManager...");
-                _menu = new MenuManager(_settings, _audio);
+                _menu = new MenuManager(_settings, _audio, _hotkeys);
 
                 // Initialize new accessibility managers
                 _healthArmor = new HealthArmorManager(_audio, _settings);
@@ -143,29 +164,30 @@ namespace GrandTheftAccessibility
             }
         }
 
+        #endregion
+
+        #region Main Tick Loop
+
         /// <summary>
         /// Main tick event - highly optimized to minimize per-frame work
         /// </summary>
         private void OnTick(object sender, EventArgs e)
         {
-            // Guard: Skip if game is loading
-            if (Game.IsLoading) return;
-
             // Guard: Ensure player exists and is valid
             Ped player = Game.Player?.Character;
             if (player == null || !player.Exists() || player.IsDead) return;
 
-            long currentTick = DateTime.Now.Ticks;
+            long currentTick = Game.GameTime;
             Vector3 playerPos = player.Position;
 
-            // Altitude indicator (throttled to 0.1s) - now supports 3 modes
-            int altitudeMode = _settings.GetIntSetting("altitudeMode");
-            if (altitudeMode != Constants.ALTITUDE_MODE_OFF && currentTick - _lastAltitudeTick > Constants.TICK_INTERVAL_ALTITUDE)
+            // Altitude indicator (throttled to 0.1s) - enum-tracked, supports 3 modes
+            AltitudeMode altitudeMode = (AltitudeMode)_settings.GetIntSetting("altitudeMode");
+            if (altitudeMode != AltitudeMode.Off && currentTick - _lastAltitudeTick > Constants.TICK_INTERVAL_ALTITUDE)
             {
                 _lastAltitudeTick = currentTick;
                 float altitude = player.HeightAboveGround;
 
-                if (altitudeMode == Constants.ALTITUDE_MODE_NORMAL)
+                if (altitudeMode == AltitudeMode.NormalTone)
                 {
                     // Normal mode: continuous tone
                     if (Math.Abs(altitude - _lastAltitude) > Constants.HEIGHT_CHANGE_THRESHOLD)
@@ -174,7 +196,7 @@ namespace GrandTheftAccessibility
                         _audio.PlayAltitudeIndicator(altitude);
                     }
                 }
-                else if (altitudeMode == Constants.ALTITUDE_MODE_AIRCRAFT)
+                else if (altitudeMode == AltitudeMode.AircraftSpoken)
                 {
                     // Aircraft mode: spoken altitude at intervals
                     float altitudeFeet = altitude * Constants.METERS_TO_FEET;
@@ -255,7 +277,7 @@ namespace GrandTheftAccessibility
             ApplyCheatSettings(player, currentVehicle, currentTick);
 
             // Heading announcements (only when not in certain states)
-            if (!player.IsFalling && !player.IsGettingIntoVehicle && !player.IsGettingUp &&
+            if (!player.IsFalling && !player.IsEnteringVehicle && !player.IsGettingUp &&
                 !player.IsProne && !player.IsRagdoll)
             {
                 UpdateHeadingAnnouncement(player.Heading);
@@ -287,7 +309,14 @@ namespace GrandTheftAccessibility
                     if (weaponHash != _currentWeaponHash)
                     {
                         _currentWeaponHash = weaponHash;
-                        _audio.Speak(weaponHash.ToString());  // Only allocate string when weapon actually changes
+
+                        // Skip when the weapon menu caused the swap - it already
+                        // announced the weapon along with its ammo count
+                        if (!_menu.ConsumeWeaponChangeSuppression(currentTick))
+                        {
+                            // Cached speech-friendly name ("Combat Pistol", not "CombatPistol")
+                            _audio.Speak(WeaponSelectMenu.GetWeaponName(weaponHash));
+                        }
                     }
                 }
             }
@@ -344,8 +373,8 @@ namespace GrandTheftAccessibility
 
                 try
                 {
-                    // Determine aircraft type (affects thresholds and features)
-                    int aircraftType = GetAircraftType(currentVehicle);
+                    // Determine aircraft profile (polymorphic - each type carries its own thresholds)
+                    AircraftProfile profile = AircraftProfile.ForVehicle(currentVehicle);
 
                     // Get vehicle rotation (pitch, roll, yaw)
                     Vector3 rotation = currentVehicle.Rotation;
@@ -353,8 +382,7 @@ namespace GrandTheftAccessibility
                     float roll = rotation.Y;   // Bank left/right
 
                     // Inverted/upright detection (fixed-wing and VTOL plane mode only)
-                    if (aircraftType == Constants.AIRCRAFT_TYPE_FIXED_WING ||
-                        aircraftType == Constants.AIRCRAFT_TYPE_VTOL_PLANE)
+                    if (profile.SupportsInvertedDetection)
                     {
                         bool isInverted = Math.Abs(roll) > Constants.INVERTED_ROLL_THRESHOLD;
 
@@ -370,9 +398,9 @@ namespace GrandTheftAccessibility
                         }
                     }
 
-                    // Get pulse interval based on pitch angle and aircraft type
+                    // Get pulse interval based on pitch angle (profile supplies the thresholds)
                     float absPitch = Math.Abs(pitch);
-                    long pitchPulseInterval = GetPulseIntervalForAngle(absPitch, aircraftType);
+                    long pitchPulseInterval = profile.GetPulseIntervalForAngle(absPitch);
 
                     // Play pitch indicator based on variable pulse rate
                     if (pitchPulseInterval != Constants.AIRCRAFT_PULSE_SILENT &&
@@ -383,14 +411,14 @@ namespace GrandTheftAccessibility
                         _audio.PlayAircraftPitchIndicator(pitch);
                     }
 
-                    // Get pulse interval based on roll angle and aircraft type
+                    // Get pulse interval based on roll angle
                     // For inverted aircraft, use adjusted roll for pulse calculation
                     float absRoll = Math.Abs(roll);
                     if (_wasInverted && absRoll > 90f)
                     {
                         absRoll = 180f - absRoll;  // Normalize for inverted flight
                     }
-                    long rollPulseInterval = GetPulseIntervalForAngle(absRoll, aircraftType);
+                    long rollPulseInterval = profile.GetPulseIntervalForAngle(absRoll);
 
                     // Play roll indicator based on variable pulse rate (stereo panned)
                     if (rollPulseInterval != Constants.AIRCRAFT_PULSE_SILENT &&
@@ -417,6 +445,7 @@ namespace GrandTheftAccessibility
                 {
                     _menu.UpdateAircraftNavigation(currentVehicle, playerPos, currentTick);
                     _menu.UpdateAircraftBeacon(currentVehicle, playerPos, currentTick);
+                    UpdateLandingGearAnnouncement(currentVehicle, currentTick);
                 }
                 catch (Exception ex)
                 {
@@ -488,7 +517,7 @@ namespace GrandTheftAccessibility
             }
 
             // Combat assistance (damage direction, combat state)
-            _combat.Update(player, playerPos, currentTick);
+            _combat.Update(player, currentTick);
 
             // Wanted level and blip monitoring (throttled internally)
             _blips.Update(currentTick);
@@ -529,104 +558,58 @@ namespace GrandTheftAccessibility
             }
         }
 
-        /// <summary>
-        /// Determine the aircraft type for threshold selection
-        /// </summary>
-        private int GetAircraftType(Vehicle vehicle)
-        {
-            try
-            {
-                if (vehicle == null || !vehicle.Exists())
-                    return Constants.AIRCRAFT_TYPE_FIXED_WING;
-
-                int modelHash = vehicle.Model.Hash;
-
-                // Check if it's a blimp (HashSet lookup is O(1))
-                if (Constants.BLIMP_VEHICLE_HASHES.Contains(modelHash))
-                    return Constants.AIRCRAFT_TYPE_BLIMP;
-
-                // Check if it's a VTOL aircraft (HashSet lookup is O(1))
-                if (Constants.VTOL_VEHICLE_HASHES.Contains(modelHash))
-                {
-                    // Get nozzle position to determine mode (0.0 = plane, 1.0 = hover)
-                    // Use direct hash since enum may not exist in all SHVDN versions
-                    try
-                    {
-                        float nozzlePosition = Function.Call<float>(
-                            _getFlightNozzlePositionHash,
-                            vehicle);
-
-                        return nozzlePosition > Constants.VTOL_HOVER_THRESHOLD
-                            ? Constants.AIRCRAFT_TYPE_VTOL_HOVER
-                            : Constants.AIRCRAFT_TYPE_VTOL_PLANE;
-                    }
-                    catch
-                    {
-                        // If native call fails, default to plane mode for VTOL
-                        return Constants.AIRCRAFT_TYPE_VTOL_PLANE;
-                    }
-                }
-
-                // Check vehicle class
-                if (vehicle.ClassType == VehicleClass.Helicopters)
-                    return Constants.AIRCRAFT_TYPE_HELICOPTER;
-
-                // Default to fixed-wing for planes
-                return Constants.AIRCRAFT_TYPE_FIXED_WING;
-            }
-            catch
-            {
-                // If anything fails, default to fixed-wing
-                return Constants.AIRCRAFT_TYPE_FIXED_WING;
-            }
-        }
+        // Aircraft type detection and pulse thresholds now live in AircraftProfile
+        // (Models/AircraftProfile.cs) - polymorphic per-type profiles.
 
         /// <summary>
-        /// Get pulse interval based on angle and aircraft type (hybrid pulse rate system)
-        /// Different aircraft types have different sensitivity thresholds
+        /// Announce landing gear transitions while flying (enum-tracked).
+        /// Only the stable end states are announced; the transitional
+        /// Deploying/Retracting states are skipped to avoid chatter.
         /// </summary>
-        private long GetPulseIntervalForAngle(float absAngle, int aircraftType)
+        private void UpdateLandingGearAnnouncement(Vehicle aircraft, long currentTick)
         {
-            float levelThreshold, slightThreshold, moderateThreshold;
+            // Light throttle - a couple of property reads every quarter second
+            if (currentTick - _lastGearCheckTick < 250)
+                return;
+            _lastGearCheckTick = currentTick;
 
-            // Select thresholds based on aircraft type
-            switch (aircraftType)
+            if (!_settings.GetSetting("announceLandingGear"))
+                return;
+
+            VehicleLandingGearState gearState = aircraft.LandingGearState;
+
+            // New aircraft: establish a baseline without announcing
+            int handle = aircraft.Handle;
+            if (handle != _lastGearVehicleHandle)
             {
-                case Constants.AIRCRAFT_TYPE_HELICOPTER:
-                case Constants.AIRCRAFT_TYPE_VTOL_HOVER:
-                    // Helicopters and VTOL in hover mode - tighter thresholds
-                    levelThreshold = Constants.HELI_ANGLE_LEVEL;
-                    slightThreshold = Constants.HELI_ANGLE_SLIGHT;
-                    moderateThreshold = Constants.HELI_ANGLE_MODERATE;
-                    break;
-
-                case Constants.AIRCRAFT_TYPE_BLIMP:
-                    // Blimps - tightest thresholds
-                    levelThreshold = Constants.BLIMP_ANGLE_LEVEL;
-                    slightThreshold = Constants.BLIMP_ANGLE_SLIGHT;
-                    moderateThreshold = Constants.BLIMP_ANGLE_MODERATE;
-                    break;
-
-                case Constants.AIRCRAFT_TYPE_FIXED_WING:
-                case Constants.AIRCRAFT_TYPE_VTOL_PLANE:
-                default:
-                    // Fixed-wing and VTOL in plane mode - standard thresholds
-                    levelThreshold = Constants.FIXED_WING_ANGLE_LEVEL;
-                    slightThreshold = Constants.FIXED_WING_ANGLE_SLIGHT;
-                    moderateThreshold = Constants.FIXED_WING_ANGLE_MODERATE;
-                    break;
+                _lastGearVehicleHandle = handle;
+                _lastGearState = gearState;
+                return;
             }
 
-            // Determine pulse interval based on thresholds
-            if (absAngle < levelThreshold)
-                return Constants.AIRCRAFT_PULSE_SILENT;  // Level - no sound
-            else if (absAngle < slightThreshold)
-                return Constants.AIRCRAFT_PULSE_SLOW;    // Slight tilt - every 0.5s
-            else if (absAngle < moderateThreshold)
-                return Constants.AIRCRAFT_PULSE_MEDIUM;  // Moderate tilt - every 0.25s
-            else
-                return Constants.AIRCRAFT_PULSE_RAPID;   // Steep tilt - every 0.1s
+            if (gearState == _lastGearState)
+                return;
+
+            switch (gearState)
+            {
+                case VehicleLandingGearState.Deployed:
+                    _audio.Speak("Gear down", true);
+                    break;
+                case VehicleLandingGearState.Retracted:
+                    _audio.Speak("Gear up", true);
+                    break;
+                case VehicleLandingGearState.Broken:
+                    _audio.Speak("Landing gear damaged", true);
+                    break;
+                // Deploying / Retracting are transitional - stay quiet until settled
+            }
+
+            _lastGearState = gearState;
         }
+
+        #endregion
+
+        #region Cheat Settings
 
         /// <summary>
         /// Apply cheat settings (god mode, infinite ammo, etc.)
@@ -651,7 +634,7 @@ namespace GrandTheftAccessibility
                 {
                     Game.Player.IsInvincible = godMode;
                     player.CanBeDraggedOutOfVehicle = !godMode;
-                    player.CanBeKnockedOffBike = !godMode;
+                    player.KnockOffVehicleType = godMode ? KnockOffVehicleType.Never : KnockOffVehicleType.Default;
                     player.CanBeShotInVehicle = !godMode;
                     player.CanFlyThroughWindscreen = !godMode;
                     player.DrownsInSinkingVehicle = !godMode;
@@ -705,16 +688,22 @@ namespace GrandTheftAccessibility
                     }
                 }
 
-                // Police settings - only set if changed (use cached state since property is write-only)
+                // Police settings - only set if changed (use cached state since the game offers no getter)
                 if (_cachedPoliceIgnore != policeIgnore)
                 {
                     _cachedPoliceIgnore = policeIgnore;
-                    if (Game.Player != null)
-                        Game.Player.IgnoredByPolice = policeIgnore;
+                    Game.Player?.Wanted.SetPoliceIgnorePlayer(policeIgnore);
                 }
 
-                if (neverWanted && Game.Player != null && Game.Player.WantedLevel > 0)
-                    Game.Player.WantedLevel = 0;
+                if (neverWanted && Game.Player != null)
+                {
+                    Wanted wanted = Game.Player.Wanted;
+                    if (wanted.WantedLevel > 0)
+                    {
+                        wanted.SetWantedLevel(0, false);
+                        wanted.ApplyWantedLevelChangeNow(false);
+                    }
+                }
 
                 // Weapon settings - use cached state since InfiniteAmmo is write-only
                 if (infiniteAmmo != _cachedInfiniteAmmo)
@@ -740,10 +729,9 @@ namespace GrandTheftAccessibility
 
                 // PERFORMANCE: Refresh cached per-frame settings periodically (every 500ms)
                 // These settings rarely change, so avoid dictionary lookups every frame
-                long currentTick = ticksFromOnTick / TimeSpan.TicksPerMillisecond;
-                if (currentTick - _lastCheatSettingsRefreshTick > 500)
+                if (ticksFromOnTick - _lastCheatSettingsRefreshTick > 500)
                 {
-                    _lastCheatSettingsRefreshTick = currentTick;
+                    _lastCheatSettingsRefreshTick = ticksFromOnTick;
                     _cachedExplosiveAmmo = _settings.GetSetting("explosiveAmmo");
                     _cachedFireAmmo = _settings.GetSetting("fireAmmo");
                     _cachedExplosiveMelee = _settings.GetSetting("explosiveMelee");
@@ -784,14 +772,6 @@ namespace GrandTheftAccessibility
             }
         }
 
-        // PERFORMANCE: Pre-cached Hash for native calls
-        private static readonly Hash _getFlightNozzlePositionHash = (Hash)Constants.NATIVE_GET_VEHICLE_FLIGHT_NOZZLE_POSITION;
-
-        // PERFORMANCE: Pre-cached Hash for MP map natives
-        private static readonly Hash _onEnterMPHash = (Hash)Constants.NATIVE_ON_ENTER_MP;
-        private static readonly Hash _onEnterSPHash = (Hash)Constants.NATIVE_ON_ENTER_SP;
-        private static readonly Hash _setInstancePriorityModeHash = (Hash)Constants.NATIVE_SET_INSTANCE_PRIORITY_MODE;
-
         /// <summary>
         /// Apply GTA Online MP Maps settings.
         /// Enables/disables multiplayer map content (interiors, DLC locations) in single player.
@@ -829,6 +809,10 @@ namespace GrandTheftAccessibility
             }
         }
 
+        #endregion
+
+        #region Periodic Announcements
+
         /// <summary>
         /// Update heading announcement when player turns
         /// </summary>
@@ -859,19 +843,18 @@ namespace GrandTheftAccessibility
         /// </summary>
         private void UpdateTimeAnnouncement()
         {
-            TimeSpan time = World.CurrentTimeOfDay;
+            GameClockTime time = GameClock.TimeOfDay;
 
-            if (time.Minutes == 0)
+            if (time.Minute == 0)
             {
-                if ((time.Hours == 0 || time.Hours == 3 || time.Hours == 6 || time.Hours == 9 ||
-                     time.Hours == 12 || time.Hours == 15 || time.Hours == 18 ||
-                     time.Hours == 21) && !_timeAnnounced)
+                // Announce every 3 hours on the hour
+                if (time.Hour % 3 == 0 && !_timeAnnounced)
                 {
                     _timeAnnounced = true;
 
                     if (_settings.GetSetting("announceTime"))
                     {
-                        _audio.Speak($"The time is now: {time.Hours}:00");
+                        _audio.Speak($"The time is now: {time.Hour}:00");
                     }
                 }
             }
@@ -967,8 +950,14 @@ namespace GrandTheftAccessibility
             }
         }
 
+        #endregion
+
+        #region Keyboard Input
+
         /// <summary>
-        /// Key down event handler
+        /// Key down event handler.
+        /// Keys are translated to AccessibilityCommand values by the HotkeyMapper,
+        /// so the same dispatch works for both the numpad and letter layouts.
         /// </summary>
         private void OnKeyDown(object sender, KeyEventArgs e)
         {
@@ -980,11 +969,36 @@ namespace GrandTheftAccessibility
                     _controlHeld = true;
                 }
 
-                // Bounds check for key states array
-                int keyIndex = GetIndexForKey(e.KeyCode);
+                // F9: switch hotkey layout (always available, even when keys are disabled,
+                // so a user without a numpad can always reach the letter layout)
+                if (e.KeyCode == HotkeyMapper.LAYOUT_TOGGLE_KEY)
+                {
+                    HotkeyLayout newLayout = _hotkeys.ToggleLayout();
+                    Array.Clear(_keyStates, 0, _keyStates.Length);  // Drop stale key-repeat state from the old layout
 
-                // Toggle accessibility keys (Ctrl+NumPad2)
-                if (e.KeyCode == Keys.NumPad2 && _controlHeld && keyIndex >= 0 && keyIndex < _keyStates.Length && !_keyStates[keyIndex])
+                    if (newLayout == HotkeyLayout.Numpad)
+                    {
+                        _audio.Speak("Numpad hotkey layout active", true);
+                    }
+                    else
+                    {
+                        _audio.Speak("Letter key hotkey layout active. U and O switch menus, J and L move through items, K selects, semicolon goes back. Check the Help menu for the full list.", true);
+                    }
+                    return;
+                }
+
+                // Translate the pressed key using the active layout
+                AccessibilityCommand command = _hotkeys.GetCommand(e.KeyCode);
+                if (command == AccessibilityCommand.None)
+                    return;
+
+                // Key-repeat guard: command values 0-10 index the key state array
+                int keyIndex = (int)command;
+                if (keyIndex < 0 || keyIndex >= _keyStates.Length || _keyStates[keyIndex])
+                    return;
+
+                // Toggle accessibility keys (Ctrl + select key: Ctrl+NumPad2 or Ctrl+K)
+                if (command == AccessibilityCommand.MenuSelect && _controlHeld)
                 {
                     _keyStates[keyIndex] = true;
                     _keysDisabled = !_keysDisabled;
@@ -994,39 +1008,35 @@ namespace GrandTheftAccessibility
 
                 if (_keysDisabled) return;
 
-                // Handle key presses
-                switch (e.KeyCode)
+                _keyStates[keyIndex] = true;
+
+                switch (command)
                 {
-                    case Keys.NumPad0 when keyIndex >= 0 && keyIndex < _keyStates.Length && !_keyStates[keyIndex]:
-                        _keyStates[keyIndex] = true;
-                        HandleNumPad0(e.Control);
+                    case AccessibilityCommand.LocationInfo:
+                        HandleLocationInfo(e.Control);
                         break;
 
-                    case Keys.NumPad1 when keyIndex >= 0 && keyIndex < _keyStates.Length && !_keyStates[keyIndex]:
-                        _keyStates[keyIndex] = true;
+                    case AccessibilityCommand.MenuPreviousItem:
                         PlayFrontendSound("NAV_LEFT_RIGHT", "HUD_FRONTEND_DEFAULT_SOUNDSET");
                         _menu.NavigatePreviousItem(_controlHeld);
                         _audio.Speak(_menu.GetCurrentItemText());
                         break;
 
-                    case Keys.NumPad2 when !_controlHeld && keyIndex >= 0 && keyIndex < _keyStates.Length && !_keyStates[keyIndex]:
-                        _keyStates[keyIndex] = true;
+                    case AccessibilityCommand.MenuSelect:
                         PlayFrontendSound("SELECT", "HUD_FRONTEND_DEFAULT_SOUNDSET");
                         _menu.ExecuteSelection();
                         break;
 
-                    case Keys.NumPad3 when keyIndex >= 0 && keyIndex < _keyStates.Length && !_keyStates[keyIndex]:
-                        _keyStates[keyIndex] = true;
+                    case AccessibilityCommand.MenuNextItem:
                         PlayFrontendSound("NAV_LEFT_RIGHT", "HUD_FRONTEND_DEFAULT_SOUNDSET");
                         _menu.NavigateNextItem(_controlHeld);
                         _audio.Speak(_menu.GetCurrentItemText());
                         break;
 
-                    case Keys.NumPad4 when keyIndex >= 0 && keyIndex < _keyStates.Length && !_keyStates[keyIndex]:
-                        _keyStates[keyIndex] = true;
+                    case AccessibilityCommand.ScanVehicles:
                         if (_controlHeld)
                         {
-                            // Ctrl+NumPad4: Health and armor status
+                            // Ctrl: Health and armor status
                             Ped p4 = Game.Player?.Character;
                             if (p4 != null && p4.Exists()) _healthArmor.AnnounceStatus(p4);
                         }
@@ -1036,11 +1046,10 @@ namespace GrandTheftAccessibility
                         }
                         break;
 
-                    case Keys.NumPad5 when keyIndex >= 0 && keyIndex < _keyStates.Length && !_keyStates[keyIndex]:
-                        _keyStates[keyIndex] = true;
+                    case AccessibilityCommand.ScanDoors:
                         if (_controlHeld)
                         {
-                            // Ctrl+NumPad5: Repeat last announcement
+                            // Ctrl: Repeat last announcement
                             _audio.RepeatLast();
                         }
                         else
@@ -1049,11 +1058,10 @@ namespace GrandTheftAccessibility
                         }
                         break;
 
-                    case Keys.NumPad6 when keyIndex >= 0 && keyIndex < _keyStates.Length && !_keyStates[keyIndex]:
-                        _keyStates[keyIndex] = true;
+                    case AccessibilityCommand.ScanPedestrians:
                         if (_controlHeld)
                         {
-                            // Ctrl+NumPad6: Nearest enemy
+                            // Ctrl: Nearest enemy
                             Ped p6 = Game.Player?.Character;
                             if (p6 != null && p6.Exists()) _combat.AnnounceNearestEnemy(p6, p6.Position);
                         }
@@ -1063,11 +1071,10 @@ namespace GrandTheftAccessibility
                         }
                         break;
 
-                    case Keys.NumPad7 when keyIndex >= 0 && keyIndex < _keyStates.Length && !_keyStates[keyIndex]:
-                        _keyStates[keyIndex] = true;
+                    case AccessibilityCommand.MenuPrevious:
                         if (_controlHeld)
                         {
-                            // Ctrl+NumPad7: Nearby points of interest
+                            // Ctrl: Nearby points of interest
                             Ped p7 = Game.Player?.Character;
                             if (p7 != null && p7.Exists()) _blips.AnnounceNearbyBlips(p7.Position);
                         }
@@ -1079,11 +1086,10 @@ namespace GrandTheftAccessibility
                         }
                         break;
 
-                    case Keys.NumPad8 when keyIndex >= 0 && keyIndex < _keyStates.Length && !_keyStates[keyIndex]:
-                        _keyStates[keyIndex] = true;
+                    case AccessibilityCommand.ScanObjects:
                         if (_controlHeld)
                         {
-                            // Ctrl+NumPad8: Ammo count
+                            // Ctrl: Ammo count
                             Ped p8 = Game.Player?.Character;
                             if (p8 != null && p8.Exists()) _combat.AnnounceAmmo(p8);
                         }
@@ -1093,11 +1099,10 @@ namespace GrandTheftAccessibility
                         }
                         break;
 
-                    case Keys.NumPad9 when keyIndex >= 0 && keyIndex < _keyStates.Length && !_keyStates[keyIndex]:
-                        _keyStates[keyIndex] = true;
+                    case AccessibilityCommand.MenuNext:
                         if (_controlHeld)
                         {
-                            // Ctrl+NumPad9: Mission objective location
+                            // Ctrl: Mission objective location
                             Ped p9 = Game.Player?.Character;
                             if (p9 != null && p9.Exists()) _blips.AnnounceMissionBlip(p9.Position);
                         }
@@ -1109,9 +1114,7 @@ namespace GrandTheftAccessibility
                         }
                         break;
 
-                    case Keys.Decimal when keyIndex >= 0 && keyIndex < _keyStates.Length && !_keyStates[keyIndex]:
-                        _keyStates[keyIndex] = true;
-                        // Back/Exit submenu
+                    case AccessibilityCommand.Back:
                         if (_menu.HasActiveSubmenu())
                         {
                             PlayFrontendSound("BACK", "HUD_FRONTEND_DEFAULT_SOUNDSET");
@@ -1120,14 +1123,14 @@ namespace GrandTheftAccessibility
                         }
                         else if (_controlHeld)
                         {
-                            // Ctrl+Decimal: Time with minutes (moved from Ctrl+NumPad0)
-                            TimeSpan time = World.CurrentTimeOfDay;
-                            string minuteStr = time.Minutes < 10 ? $"0{time.Minutes}" : time.Minutes.ToString();
-                            _audio.Speak($"The time is: {time.Hours}:{minuteStr}");
+                            // Ctrl: Time with minutes
+                            GameClockTime time = GameClock.TimeOfDay;
+                            string minuteStr = time.Minute < 10 ? $"0{time.Minute}" : time.Minute.ToString();
+                            _audio.Speak($"The time is: {time.Hour}:{minuteStr}");
                         }
                         else
                         {
-                            // Show heading (moved from Decimal alone - now requires no submenu active)
+                            // Show heading (requires no submenu active)
                             Ped player = Game.Player?.Character;
                             if (player != null && player.Exists())
                             {
@@ -1145,28 +1148,6 @@ namespace GrandTheftAccessibility
         }
 
         /// <summary>
-        /// Get array index for a key code
-        /// </summary>
-        private int GetIndexForKey(Keys key)
-        {
-            switch (key)
-            {
-                case Keys.NumPad0: return 0;
-                case Keys.NumPad1: return 1;
-                case Keys.NumPad2: return 2;
-                case Keys.NumPad3: return 3;
-                case Keys.NumPad4: return 4;
-                case Keys.NumPad5: return 5;
-                case Keys.NumPad6: return 6;
-                case Keys.NumPad7: return 7;
-                case Keys.NumPad8: return 8;
-                case Keys.NumPad9: return 9;
-                case Keys.Decimal: return 10;
-                default: return -1;
-            }
-        }
-
-        /// <summary>
         /// Key up event handler
         /// </summary>
         private void OnKeyUp(object sender, KeyEventArgs e)
@@ -1178,11 +1159,15 @@ namespace GrandTheftAccessibility
                     _controlHeld = false;
                 }
 
-                // Reset key states with bounds checking
-                int keyIndex = GetIndexForKey(e.KeyCode);
-                if (keyIndex >= 0 && keyIndex < _keyStates.Length)
+                // Reset key-repeat state for whichever command this key maps to
+                AccessibilityCommand command = _hotkeys.GetCommand(e.KeyCode);
+                if (command != AccessibilityCommand.None)
                 {
-                    _keyStates[keyIndex] = false;
+                    int keyIndex = (int)command;
+                    if (keyIndex >= 0 && keyIndex < _keyStates.Length)
+                    {
+                        _keyStates[keyIndex] = false;
+                    }
                 }
             }
             catch (Exception ex)
@@ -1190,6 +1175,10 @@ namespace GrandTheftAccessibility
                 Logger.Exception(ex, "OnKeyUp");
             }
         }
+
+        #endregion
+
+        #region Shutdown
 
         /// <summary>
         /// Cleanup when script is unloaded - prevents resource leaks
@@ -1220,11 +1209,15 @@ namespace GrandTheftAccessibility
             }
         }
 
+        #endregion
+
+        #region Key Command Handlers
+
         /// <summary>
-        /// Handle NumPad0 (location/time info)
-        /// Ctrl+NumPad0 = heading (moved from Decimal)
+        /// Handle the location info command - NumPad 0 or Y
+        /// (Ctrl = toggle pedestrian navigation to waypoint)
         /// </summary>
-        private void HandleNumPad0(bool controlHeld)
+        private void HandleLocationInfo(bool controlHeld)
         {
             try
             {
@@ -1266,7 +1259,7 @@ namespace GrandTheftAccessibility
             }
             catch (Exception ex)
             {
-                Logger.Exception(ex, "HandleNumPad0");
+                Logger.Exception(ex, "HandleLocationInfo");
                 _audio.Speak("Location unavailable");
             }
         }
@@ -1390,5 +1383,6 @@ namespace GrandTheftAccessibility
             }
         }
 
+        #endregion
     }
 }

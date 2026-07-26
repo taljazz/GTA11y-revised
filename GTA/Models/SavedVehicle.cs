@@ -8,6 +8,8 @@ namespace GrandTheftAccessibility
     /// </summary>
     public class SavedVehicle
     {
+        #region Identity and Mods
+
         /// <summary>
         /// Vehicle display name (e.g., "Zentorno")
         /// </summary>
@@ -23,6 +25,10 @@ namespace GrandTheftAccessibility
         /// -1 means stock/no mod for that slot
         /// </summary>
         public Dictionary<int, int> Mods { get; set; }
+
+        #endregion
+
+        #region Colors and Appearance
 
         /// <summary>
         /// Primary color (VehicleColor enum value)
@@ -109,6 +115,10 @@ namespace GrandTheftAccessibility
         public int CustomSecondaryB { get; set; }
         public bool HasCustomSecondaryColor { get; set; }
 
+        #endregion
+
+        #region Construction and Summary
+
         /// <summary>
         /// Create empty saved vehicle
         /// </summary>
@@ -142,5 +152,7 @@ namespace GrandTheftAccessibility
 
             return string.Join(", ", parts);
         }
+
+        #endregion
     }
 }

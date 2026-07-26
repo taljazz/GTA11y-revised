@@ -11,6 +11,8 @@ namespace GrandTheftAccessibility
     /// </summary>
     public class EmergencyVehicleHandler
     {
+        #region Fields
+
         private readonly AudioManager _audio;
         private readonly AnnouncementQueue _announcementQueue;
 
@@ -29,6 +31,10 @@ namespace GrandTheftAccessibility
         private Vector3 _emergencyVehiclePosition;
         private bool _emergencyApproachingFromBehind;
 
+        #endregion
+
+        #region Properties
+
         /// <summary>
         /// Whether currently yielding to an emergency vehicle
         /// </summary>
@@ -43,6 +49,10 @@ namespace GrandTheftAccessibility
         /// Position of the detected emergency vehicle
         /// </summary>
         public Vector3 EmergencyVehiclePosition => _emergencyVehiclePosition;
+
+        #endregion
+
+        #region Construction
 
         public EmergencyVehicleHandler(AudioManager audio, AnnouncementQueue announcementQueue)
         {
@@ -63,6 +73,10 @@ namespace GrandTheftAccessibility
             _emergencyApproachingFromBehind = false;
         }
 
+        #endregion
+
+        #region Emergency Detection and Yielding
+
         /// <summary>
         /// Check for emergency vehicles with sirens and yield
         /// </summary>
@@ -73,13 +87,13 @@ namespace GrandTheftAccessibility
         /// <param name="onResume">Callback to resume driving when emergency passes</param>
         /// <returns>True if yielding, false otherwise</returns>
         public bool CheckEmergencyVehicles(Vehicle vehicle, Vector3 position, long currentTick,
-            int drivingStyleMode, Action<Vehicle, long> onResume)
+            DrivingStyleMode drivingStyleMode, Action<Vehicle, long> onResume)
         {
             if (vehicle == null || !vehicle.Exists())
                 return _yieldingToEmergency;
 
             // RECKLESS MODE: Skip emergency vehicle yielding
-            if (drivingStyleMode == Constants.DRIVING_STYLE_MODE_RECKLESS)
+            if (drivingStyleMode == DrivingStyleMode.Reckless)
             {
                 if (_yieldingToEmergency)
                 {
@@ -273,5 +287,7 @@ namespace GrandTheftAccessibility
                 }
             }
         }
+
+        #endregion
     }
 }

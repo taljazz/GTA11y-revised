@@ -10,6 +10,8 @@ namespace GrandTheftAccessibility
     /// </summary>
     public class EnvironmentalManager
     {
+        #region Fields
+
         // PERFORMANCE: Pre-cached Hash values to avoid repeated casting
         private static readonly Hash _setVehicleLightsHash = (Hash)Constants.NATIVE_SET_VEHICLE_LIGHTS;
 
@@ -21,10 +23,18 @@ namespace GrandTheftAccessibility
         private long _lastTimeCheckTick;
         private bool _headlightsOn;
 
+        #endregion
+
+        #region Properties
+
         /// <summary>
         /// Current time-based speed multiplier
         /// </summary>
         public float TimeSpeedMultiplier => _timeSpeedMultiplier;
+
+        #endregion
+
+        #region Construction
 
         public EnvironmentalManager(AnnouncementQueue announcementQueue)
         {
@@ -43,6 +53,10 @@ namespace GrandTheftAccessibility
             _headlightsOn = false;
         }
 
+        #endregion
+
+        #region Time of Day and Headlights
+
         /// <summary>
         /// Check time of day and adjust headlights
         /// </summary>
@@ -58,7 +72,7 @@ namespace GrandTheftAccessibility
 
             try
             {
-                int hour = World.CurrentTimeOfDay.Hours;
+                int hour = GTA.Chrono.GameClock.Hour;
                 int newTimeOfDay;
                 float newMultiplier;
 
@@ -89,6 +103,9 @@ namespace GrandTheftAccessibility
 
                     if (Math.Abs(newMultiplier - _timeSpeedMultiplier) > 0.05f)
                     {
+                        // Capture the old multiplier BEFORE updating so the daylight
+                        // announcement can detect that speed was previously reduced
+                        float previousMultiplier = _timeSpeedMultiplier;
                         _timeSpeedMultiplier = newMultiplier;
 
                         if (newTimeOfDay == 2)
@@ -96,7 +113,7 @@ namespace GrandTheftAccessibility
                             _announcementQueue.TryAnnounce("Night driving, reducing speed",
                                 Constants.ANNOUNCE_PRIORITY_LOW, currentTick, "announceTimeOfDay");
                         }
-                        else if (newTimeOfDay == 0 && _timeSpeedMultiplier < 1.0f)
+                        else if (newTimeOfDay == 0 && previousMultiplier < 1.0f)
                         {
                             _announcementQueue.TryAnnounce("Daylight, resuming normal speed",
                                 Constants.ANNOUNCE_PRIORITY_LOW, currentTick, "announceTimeOfDay");
@@ -138,5 +155,6 @@ namespace GrandTheftAccessibility
             }
         }
 
+        #endregion
     }
 }

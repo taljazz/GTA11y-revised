@@ -3,26 +3,22 @@ using System.Collections.Generic;
 using System.Drawing;
 using GTA;
 using GTA.Native;
-using DavyKager;
 
 namespace GrandTheftAccessibility.Menus
 {
     /// <summary>
     /// Comprehensive vehicle modification menu supporting all mod types including
-    /// weaponized vehicles, Benny's customs, colors, and special modifications.
+    /// Benny's customs, colors, liveries, and special modifications.
+    /// Top level = mod categories, submenu = the options within a category.
+    /// Modernized onto the typed SHVDN VehicleModCollection API: mod types are the
+    /// VehicleModType enum, categories use game-localized names where available,
+    /// wheel categories are filtered to AllowedWheelTypes, and property-based
+    /// liveries (police cars, Titan, ...) are supported alongside mod-slot liveries.
+    /// Overrides SubmenuMinIndex because standard mods use -1 for "Stock".
     /// </summary>
-    public class VehicleModMenu : IMenuState
+    public class VehicleModMenu : HierarchicalMenuBase
     {
-        private readonly Vehicle _vehicle;
-        private readonly SettingsManager _settings;
-
-        // Available mod categories that have options for this vehicle
-        private readonly List<ModCategory> _categories;
-        private int _currentCategoryIndex;
-
-        // Submenu state (mod selection within category)
-        private bool _inSubmenu;
-        private int _currentModIndex;
+        #region Types
 
         /// <summary>
         /// Represents a mod category with available options
@@ -30,69 +26,146 @@ namespace GrandTheftAccessibility.Menus
         private class ModCategory
         {
             public string Name { get; }
-            public int ModType { get; }          // VehicleModType enum value (-ve for special types)
-            public int ModCount { get; }         // Number of available mods
-            public bool IsToggle { get; }        // True for Turbo, Xenon, etc.
+            public VehicleModType ModType { get; }   // For Standard and Horn categories
+            public int OptionCount { get; }          // Number of selectable options
             public VehicleToggleModType? ToggleType { get; }
-            public CategoryType Type { get; }    // Type of category for special handling
+            public CategoryType Type { get; }        // Type of category for special handling
 
             public enum CategoryType
             {
-                Standard,       // Regular GET_VEHICLE_MOD based
-                Toggle,         // VehicleToggleModType based
-                Neons,          // Neon lights
-                WheelType,      // Wheel category selection
-                WindowTint,     // Window tint
-                PrimaryColor,   // Primary vehicle color
-                SecondaryColor, // Secondary vehicle color
-                PearlescentColor, // Pearlescent color
-                RimColor,       // Wheel rim color
-                NeonColor,      // Neon light color
-                TireSmokeColor, // Tire smoke color
-                Horn,           // Special handling for horns
-                PlateStyle      // License plate style
+                Standard,        // VehicleModType slot based (spoiler, engine, ...)
+                Toggle,          // VehicleToggleModType based (turbo, xenon)
+                Neons,           // Neon light layout
+                WheelType,       // Wheel category selection (AllowedWheelTypes-filtered)
+                WindowTint,      // Window tint
+                PrimaryColor,    // Primary vehicle color
+                SecondaryColor,  // Secondary vehicle color
+                PearlescentColor,// Pearlescent color
+                RimColor,        // Wheel rim color
+                TrimColor,       // Interior trim color (Benny's)
+                DashboardColor,  // Dashboard color (Benny's)
+                NeonColor,       // Neon light color
+                TireSmokeColor,  // Tire smoke color
+                Horn,            // Horns with curated names
+                PlateStyle,      // License plate style
+                LiveryProperty   // Property-based livery (GET_VEHICLE_LIVERY vehicles)
             }
 
-            // Standard mod category
-            public ModCategory(string name, int modType, int modCount)
+            // Standard mod slot category
+            public ModCategory(string name, VehicleModType modType, int optionCount)
             {
                 Name = name;
                 ModType = modType;
-                ModCount = modCount;
-                IsToggle = false;
+                OptionCount = optionCount;
                 ToggleType = null;
-                Type = CategoryType.Standard;
+                Type = modType == VehicleModType.Horns ? CategoryType.Horn : CategoryType.Standard;
             }
 
             // Toggle mod category
             public ModCategory(string name, VehicleToggleModType toggleType)
             {
                 Name = name;
-                ModType = -1;
-                ModCount = 2; // On/Off
-                IsToggle = true;
+                ModType = VehicleModType.None;
+                OptionCount = 2; // On/Off
                 ToggleType = toggleType;
                 Type = CategoryType.Toggle;
             }
 
-            // Special category (neons, colors, etc.)
-            public ModCategory(string name, CategoryType type, int modCount)
+            // Special category (neons, colors, wheel type, livery, ...)
+            public ModCategory(string name, CategoryType type, int optionCount)
             {
                 Name = name;
-                ModType = (int)type * -10; // Unique negative value
-                ModCount = modCount;
-                IsToggle = false;
+                ModType = VehicleModType.None;
+                OptionCount = optionCount;
                 ToggleType = null;
                 Type = type;
             }
         }
 
-        public VehicleModMenu(Vehicle vehicle, SettingsManager settings)
+        #endregion
+
+        #region Constants
+
+        // Mod slots the game supports but the SHVDN enum does not name.
+        // 47 = right door variants on some vehicles, 49 = light bar (emergency vehicles).
+        private const VehicleModType MOD_TYPE_RIGHT_DOOR = (VehicleModType)47;
+        private const VehicleModType MOD_TYPE_LIGHT_BAR = (VehicleModType)49;
+
+        // Standard mod slots offered when the vehicle has options for them,
+        // in spoken menu order: performance first, then body, then interior.
+        private static readonly KeyValuePair<string, VehicleModType>[] StandardSlots =
+        {
+            // Performance (most commonly used)
+            new KeyValuePair<string, VehicleModType>("Engine", VehicleModType.Engine),
+            new KeyValuePair<string, VehicleModType>("Transmission", VehicleModType.Transmission),
+            new KeyValuePair<string, VehicleModType>("Brakes", VehicleModType.Brakes),
+            new KeyValuePair<string, VehicleModType>("Suspension", VehicleModType.Suspension),
+            new KeyValuePair<string, VehicleModType>("Armor", VehicleModType.Armor),
+
+            // Body
+            new KeyValuePair<string, VehicleModType>("Spoiler", VehicleModType.Spoilers),
+            new KeyValuePair<string, VehicleModType>("Front Bumper", VehicleModType.FrontBumper),
+            new KeyValuePair<string, VehicleModType>("Rear Bumper", VehicleModType.RearBumper),
+            new KeyValuePair<string, VehicleModType>("Side Skirt", VehicleModType.SideSkirt),
+            new KeyValuePair<string, VehicleModType>("Exhaust", VehicleModType.Exhaust),
+            new KeyValuePair<string, VehicleModType>("Frame", VehicleModType.Frame),
+            new KeyValuePair<string, VehicleModType>("Grille", VehicleModType.Grille),
+            new KeyValuePair<string, VehicleModType>("Hood", VehicleModType.Hood),
+            new KeyValuePair<string, VehicleModType>("Left Fender", VehicleModType.Fender),
+            new KeyValuePair<string, VehicleModType>("Right Fender", VehicleModType.RightFender),
+            new KeyValuePair<string, VehicleModType>("Roof", VehicleModType.Roof),
+            new KeyValuePair<string, VehicleModType>("Left Door", VehicleModType.Windows),
+            new KeyValuePair<string, VehicleModType>("Right Door", MOD_TYPE_RIGHT_DOOR),
+
+            // Wheels
+            new KeyValuePair<string, VehicleModType>("Front Wheels", VehicleModType.FrontWheel),
+            new KeyValuePair<string, VehicleModType>("Rear Wheels", VehicleModType.RearWheel),
+
+            // Interior / Benny's
+            new KeyValuePair<string, VehicleModType>("Plate Holder", VehicleModType.PlateHolder),
+            new KeyValuePair<string, VehicleModType>("Vanity Plate", VehicleModType.VanityPlates),
+            new KeyValuePair<string, VehicleModType>("Trim Design", VehicleModType.TrimDesign),
+            new KeyValuePair<string, VehicleModType>("Ornaments", VehicleModType.Ornaments),
+            new KeyValuePair<string, VehicleModType>("Dashboard", VehicleModType.Dashboard),
+            new KeyValuePair<string, VehicleModType>("Dial Design", VehicleModType.DialDesign),
+            new KeyValuePair<string, VehicleModType>("Door Speaker", VehicleModType.DoorSpeakers),
+            new KeyValuePair<string, VehicleModType>("Seats", VehicleModType.Seats),
+            new KeyValuePair<string, VehicleModType>("Steering Wheel", VehicleModType.SteeringWheels),
+            new KeyValuePair<string, VehicleModType>("Shift Lever", VehicleModType.ColumnShifterLevers),
+            new KeyValuePair<string, VehicleModType>("Plaques", VehicleModType.Plaques),
+            new KeyValuePair<string, VehicleModType>("Speakers", VehicleModType.Speakers),
+            new KeyValuePair<string, VehicleModType>("Trunk", VehicleModType.Trunk),
+            new KeyValuePair<string, VehicleModType>("Hydraulics", VehicleModType.Hydraulics),
+            new KeyValuePair<string, VehicleModType>("Engine Block", VehicleModType.EngineBlock),
+            new KeyValuePair<string, VehicleModType>("Air Filter", VehicleModType.AirFilter),
+            new KeyValuePair<string, VehicleModType>("Strut Bar", VehicleModType.Struts),
+            new KeyValuePair<string, VehicleModType>("Arch Cover", VehicleModType.ArchCover),
+            new KeyValuePair<string, VehicleModType>("Antenna", VehicleModType.Aerials),
+            new KeyValuePair<string, VehicleModType>("Exterior Parts", VehicleModType.Trim),
+            new KeyValuePair<string, VehicleModType>("Tank", VehicleModType.Tank),
+        };
+
+        #endregion
+
+        #region Fields
+
+        private readonly Vehicle _vehicle;
+        private readonly SettingsManager _settings;
+
+        // Available mod categories that have options for this vehicle
+        private readonly List<ModCategory> _categories;
+
+        // Wheel categories this vehicle actually supports (AllowedWheelTypes)
+        private VehicleWheelType[] _allowedWheelTypes = new VehicleWheelType[0];
+
+        #endregion
+
+        #region Construction
+
+        public VehicleModMenu(Vehicle vehicle, SettingsManager settings, AudioManager audio) : base(audio)
         {
             _vehicle = vehicle;
             _settings = settings;
-            _inSubmenu = false;
-            _currentModIndex = 0;
             _categories = new List<ModCategory>();
 
             if (_vehicle == null)
@@ -102,207 +175,204 @@ namespace GrandTheftAccessibility.Menus
             _vehicle.Mods.InstallModKit();
 
             BuildModCategories();
-            _currentCategoryIndex = 0;
         }
 
         /// <summary>
-        /// Build the list of available mod categories for this vehicle
+        /// Build the list of available mod categories for this vehicle using the
+        /// typed VehicleModCollection API. Categories with no options are skipped.
         /// </summary>
         private void BuildModCategories()
         {
-            // ===== PERFORMANCE MODS (Most commonly used) =====
-            AddModCategoryIfAvailable("Engine", 11);
-            AddModCategoryIfAvailable("Transmission", 13);
-            AddModCategoryIfAvailable("Brakes", 12);
-            AddModCategoryIfAvailable("Suspension", 15);
-            AddModCategoryIfAvailable("Armor", 16);
+            VehicleModCollection mods = _vehicle.Mods;
 
-            // Toggle performance mods
+            // ===== STANDARD MOD SLOTS (performance, body, wheels, interior) =====
+            foreach (var slot in StandardSlots)
+            {
+                AddStandardCategoryIfAvailable(slot.Key, slot.Value);
+            }
+
+            // Toggle performance mod
             _categories.Add(new ModCategory("Turbo", VehicleToggleModType.Turbo));
 
-            // Nitrous (if available)
-            AddModCategoryIfAvailable("Nitrous", 17);
-
-            // Note: Weaponized vehicle mods (Primary Weapon, Secondary Weapon, Countermeasures, etc.)
-            // are NOT accessible through GET_NUM_VEHICLE_MODS/SET_VEHICLE_MOD natives.
-            // They require the in-game Vehicle Workshop (Facility, MOC, Avenger) to modify.
-            // The standard mod type system only goes up to index 48 (Livery).
-
-            // ===== APPEARANCE - BODY =====
-            AddModCategoryIfAvailable("Spoiler", 0);
-            AddModCategoryIfAvailable("Front Bumper", 1);
-            AddModCategoryIfAvailable("Rear Bumper", 2);
-            AddModCategoryIfAvailable("Side Skirt", 3);
-            AddModCategoryIfAvailable("Exhaust", 4);
-            AddModCategoryIfAvailable("Frame", 5);
-            AddModCategoryIfAvailable("Grille", 6);
-            AddModCategoryIfAvailable("Hood", 7);
-            AddModCategoryIfAvailable("Left Fender", 8);
-            AddModCategoryIfAvailable("Right Fender", 9);
-            AddModCategoryIfAvailable("Roof", 10);
-            AddModCategoryIfAvailable("Left Door", 46);
-            AddModCategoryIfAvailable("Right Door", 47);
-
-            // ===== WHEELS =====
-            AddModCategoryIfAvailable("Front Wheels", 23);
-            AddModCategoryIfAvailable("Rear Wheels", 24);
-
-            // Wheel type selection (always available for wheeled vehicles)
-            VehicleClass vClass = _vehicle.ClassType;
-            bool hasWheels = vClass != VehicleClass.Boats && vClass != VehicleClass.Helicopters && vClass != VehicleClass.Planes;
-            if (hasWheels)
+            // ===== WHEEL TYPE (filtered to categories this vehicle allows) =====
+            try
             {
-                _categories.Add(new ModCategory("Wheel Type", ModCategory.CategoryType.WheelType, Constants.WHEEL_TYPE_COUNT));
+                _allowedWheelTypes = mods.AllowedWheelTypes ?? new VehicleWheelType[0];
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug($"AllowedWheelTypes unavailable: {ex.Message}");
+                _allowedWheelTypes = new VehicleWheelType[0];
             }
 
-            // ===== INTERIOR / BENNY'S MODS =====
-            AddModCategoryIfAvailable("Plate Holder", 25);
-            AddModCategoryIfAvailable("Vanity Plate", 26);
-            AddModCategoryIfAvailable("Trim", 27);
-            AddModCategoryIfAvailable("Ornaments", 28);
-            AddModCategoryIfAvailable("Dashboard", 29);
-            AddModCategoryIfAvailable("Dial Design", 30);
-            AddModCategoryIfAvailable("Door Speaker", 31);
-            AddModCategoryIfAvailable("Seats", 32);
-            AddModCategoryIfAvailable("Steering Wheel", 33);
-            AddModCategoryIfAvailable("Shift Lever", 34);
-            AddModCategoryIfAvailable("Plaques", 35);
-            AddModCategoryIfAvailable("Speakers", 36);
-            AddModCategoryIfAvailable("Trunk", 37);
-            AddModCategoryIfAvailable("Hydraulics", 38);
-            AddModCategoryIfAvailable("Engine Block", 39);
-            AddModCategoryIfAvailable("Air Filter", 40);
-            AddModCategoryIfAvailable("Strut Bar", 41);
-            AddModCategoryIfAvailable("Arch Cover", 42);
-            AddModCategoryIfAvailable("Antenna", 43);
-            AddModCategoryIfAvailable("Exterior Parts", 44);
-            AddModCategoryIfAvailable("Tank", 45);
-
-            // ===== HORN =====
-            int hornCount = Function.Call<int>(Hash.GET_NUM_VEHICLE_MODS, _vehicle, 14);
-            if (hornCount > 0)
+            if (_allowedWheelTypes.Length > 1)
             {
-                _categories.Add(new ModCategory("Horn", ModCategory.CategoryType.Horn, hornCount));
+                _categories.Add(new ModCategory("Wheel Type", ModCategory.CategoryType.WheelType, _allowedWheelTypes.Length));
             }
+
+            // ===== HORN (typed slot, curated names) =====
+            AddStandardCategoryIfAvailable("Horn", VehicleModType.Horns);
 
             // ===== LIGHTS =====
             _categories.Add(new ModCategory("Xenon Headlights", VehicleToggleModType.XenonHeadlights));
-            AddModCategoryIfAvailable("Light Bar", 49);
+            AddStandardCategoryIfAvailable("Light Bar", MOD_TYPE_LIGHT_BAR);
 
             // Neons (if supported)
-            if (_vehicle.Mods.HasNeonLights)
+            if (mods.HasNeonLights)
             {
-                _categories.Add(new ModCategory("Neon Lights", ModCategory.CategoryType.Neons, 6));
+                _categories.Add(new ModCategory("Neon Lights", ModCategory.CategoryType.Neons, 7));
                 _categories.Add(new ModCategory("Neon Color", ModCategory.CategoryType.NeonColor, 15));
             }
 
             // ===== LIVERY =====
-            AddModCategoryIfAvailable("Livery", 48);
+            // Property-based liveries (police cars, Titan, many service vehicles)
+            // take priority; fall back to the livery mod slot when absent.
+            int liveryCount = 0;
+            try { liveryCount = mods.LiveryCount; } catch { /* Not all vehicles report */ }
+
+            if (liveryCount > 0)
+            {
+                _categories.Add(new ModCategory("Livery", ModCategory.CategoryType.LiveryProperty, liveryCount));
+            }
+            else
+            {
+                AddStandardCategoryIfAvailable("Livery", VehicleModType.Livery);
+            }
 
             // ===== COLORS =====
             _categories.Add(new ModCategory("Primary Color", ModCategory.CategoryType.PrimaryColor, 161));
             _categories.Add(new ModCategory("Secondary Color", ModCategory.CategoryType.SecondaryColor, 161));
             _categories.Add(new ModCategory("Pearlescent", ModCategory.CategoryType.PearlescentColor, 161));
             _categories.Add(new ModCategory("Rim Color", ModCategory.CategoryType.RimColor, 161));
+            _categories.Add(new ModCategory("Trim Color", ModCategory.CategoryType.TrimColor, 161));
+            _categories.Add(new ModCategory("Dashboard Color", ModCategory.CategoryType.DashboardColor, 161));
 
             // Window tint
             _categories.Add(new ModCategory("Window Tint", ModCategory.CategoryType.WindowTint, 7));
 
-            // Tire smoke color (if available)
-            int tireSmokeCount = Function.Call<int>(Hash.GET_NUM_VEHICLE_MODS, _vehicle, 20);
-            if (tireSmokeCount > 0)
-            {
-                _categories.Add(new ModCategory("Tire Smoke Color", ModCategory.CategoryType.TireSmokeColor, 10));
-            }
+            // Tire smoke color (applies once tire smoke is installed)
+            _categories.Add(new ModCategory("Tire Smoke Color", ModCategory.CategoryType.TireSmokeColor, 15));
 
             // License plate style
             _categories.Add(new ModCategory("Plate Style", ModCategory.CategoryType.PlateStyle, 6));
         }
 
-        private void AddModCategoryIfAvailable(string name, int modType)
+        /// <summary>
+        /// Add a standard mod slot category when the vehicle has options for it.
+        /// Prefers the game's localized category name over our fallback.
+        /// </summary>
+        private void AddStandardCategoryIfAvailable(string fallbackName, VehicleModType modType)
         {
             try
             {
-                int count = Function.Call<int>(Hash.GET_NUM_VEHICLE_MODS, _vehicle, modType);
-                if (count > 0)
+                VehicleMod mod = _vehicle.Mods[modType];
+                int count = mod.Count;
+                if (count <= 0)
+                    return;
+
+                string name = fallbackName;
+                try
                 {
-                    _categories.Add(new ModCategory(name, modType, count));
+                    string localized = mod.LocalizedTypeName;
+                    if (!string.IsNullOrEmpty(localized) && localized != "NULL")
+                        name = localized;
                 }
+                catch
+                {
+                    // Keep the fallback name
+                }
+
+                _categories.Add(new ModCategory(name, modType, count));
             }
-            catch (Exception ex) { Logger.Debug($"Mod type {modType} ({name}) not available: {ex.Message}"); }
+            catch (Exception ex)
+            {
+                Logger.Debug($"Mod type {modType} ({fallbackName}) not available: {ex.Message}");
+            }
         }
 
-        public void NavigatePrevious(bool fastScroll = false)
+        #endregion
+
+        #region Top Level - categories
+
+        protected override int ItemCount => _categories.Count;
+
+        protected override string EmptyMenuText => "No modifications available";
+
+        protected override string GetItemText(int index)
         {
-            if (_categories.Count == 0)
-                return;
-
-            if (_inSubmenu)
-            {
-                ModCategory category = _categories[_currentCategoryIndex];
-                int maxIndex = GetMaxModIndex(category);
-                int minIndex = GetMinModIndex(category);
-                int step = fastScroll ? 10 : 1;
-
-                _currentModIndex -= step;
-                if (_currentModIndex < minIndex)
-                    _currentModIndex = maxIndex;
-            }
-            else
-            {
-                if (_currentCategoryIndex > 0)
-                    _currentCategoryIndex--;
-                else
-                    _currentCategoryIndex = _categories.Count - 1;
-            }
+            ModCategory category = _categories[index];
+            string currentValue = GetCurrentModValue(category);
+            return $"{category.Name}: {currentValue}";
         }
 
-        public void NavigateNext(bool fastScroll = false)
+        protected override void OnItemActivated(int index)
         {
-            if (_categories.Count == 0)
-                return;
+            // Enter submenu positioned at the currently installed option
+            ModCategory category = _categories[index];
+            EnterSubmenu(GetCurrentModIndex(category));
+        }
 
-            if (_inSubmenu)
+        public override string GetMenuName()
+        {
+            if (InSubmenu && _categories.Count > 0)
             {
-                ModCategory category = _categories[_currentCategoryIndex];
-                int maxIndex = GetMaxModIndex(category);
-                int minIndex = GetMinModIndex(category);
-                int step = fastScroll ? 10 : 1;
-
-                _currentModIndex += step;
-                if (_currentModIndex > maxIndex)
-                    _currentModIndex = minIndex;
+                return _categories[SelectedIndex].Name;
             }
-            else
+            return "Vehicle Mods";
+        }
+
+        #endregion
+
+        #region Submenu - mod options
+
+        private ModCategory CurrentCategory =>
+            _categories.Count > 0 ? _categories[SelectedIndex] : null;
+
+        protected override int SubmenuMinIndex
+        {
+            get
             {
-                if (_currentCategoryIndex < _categories.Count - 1)
-                    _currentCategoryIndex++;
-                else
-                    _currentCategoryIndex = 0;
+                ModCategory category = CurrentCategory;
+                return category != null ? GetMinModIndex(category) : 0;
             }
         }
+
+        protected override int SubmenuItemCount
+        {
+            get
+            {
+                ModCategory category = CurrentCategory;
+                if (category == null) return 0;
+                return GetMaxModIndex(category) - GetMinModIndex(category) + 1;
+            }
+        }
+
+        protected override int SubmenuFastScrollStep => 10;
+
+        protected override string GetSubmenuItemText(int index)
+        {
+            return GetModOptionText(CurrentCategory, index);
+        }
+
+        protected override void OnSubmenuItemActivated(int index)
+        {
+            ApplyMod(index);
+        }
+
+        #endregion
+
+        #region Index Ranges
 
         private int GetMinModIndex(ModCategory category)
         {
             switch (category.Type)
             {
-                case ModCategory.CategoryType.WheelType:
-                case ModCategory.CategoryType.WindowTint:
-                case ModCategory.CategoryType.PrimaryColor:
-                case ModCategory.CategoryType.SecondaryColor:
-                case ModCategory.CategoryType.PearlescentColor:
-                case ModCategory.CategoryType.RimColor:
-                case ModCategory.CategoryType.NeonColor:
-                case ModCategory.CategoryType.TireSmokeColor:
-                case ModCategory.CategoryType.PlateStyle:
-                case ModCategory.CategoryType.Horn:
-                    return 0;
-                case ModCategory.CategoryType.Toggle:
-                    return 0;
                 case ModCategory.CategoryType.Neons:
                     return -1; // All off option
+                case ModCategory.CategoryType.Standard:
+                    return -1; // Stock option for regular mod slots
                 default:
-                    return -1; // Stock option for regular mods
+                    return 0;
             }
         }
 
@@ -313,50 +383,37 @@ namespace GrandTheftAccessibility.Menus
                 case ModCategory.CategoryType.Toggle:
                     return 1;
                 case ModCategory.CategoryType.Neons:
-                    return 5; // Off, Left, Right, Front, Back, All
-                case ModCategory.CategoryType.WheelType:
-                    return Constants.WHEEL_TYPE_COUNT - 1;
+                    return 5; // Off, Left, Right, Front, Back, All, Front+Back
                 case ModCategory.CategoryType.WindowTint:
                     return 6; // 7 tint options (0-6)
                 case ModCategory.CategoryType.PrimaryColor:
                 case ModCategory.CategoryType.SecondaryColor:
                 case ModCategory.CategoryType.PearlescentColor:
                 case ModCategory.CategoryType.RimColor:
+                case ModCategory.CategoryType.TrimColor:
+                case ModCategory.CategoryType.DashboardColor:
                     return 160; // 161 colors (0-160)
                 case ModCategory.CategoryType.NeonColor:
                 case ModCategory.CategoryType.TireSmokeColor:
                     return 14; // 15 preset colors
                 case ModCategory.CategoryType.PlateStyle:
                     return 5; // 6 plate styles (0-5)
-                case ModCategory.CategoryType.Horn:
-                    return category.ModCount - 1;
                 default:
-                    return category.ModCount - 1;
+                    // WheelType, Horn, LiveryProperty, Standard slots
+                    return category.OptionCount - 1;
             }
         }
 
-        public string GetCurrentItemText()
-        {
-            if (_categories.Count == 0)
-                return "No modifications available";
+        #endregion
 
-            if (_inSubmenu)
-            {
-                ModCategory category = _categories[_currentCategoryIndex];
-                return GetModOptionText(category, _currentModIndex);
-            }
-            else
-            {
-                ModCategory category = _categories[_currentCategoryIndex];
-                string currentValue = GetCurrentModValue(category);
-                return $"{category.Name}: {currentValue}";
-            }
-        }
+        #region Current Value Lookup
 
         private string GetCurrentModValue(ModCategory category)
         {
             if (_vehicle == null || !_vehicle.Exists())
                 return "N/A";
+
+            VehicleModCollection mods = _vehicle.Mods;
 
             try
             {
@@ -365,54 +422,75 @@ namespace GrandTheftAccessibility.Menus
                     case ModCategory.CategoryType.Toggle:
                         if (category.ToggleType.HasValue)
                         {
-                            bool installed = _vehicle.Mods[category.ToggleType.Value].IsInstalled;
+                            bool installed = mods[category.ToggleType.Value].IsInstalled;
                             return installed ? "On" : "Off";
                         }
                         return "N/A";
 
                     case ModCategory.CategoryType.Neons:
-                        bool anyNeon = _vehicle.Mods.IsNeonLightsOn(VehicleNeonLight.Left) ||
-                                       _vehicle.Mods.IsNeonLightsOn(VehicleNeonLight.Right) ||
-                                       _vehicle.Mods.IsNeonLightsOn(VehicleNeonLight.Front) ||
-                                       _vehicle.Mods.IsNeonLightsOn(VehicleNeonLight.Back);
+                        bool anyNeon = mods.IsNeonLightsOn(VehicleNeonLight.Left) ||
+                                       mods.IsNeonLightsOn(VehicleNeonLight.Right) ||
+                                       mods.IsNeonLightsOn(VehicleNeonLight.Front) ||
+                                       mods.IsNeonLightsOn(VehicleNeonLight.Back);
                         return anyNeon ? "On" : "Off";
 
                     case ModCategory.CategoryType.WheelType:
-                        return Constants.GetWheelTypeName((int)_vehicle.Mods.WheelType);
+                        return GetWheelTypeDisplayName(mods.WheelType);
 
                     case ModCategory.CategoryType.WindowTint:
-                        return GetWindowTintName((int)_vehicle.Mods.WindowTint);
+                        return GetWindowTintName((int)mods.WindowTint);
 
                     case ModCategory.CategoryType.PrimaryColor:
-                        return GetColorName((int)_vehicle.Mods.PrimaryColor);
+                        return GetColorName((int)mods.PrimaryColor);
 
                     case ModCategory.CategoryType.SecondaryColor:
-                        return GetColorName((int)_vehicle.Mods.SecondaryColor);
+                        return GetColorName((int)mods.SecondaryColor);
 
                     case ModCategory.CategoryType.PearlescentColor:
-                        return GetColorName((int)_vehicle.Mods.PearlescentColor);
+                        return GetColorName((int)mods.PearlescentColor);
 
                     case ModCategory.CategoryType.RimColor:
-                        return GetColorName((int)_vehicle.Mods.RimColor);
+                        return GetColorName((int)mods.RimColor);
+
+                    case ModCategory.CategoryType.TrimColor:
+                        return GetColorName((int)mods.TrimColor);
+
+                    case ModCategory.CategoryType.DashboardColor:
+                        return GetColorName((int)mods.DashboardColor);
 
                     case ModCategory.CategoryType.NeonColor:
-                        return GetNeonColorName(_vehicle.Mods.NeonLightsColor);
+                        return GetNeonColorName(mods.NeonLightsColor);
 
                     case ModCategory.CategoryType.TireSmokeColor:
-                        return GetTireSmokeColorName(_vehicle.Mods.TireSmokeColor);
+                        return GetTireSmokeColorName(mods.TireSmokeColor);
 
                     case ModCategory.CategoryType.PlateStyle:
-                        return GetPlateStyleName((int)_vehicle.Mods.LicensePlateStyle);
+                        return GetPlateStyleName((int)mods.LicensePlateStyle);
 
                     case ModCategory.CategoryType.Horn:
-                        int currentHorn = Function.Call<int>(Hash.GET_VEHICLE_MOD, _vehicle, 14);
-                        return Constants.GetHornName(currentHorn);
+                        return Constants.GetHornName(mods[VehicleModType.Horns].Index);
+
+                    case ModCategory.CategoryType.LiveryProperty:
+                        return GetLiveryPropertyName(mods.Livery);
 
                     default:
-                        int currentMod = Function.Call<int>(Hash.GET_VEHICLE_MOD, _vehicle, category.ModType);
-                        if (currentMod < 0)
+                        VehicleMod mod = mods[category.ModType];
+                        int currentIndex = mod.Index;
+                        if (currentIndex < 0)
                             return "Stock";
-                        return GetModLevelName(category.ModType, currentMod);
+
+                        // The typed API names the currently installed mod directly
+                        try
+                        {
+                            string localized = mod.LocalizedName;
+                            if (!string.IsNullOrEmpty(localized) && localized != "NULL")
+                                return localized;
+                        }
+                        catch
+                        {
+                            // Fall through to per-index label lookup
+                        }
+                        return GetModLevelName(category, currentIndex);
                 }
             }
             catch (Exception ex)
@@ -422,8 +500,92 @@ namespace GrandTheftAccessibility.Menus
             }
         }
 
+        private int GetCurrentModIndex(ModCategory category)
+        {
+            if (_vehicle == null || !_vehicle.Exists())
+                return 0;
+
+            VehicleModCollection mods = _vehicle.Mods;
+
+            try
+            {
+                switch (category.Type)
+                {
+                    case ModCategory.CategoryType.Toggle:
+                        if (category.ToggleType.HasValue)
+                            return mods[category.ToggleType.Value].IsInstalled ? 1 : 0;
+                        return 0;
+
+                    case ModCategory.CategoryType.Neons:
+                        bool all = mods.IsNeonLightsOn(VehicleNeonLight.Left) &&
+                                   mods.IsNeonLightsOn(VehicleNeonLight.Right) &&
+                                   mods.IsNeonLightsOn(VehicleNeonLight.Front) &&
+                                   mods.IsNeonLightsOn(VehicleNeonLight.Back);
+                        if (all) return 4;
+                        if (mods.IsNeonLightsOn(VehicleNeonLight.Left)) return 0;
+                        if (mods.IsNeonLightsOn(VehicleNeonLight.Right)) return 1;
+                        if (mods.IsNeonLightsOn(VehicleNeonLight.Front)) return 2;
+                        if (mods.IsNeonLightsOn(VehicleNeonLight.Back)) return 3;
+                        return -1;
+
+                    case ModCategory.CategoryType.WheelType:
+                        int wheelIndex = Array.IndexOf(_allowedWheelTypes, mods.WheelType);
+                        return wheelIndex >= 0 ? wheelIndex : 0;
+
+                    case ModCategory.CategoryType.WindowTint:
+                        return (int)mods.WindowTint;
+
+                    case ModCategory.CategoryType.PrimaryColor:
+                        return (int)mods.PrimaryColor;
+
+                    case ModCategory.CategoryType.SecondaryColor:
+                        return (int)mods.SecondaryColor;
+
+                    case ModCategory.CategoryType.PearlescentColor:
+                        return (int)mods.PearlescentColor;
+
+                    case ModCategory.CategoryType.RimColor:
+                        return (int)mods.RimColor;
+
+                    case ModCategory.CategoryType.TrimColor:
+                        return (int)mods.TrimColor;
+
+                    case ModCategory.CategoryType.DashboardColor:
+                        return (int)mods.DashboardColor;
+
+                    case ModCategory.CategoryType.NeonColor:
+                    case ModCategory.CategoryType.TireSmokeColor:
+                        return 0; // Start at first preset
+
+                    case ModCategory.CategoryType.PlateStyle:
+                        return (int)mods.LicensePlateStyle;
+
+                    case ModCategory.CategoryType.Horn:
+                        return Math.Max(0, mods[VehicleModType.Horns].Index);
+
+                    case ModCategory.CategoryType.LiveryProperty:
+                        return Math.Max(0, mods.Livery);
+
+                    default:
+                        return mods[category.ModType].Index;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug($"GetCurrentModIndex failed for {category.Name}: {ex.Message}");
+                return 0;
+            }
+        }
+
+        #endregion
+
+        #region Option Naming
+
         private string GetModOptionText(ModCategory category, int index)
         {
+            if (category == null)
+                return "(unavailable)";
+
             switch (category.Type)
             {
                 case ModCategory.CategoryType.Toggle:
@@ -443,7 +605,9 @@ namespace GrandTheftAccessibility.Menus
                     }
 
                 case ModCategory.CategoryType.WheelType:
-                    return Constants.GetWheelTypeName(index);
+                    if (index >= 0 && index < _allowedWheelTypes.Length)
+                        return GetWheelTypeDisplayName(_allowedWheelTypes[index]);
+                    return "Unknown";
 
                 case ModCategory.CategoryType.WindowTint:
                     return GetWindowTintName(index);
@@ -452,6 +616,8 @@ namespace GrandTheftAccessibility.Menus
                 case ModCategory.CategoryType.SecondaryColor:
                 case ModCategory.CategoryType.PearlescentColor:
                 case ModCategory.CategoryType.RimColor:
+                case ModCategory.CategoryType.TrimColor:
+                case ModCategory.CategoryType.DashboardColor:
                     return GetColorName(index);
 
                 case ModCategory.CategoryType.NeonColor:
@@ -464,19 +630,26 @@ namespace GrandTheftAccessibility.Menus
                 case ModCategory.CategoryType.Horn:
                     return Constants.GetHornName(index);
 
+                case ModCategory.CategoryType.LiveryProperty:
+                    return $"Livery {index + 1} of {category.OptionCount}";
+
                 default:
                     if (index < 0)
                         return "Stock";
-                    return GetModLevelName(category.ModType, index);
+                    return GetModLevelName(category, index);
             }
         }
 
-        private string GetModLevelName(int modType, int index)
+        /// <summary>
+        /// Get the display name for a specific mod option index.
+        /// The typed API only names the installed option, so browsing uses the
+        /// GET_MOD_TEXT_LABEL native for arbitrary indices, with a level fallback.
+        /// </summary>
+        private string GetModLevelName(ModCategory category, int index)
         {
-            // Try to get localized mod name from the game
             try
             {
-                string localizedLabel = Function.Call<string>(Hash.GET_MOD_TEXT_LABEL, _vehicle, modType, index);
+                string localizedLabel = Function.Call<string>(Hash.GET_MOD_TEXT_LABEL, _vehicle, (int)category.ModType, index);
                 if (!string.IsNullOrEmpty(localizedLabel) && localizedLabel != "NULL")
                 {
                     string displayName = Game.GetLocalizedString(localizedLabel);
@@ -486,15 +659,49 @@ namespace GrandTheftAccessibility.Menus
             }
             catch (Exception ex)
             {
-                Logger.Debug($"GetModLevelName failed for type {modType} index {index}: {ex.Message}");
+                Logger.Debug($"GetModLevelName failed for {category.Name} index {index}: {ex.Message}");
             }
 
-            // Fallback based on mod type
-            string typeName = Constants.GetModTypeName(modType);
-            return $"{typeName} Level {index + 1}";
+            // Fallback based on category name
+            return $"{category.Name} Level {index + 1}";
         }
 
-        // ===== COLOR AND STYLE HELPERS =====
+        /// <summary>
+        /// Game-localized wheel category name with a constants fallback.
+        /// </summary>
+        private string GetWheelTypeDisplayName(VehicleWheelType wheelType)
+        {
+            try
+            {
+                string localized = _vehicle.Mods.GetLocalizedWheelTypeName(wheelType);
+                if (!string.IsNullOrEmpty(localized) && localized != "NULL")
+                    return localized;
+            }
+            catch
+            {
+                // Fall through to constants fallback
+            }
+            return Constants.GetWheelTypeName((int)wheelType);
+        }
+
+        /// <summary>
+        /// Name for the currently applied property-based livery.
+        /// The game only names the installed livery, so browsing uses numbers.
+        /// </summary>
+        private string GetLiveryPropertyName(int liveryIndex)
+        {
+            try
+            {
+                string localized = _vehicle.Mods.LocalizedLiveryName;
+                if (!string.IsNullOrEmpty(localized) && localized != "NULL")
+                    return localized;
+            }
+            catch
+            {
+                // Fall through to numbered fallback
+            }
+            return $"Livery {liveryIndex + 1}";
+        }
 
         private static readonly string[] WindowTintNames = {
             "None", "Pure Black", "Dark Smoke", "Light Smoke", "Stock", "Limo", "Green"
@@ -618,239 +825,164 @@ namespace GrandTheftAccessibility.Menus
             return GetNeonColorName(color); // Same logic
         }
 
-        // ===== SELECTION EXECUTION =====
+        #endregion
 
-        public void ExecuteSelection()
-        {
-            if (_categories.Count == 0)
-                return;
+        #region Mod Application
 
-            if (_inSubmenu)
-            {
-                ApplyMod();
-            }
-            else
-            {
-                // Enter submenu
-                ModCategory category = _categories[_currentCategoryIndex];
-                _currentModIndex = GetCurrentModIndex(category);
-                _inSubmenu = true;
-            }
-        }
-
-        private int GetCurrentModIndex(ModCategory category)
+        private void ApplyMod(int modIndex)
         {
             if (_vehicle == null || !_vehicle.Exists())
-                return 0;
+            {
+                Speak("Vehicle no longer available");
+                return;
+            }
+
+            ModCategory category = CurrentCategory;
+            if (category == null)
+                return;
+
+            VehicleModCollection mods = _vehicle.Mods;
 
             try
             {
                 switch (category.Type)
                 {
                     case ModCategory.CategoryType.Toggle:
-                        if (category.ToggleType.HasValue)
-                            return _vehicle.Mods[category.ToggleType.Value].IsInstalled ? 1 : 0;
-                        return 0;
-
-                    case ModCategory.CategoryType.Neons:
-                        bool all = _vehicle.Mods.IsNeonLightsOn(VehicleNeonLight.Left) &&
-                                   _vehicle.Mods.IsNeonLightsOn(VehicleNeonLight.Right) &&
-                                   _vehicle.Mods.IsNeonLightsOn(VehicleNeonLight.Front) &&
-                                   _vehicle.Mods.IsNeonLightsOn(VehicleNeonLight.Back);
-                        if (all) return 4;
-                        if (_vehicle.Mods.IsNeonLightsOn(VehicleNeonLight.Left)) return 0;
-                        if (_vehicle.Mods.IsNeonLightsOn(VehicleNeonLight.Right)) return 1;
-                        if (_vehicle.Mods.IsNeonLightsOn(VehicleNeonLight.Front)) return 2;
-                        if (_vehicle.Mods.IsNeonLightsOn(VehicleNeonLight.Back)) return 3;
-                        return -1;
-
-                    case ModCategory.CategoryType.WheelType:
-                        return (int)_vehicle.Mods.WheelType;
-
-                    case ModCategory.CategoryType.WindowTint:
-                        return (int)_vehicle.Mods.WindowTint;
-
-                    case ModCategory.CategoryType.PrimaryColor:
-                        return (int)_vehicle.Mods.PrimaryColor;
-
-                    case ModCategory.CategoryType.SecondaryColor:
-                        return (int)_vehicle.Mods.SecondaryColor;
-
-                    case ModCategory.CategoryType.PearlescentColor:
-                        return (int)_vehicle.Mods.PearlescentColor;
-
-                    case ModCategory.CategoryType.RimColor:
-                        return (int)_vehicle.Mods.RimColor;
-
-                    case ModCategory.CategoryType.NeonColor:
-                    case ModCategory.CategoryType.TireSmokeColor:
-                        return 0; // Start at first preset
-
-                    case ModCategory.CategoryType.PlateStyle:
-                        return (int)_vehicle.Mods.LicensePlateStyle;
-
-                    case ModCategory.CategoryType.Horn:
-                        return Function.Call<int>(Hash.GET_VEHICLE_MOD, _vehicle, 14);
-
-                    default:
-                        return Function.Call<int>(Hash.GET_VEHICLE_MOD, _vehicle, category.ModType);
-                }
-            }
-            catch (Exception ex)
-            {
-                Logger.Debug($"GetCurrentModIndex failed for {category.Name}: {ex.Message}");
-                return 0;
-            }
-        }
-
-        private void ApplyMod()
-        {
-            if (_vehicle == null || !_vehicle.Exists())
-            {
-                Tolk.Speak("Vehicle no longer available");
-                return;
-            }
-
-            if (_currentCategoryIndex < 0 || _currentCategoryIndex >= _categories.Count)
-                return;
-
-            ModCategory category = _categories[_currentCategoryIndex];
-
-            try
-            {
-                switch (category.Type)
-                {
-                    case ModCategory.CategoryType.Toggle:
-                        ApplyToggleMod(category);
+                        ApplyToggleMod(category, modIndex);
                         break;
 
                     case ModCategory.CategoryType.Neons:
-                        ApplyNeonMod();
+                        ApplyNeonMod(modIndex);
                         break;
 
                     case ModCategory.CategoryType.WheelType:
-                        _vehicle.Mods.WheelType = (VehicleWheelType)_currentModIndex;
-                        Tolk.Speak($"Wheel type: {Constants.GetWheelTypeName(_currentModIndex)}");
+                        if (modIndex >= 0 && modIndex < _allowedWheelTypes.Length)
+                        {
+                            mods.WheelType = _allowedWheelTypes[modIndex];
+                            Speak($"Wheel type: {GetWheelTypeDisplayName(_allowedWheelTypes[modIndex])}");
+                        }
                         break;
 
                     case ModCategory.CategoryType.WindowTint:
-                        _vehicle.Mods.WindowTint = (VehicleWindowTint)_currentModIndex;
-                        Tolk.Speak($"Window tint: {GetWindowTintName(_currentModIndex)}");
+                        mods.WindowTint = (VehicleWindowTint)modIndex;
+                        Speak($"Window tint: {GetWindowTintName(modIndex)}");
                         break;
 
                     case ModCategory.CategoryType.PrimaryColor:
-                        _vehicle.Mods.PrimaryColor = (VehicleColor)_currentModIndex;
-                        Tolk.Speak($"Primary color: {GetColorName(_currentModIndex)}");
+                        mods.PrimaryColor = (VehicleColor)modIndex;
+                        Speak($"Primary color: {GetColorName(modIndex)}");
                         break;
 
                     case ModCategory.CategoryType.SecondaryColor:
-                        _vehicle.Mods.SecondaryColor = (VehicleColor)_currentModIndex;
-                        Tolk.Speak($"Secondary color: {GetColorName(_currentModIndex)}");
+                        mods.SecondaryColor = (VehicleColor)modIndex;
+                        Speak($"Secondary color: {GetColorName(modIndex)}");
                         break;
 
                     case ModCategory.CategoryType.PearlescentColor:
-                        _vehicle.Mods.PearlescentColor = (VehicleColor)_currentModIndex;
-                        Tolk.Speak($"Pearlescent: {GetColorName(_currentModIndex)}");
+                        mods.PearlescentColor = (VehicleColor)modIndex;
+                        Speak($"Pearlescent: {GetColorName(modIndex)}");
                         break;
 
                     case ModCategory.CategoryType.RimColor:
-                        _vehicle.Mods.RimColor = (VehicleColor)_currentModIndex;
-                        Tolk.Speak($"Rim color: {GetColorName(_currentModIndex)}");
+                        mods.RimColor = (VehicleColor)modIndex;
+                        Speak($"Rim color: {GetColorName(modIndex)}");
+                        break;
+
+                    case ModCategory.CategoryType.TrimColor:
+                        mods.TrimColor = (VehicleColor)modIndex;
+                        Speak($"Trim color: {GetColorName(modIndex)}");
+                        break;
+
+                    case ModCategory.CategoryType.DashboardColor:
+                        mods.DashboardColor = (VehicleColor)modIndex;
+                        Speak($"Dashboard color: {GetColorName(modIndex)}");
                         break;
 
                     case ModCategory.CategoryType.NeonColor:
-                        ApplyNeonColor();
+                        ApplyNeonColor(modIndex);
                         break;
 
                     case ModCategory.CategoryType.TireSmokeColor:
-                        ApplyTireSmokeColor();
+                        ApplyTireSmokeColor(modIndex);
                         break;
 
                     case ModCategory.CategoryType.PlateStyle:
-                        _vehicle.Mods.LicensePlateStyle = (LicensePlateStyle)_currentModIndex;
-                        Tolk.Speak($"Plate style: {GetPlateStyleName(_currentModIndex)}");
+                        mods.LicensePlateStyle = (LicensePlateStyle)modIndex;
+                        Speak($"Plate style: {GetPlateStyleName(modIndex)}");
                         break;
 
                     case ModCategory.CategoryType.Horn:
-                        Function.Call(Hash.SET_VEHICLE_MOD, _vehicle, 14, _currentModIndex, false);
-                        Tolk.Speak($"Horn: {Constants.GetHornName(_currentModIndex)}");
+                        mods[VehicleModType.Horns].Index = modIndex;
+                        Speak($"Horn: {Constants.GetHornName(modIndex)}");
+                        break;
+
+                    case ModCategory.CategoryType.LiveryProperty:
+                        mods.Livery = modIndex;
+                        Speak($"Livery: {GetLiveryPropertyName(modIndex)}");
                         break;
 
                     default:
-                        ApplyStandardMod(category);
+                        ApplyStandardMod(category, modIndex);
                         break;
                 }
             }
             catch (Exception ex)
             {
                 Logger.Exception(ex, "ApplyMod");
-                Tolk.Speak("Failed to apply modification");
+                Speak("Failed to apply modification");
             }
         }
 
-        private void ApplyToggleMod(ModCategory category)
+        private void ApplyToggleMod(ModCategory category, int modIndex)
         {
             if (!category.ToggleType.HasValue) return;
 
-            bool newState = _currentModIndex == 1;
+            bool newState = modIndex == 1;
             _vehicle.Mods[category.ToggleType.Value].IsInstalled = newState;
-            Tolk.Speak(newState ? $"{category.Name} installed" : $"{category.Name} removed");
+            Speak(newState ? $"{category.Name} installed" : $"{category.Name} removed");
         }
 
-        private void ApplyNeonMod()
+        private void ApplyNeonMod(int modIndex)
         {
-            switch (_currentModIndex)
+            switch (modIndex)
             {
                 case -1: // All off
-                    _vehicle.Mods.SetNeonLightsOn(VehicleNeonLight.Left, false);
-                    _vehicle.Mods.SetNeonLightsOn(VehicleNeonLight.Right, false);
-                    _vehicle.Mods.SetNeonLightsOn(VehicleNeonLight.Front, false);
-                    _vehicle.Mods.SetNeonLightsOn(VehicleNeonLight.Back, false);
-                    Tolk.Speak("All neons off");
+                    SetNeons(false, false, false, false);
+                    Speak("All neons off");
                     break;
                 case 0:
-                    _vehicle.Mods.SetNeonLightsOn(VehicleNeonLight.Left, true);
-                    _vehicle.Mods.SetNeonLightsOn(VehicleNeonLight.Right, false);
-                    _vehicle.Mods.SetNeonLightsOn(VehicleNeonLight.Front, false);
-                    _vehicle.Mods.SetNeonLightsOn(VehicleNeonLight.Back, false);
-                    Tolk.Speak("Left neon only");
+                    SetNeons(true, false, false, false);
+                    Speak("Left neon only");
                     break;
                 case 1:
-                    _vehicle.Mods.SetNeonLightsOn(VehicleNeonLight.Left, false);
-                    _vehicle.Mods.SetNeonLightsOn(VehicleNeonLight.Right, true);
-                    _vehicle.Mods.SetNeonLightsOn(VehicleNeonLight.Front, false);
-                    _vehicle.Mods.SetNeonLightsOn(VehicleNeonLight.Back, false);
-                    Tolk.Speak("Right neon only");
+                    SetNeons(false, true, false, false);
+                    Speak("Right neon only");
                     break;
                 case 2:
-                    _vehicle.Mods.SetNeonLightsOn(VehicleNeonLight.Left, false);
-                    _vehicle.Mods.SetNeonLightsOn(VehicleNeonLight.Right, false);
-                    _vehicle.Mods.SetNeonLightsOn(VehicleNeonLight.Front, true);
-                    _vehicle.Mods.SetNeonLightsOn(VehicleNeonLight.Back, false);
-                    Tolk.Speak("Front neon only");
+                    SetNeons(false, false, true, false);
+                    Speak("Front neon only");
                     break;
                 case 3:
-                    _vehicle.Mods.SetNeonLightsOn(VehicleNeonLight.Left, false);
-                    _vehicle.Mods.SetNeonLightsOn(VehicleNeonLight.Right, false);
-                    _vehicle.Mods.SetNeonLightsOn(VehicleNeonLight.Front, false);
-                    _vehicle.Mods.SetNeonLightsOn(VehicleNeonLight.Back, true);
-                    Tolk.Speak("Back neon only");
+                    SetNeons(false, false, false, true);
+                    Speak("Back neon only");
                     break;
                 case 4: // All on
-                    _vehicle.Mods.SetNeonLightsOn(VehicleNeonLight.Left, true);
-                    _vehicle.Mods.SetNeonLightsOn(VehicleNeonLight.Right, true);
-                    _vehicle.Mods.SetNeonLightsOn(VehicleNeonLight.Front, true);
-                    _vehicle.Mods.SetNeonLightsOn(VehicleNeonLight.Back, true);
-                    Tolk.Speak("All neons on");
+                    SetNeons(true, true, true, true);
+                    Speak("All neons on");
                     break;
                 case 5: // Front and back
-                    _vehicle.Mods.SetNeonLightsOn(VehicleNeonLight.Left, false);
-                    _vehicle.Mods.SetNeonLightsOn(VehicleNeonLight.Right, false);
-                    _vehicle.Mods.SetNeonLightsOn(VehicleNeonLight.Front, true);
-                    _vehicle.Mods.SetNeonLightsOn(VehicleNeonLight.Back, true);
-                    Tolk.Speak("Front and back neons");
+                    SetNeons(false, false, true, true);
+                    Speak("Front and back neons");
                     break;
             }
+        }
+
+        private void SetNeons(bool left, bool right, bool front, bool back)
+        {
+            _vehicle.Mods.SetNeonLightsOn(VehicleNeonLight.Left, left);
+            _vehicle.Mods.SetNeonLightsOn(VehicleNeonLight.Right, right);
+            _vehicle.Mods.SetNeonLightsOn(VehicleNeonLight.Front, front);
+            _vehicle.Mods.SetNeonLightsOn(VehicleNeonLight.Back, back);
         }
 
         // Preset neon colors
@@ -860,58 +992,42 @@ namespace GrandTheftAccessibility.Menus
             Color.HotPink, Color.Purple, Color.FromArgb(75, 0, 130), Color.FromArgb(100, 100, 100), Color.White
         };
 
-        private void ApplyNeonColor()
+        private void ApplyNeonColor(int modIndex)
         {
-            if (_currentModIndex >= 0 && _currentModIndex < NeonColors.Length)
+            if (modIndex >= 0 && modIndex < NeonColors.Length)
             {
-                _vehicle.Mods.NeonLightsColor = NeonColors[_currentModIndex];
-                Tolk.Speak($"Neon color: {GetPresetColorName(_currentModIndex)}");
+                _vehicle.Mods.NeonLightsColor = NeonColors[modIndex];
+                Speak($"Neon color: {GetPresetColorName(modIndex)}");
             }
         }
 
-        private void ApplyTireSmokeColor()
+        private void ApplyTireSmokeColor(int modIndex)
         {
-            if (_currentModIndex >= 0 && _currentModIndex < NeonColors.Length)
+            if (modIndex >= 0 && modIndex < NeonColors.Length)
             {
-                _vehicle.Mods.TireSmokeColor = NeonColors[_currentModIndex];
-                Tolk.Speak($"Tire smoke: {GetPresetColorName(_currentModIndex)}");
+                _vehicle.Mods.TireSmokeColor = NeonColors[modIndex];
+                Speak($"Tire smoke: {GetPresetColorName(modIndex)}");
             }
         }
 
-        private void ApplyStandardMod(ModCategory category)
+        private void ApplyStandardMod(ModCategory category, int modIndex)
         {
-            if (_currentModIndex < 0)
+            VehicleMod mod = _vehicle.Mods[category.ModType];
+
+            if (modIndex < 0)
             {
-                // Remove mod (set to stock)
-                Function.Call(Hash.REMOVE_VEHICLE_MOD, _vehicle, category.ModType);
-                Tolk.Speak($"{category.Name} removed");
+                // Remove mod (set to stock) via the typed API
+                mod.Remove();
+                Speak($"{category.Name} removed");
             }
             else
             {
-                Function.Call(Hash.SET_VEHICLE_MOD, _vehicle, category.ModType, _currentModIndex, false);
-                string modName = GetModOptionText(category, _currentModIndex);
-                Tolk.Speak($"{category.Name}: {modName}");
+                mod.Index = modIndex;
+                string modName = GetModOptionText(category, modIndex);
+                Speak($"{category.Name}: {modName}");
             }
         }
 
-        public string GetMenuName()
-        {
-            if (_inSubmenu)
-            {
-                return _categories[_currentCategoryIndex].Name;
-            }
-            return "Vehicle Mods";
-        }
-
-        public bool HasActiveSubmenu => _inSubmenu;
-
-        public void ExitSubmenu()
-        {
-            if (_inSubmenu)
-            {
-                _inSubmenu = false;
-                _currentModIndex = 0;
-            }
-        }
+        #endregion
     }
 }

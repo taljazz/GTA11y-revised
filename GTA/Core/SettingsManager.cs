@@ -12,6 +12,8 @@ namespace GrandTheftAccessibility
     /// </summary>
     public class SettingsManager
     {
+        #region Fields
+
         private Dictionary<string, bool> _settings;
         private Dictionary<string, int> _intSettings;
         private readonly string _settingsFilePath;
@@ -20,6 +22,10 @@ namespace GrandTheftAccessibility
         public Dictionary<string, bool> AllBoolSettings => _settings;
         public Dictionary<string, int> AllIntSettings => _intSettings;
 
+        #endregion
+
+        #region Setting Definitions
+
         // Boolean setting definitions with default values
         private static readonly Dictionary<string, bool> DefaultSettings = new Dictionary<string, bool>
         {
@@ -27,6 +33,13 @@ namespace GrandTheftAccessibility
             { "announceHeadings", true },
             { "announceZones", true },
             { "announceTime", true },
+
+            // === PLAYER STATUS ANNOUNCEMENTS ===
+            { "announceHealth", true },              // Health/armor threshold announcements
+            { "announceVehicleDamage", true },       // Engine, body, tire damage announcements
+            { "announceCombat", true },              // Combat state and damage direction
+            { "announceBlips", true },               // Nearby points of interest (Ctrl+NumPad7)
+            { "announceTimeOfDay", true },           // Night/day driving speed announcements
 
             // === AUTODRIVE ANNOUNCEMENTS (reduce spam by grouping) ===
             { "roadFeatureAnnouncements", true },        // Curves, intersections
@@ -42,6 +55,7 @@ namespace GrandTheftAccessibility
             // === AUDIO INDICATORS ===
             { "targetPitchIndicator", true },
             { "aircraftAttitude", false },
+            { "announceLandingGear", true },         // Gear up/down announcements in aircraft
 
             // === VEHICLE & SPAWN OPTIONS ===
             { "radioOff", false },
@@ -71,21 +85,24 @@ namespace GrandTheftAccessibility
         private static readonly Dictionary<string, int> DefaultIntSettings = new Dictionary<string, int>
         {
             { "altitudeMode", 1 },  // 0=Off, 1=Normal (tone), 2=Aircraft (spoken)
-            { "turretCrewAnnouncements", 3 }  // 0=Off, 1=Firing only, 2=Enemy approaching only, 3=Both
+            { "turretCrewAnnouncements", 3 },  // 0=Off, 1=Firing only, 2=Enemy approaching only, 3=Both
+            { "hotkeyLayout", 0 }  // 0=Numpad, 1=Letter keys (for keyboards without a numpad)
         };
 
         // Max values for int settings (for cycling)
         private static readonly Dictionary<string, int> IntSettingMaxValues = new Dictionary<string, int>
         {
             { "altitudeMode", 2 },  // Cycles 0 -> 1 -> 2 -> 0
-            { "turretCrewAnnouncements", 3 }  // Cycles 0 -> 1 -> 2 -> 3 -> 0
+            { "turretCrewAnnouncements", 3 },  // Cycles 0 -> 1 -> 2 -> 3 -> 0
+            { "hotkeyLayout", 1 }  // Cycles 0 -> 1 -> 0
         };
 
         // Display names for int setting values
         private static readonly Dictionary<string, string[]> IntSettingValueNames = new Dictionary<string, string[]>
         {
             { "altitudeMode", new[] { "Off", "Normal (Tone)", "Aircraft (Spoken)" } },
-            { "turretCrewAnnouncements", new[] { "Off", "Firing Only", "Enemy Approaching Only", "Both" } }
+            { "turretCrewAnnouncements", new[] { "Off", "Firing Only", "Enemy Approaching Only", "Both" } },
+            { "hotkeyLayout", new[] { "Numpad", "Letter Keys" } }
         };
 
         // Display names for settings
@@ -95,6 +112,13 @@ namespace GrandTheftAccessibility
             { "announceTime", "Time of Day Announcements" },
             { "announceHeadings", "Heading Change Announcements" },
             { "announceZones", "Street and Zone Change Announcements" },
+
+            // === PLAYER STATUS ANNOUNCEMENTS ===
+            { "announceHealth", "Health and Armor Announcements" },
+            { "announceVehicleDamage", "Vehicle Damage Announcements" },
+            { "announceCombat", "Combat State and Damage Direction" },
+            { "announceBlips", "Nearby Points of Interest Announcements" },
+            { "announceTimeOfDay", "AutoDrive: Announce Night and Day Speed Changes" },
 
             // === AUTODRIVE ANNOUNCEMENTS ===
             { "roadFeatureAnnouncements", "AutoDrive: Announce Curves and Intersections" },
@@ -110,8 +134,10 @@ namespace GrandTheftAccessibility
             // === AUDIO INDICATORS ===
             { "altitudeMode", "Altitude Indicator Mode" },
             { "turretCrewAnnouncements", "Turret Crew Announcements" },
+            { "hotkeyLayout", "Hotkey Layout (F9 to toggle)" },
             { "targetPitchIndicator", "Audible Targeting Pitch Indicator" },
             { "aircraftAttitude", "Aircraft Attitude Indicator (Pitch/Roll)" },
+            { "announceLandingGear", "Landing Gear Announcements" },
 
             // === VEHICLE & SPAWN OPTIONS ===
             { "radioOff", "Always Disable Vehicle Radios" },
@@ -136,6 +162,10 @@ namespace GrandTheftAccessibility
             { "enableMPMaps", "Enable GTA Online Maps and Interiors" }
         };
 
+        #endregion
+
+        #region Construction
+
         public SettingsManager()
         {
             string documentsPath = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
@@ -144,6 +174,10 @@ namespace GrandTheftAccessibility
 
             LoadSettings();
         }
+
+        #endregion
+
+        #region Boolean Settings
 
         /// <summary>
         /// Get a setting value (returns false if not found or on error)
@@ -204,6 +238,10 @@ namespace GrandTheftAccessibility
             }
             return false;
         }
+
+        #endregion
+
+        #region Int Settings
 
         /// <summary>
         /// Get an int setting value (returns 0 if not found or on error)
@@ -316,6 +354,10 @@ namespace GrandTheftAccessibility
             }
         }
 
+        #endregion
+
+        #region Display Names and Enumeration
+
         /// <summary>
         /// Get display name for a setting
         /// </summary>
@@ -355,6 +397,10 @@ namespace GrandTheftAccessibility
 
             return allIds;
         }
+
+        #endregion
+
+        #region Persistence
 
         /// <summary>
         /// Save settings to JSON file
@@ -531,5 +577,7 @@ namespace GrandTheftAccessibility
                 SaveSettings();
             }
         }
+
+        #endregion
     }
 }

@@ -9,6 +9,8 @@ namespace GrandTheftAccessibility
     /// </summary>
     public static class SpatialCalculator
     {
+        #region Angles and Headings
+
         /// <summary>
         /// Calculate the angle between two points in degrees (0-360)
         /// </summary>
@@ -88,6 +90,10 @@ namespace GrandTheftAccessibility
             }
         }
 
+        #endregion
+
+        #region Distances and Directions
+
         /// <summary>
         /// Calculate horizontal (XY) distance between two positions
         /// </summary>
@@ -114,5 +120,7 @@ namespace GrandTheftAccessibility
             double angle = CalculateAngle(from.X, from.Y, to.X, to.Y);
             return GetDirectionFromHeading(angle);
         }
+
+        #endregion
     }
 }

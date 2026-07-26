@@ -9,68 +9,69 @@ namespace GrandTheftAccessibility
     /// Provides combat accessibility features for blind players.
     /// Announces damage direction, nearest enemy location, ammo counts,
     /// and combat state transitions via TTS.
+    /// Derives from MonitorBase&lt;Ped&gt; which supplies throttling, the enabled
+    /// setting check, and exception handling.
     /// </summary>
-    public class CombatAssistManager
+    public class CombatAssistManager : MonitorBase<Ped>
     {
-        private readonly AudioManager _audio;
-        private readonly SettingsManager _settings;
-
-        // Combat state tracking
-        private bool _wasInCombat;
-
-        // Throttle tracking (ticks, using DateTime.Now.Ticks)
-        private long _lastDamageAnnounceTick;
-        private long _lastEnemyAnnounceTick;
-        private long _lastAmmoAnnounceTick;
+        #region Constants
 
         // Cooldowns in ticks (1 second = 10,000,000 ticks)
-        private const long UPDATE_INTERVAL = 2_000_000;            // 200ms throttle
-        private const long DAMAGE_ANNOUNCE_COOLDOWN = 20_000_000;  // 2 seconds
-        private const long ENEMY_ANNOUNCE_COOLDOWN = 30_000_000;   // 3 seconds
-        private const long AMMO_ANNOUNCE_COOLDOWN = 10_000_000;    // 1 second
-
-        private long _lastUpdateTick;
+        private const long UPDATE_INTERVAL = 200;                  // 200ms throttle
+        private const long DAMAGE_ANNOUNCE_COOLDOWN = 2_000;      // 2 seconds
+        private const long ENEMY_ANNOUNCE_COOLDOWN = 3_000;       // 3 seconds
+        private const long AMMO_ANNOUNCE_COOLDOWN = 1_000;        // 1 second
 
         // Cached native hash for GET_RELATIONSHIP_BETWEEN_PEDS
         private static readonly Hash _getRelationshipBetweenPeds = Hash.GET_RELATIONSHIP_BETWEEN_PEDS;
 
+        #endregion
+
+        #region Fields
+
+        // Combat state tracking
+        private bool _wasInCombat;
+
+        // Throttle tracking (game-time milliseconds via Game.GameTime)
+        private long _lastDamageAnnounceTick;
+        private long _lastEnemyAnnounceTick;
+        private long _lastAmmoAnnounceTick;
+
+        #endregion
+
+        #region Construction
+
         public CombatAssistManager(AudioManager audio, SettingsManager settings)
+            : base(audio, settings)
         {
-            _audio = audio;
-            _settings = settings;
             _wasInCombat = false;
         }
 
-        /// <summary>
-        /// Main update loop - call from OnTick. Handles passive combat announcements.
-        /// Checks for damage events and combat state transitions.
-        /// </summary>
-        public void Update(Ped player, Vector3 playerPos, long currentTick)
+        #endregion
+
+        #region MonitorBase Overrides
+
+        protected override long UpdateIntervalMs => UPDATE_INTERVAL;
+
+        protected override string EnabledSettingKey => "announceCombat";
+
+        protected override bool ValidateSubject(Ped player)
         {
-            if (player == null || !player.Exists() || player.IsDead)
-                return;
-
-            if (!_settings.GetSetting("announceCombat"))
-                return;
-
-            // Throttle: max once per 200ms
-            if (currentTick - _lastUpdateTick < UPDATE_INTERVAL)
-                return;
-            _lastUpdateTick = currentTick;
-
-            try
-            {
-                // Check combat state transitions
-                UpdateCombatState(player);
-
-                // Check for damage and announce direction
-                UpdateDamageDirection(player, playerPos, currentTick);
-            }
-            catch (Exception ex)
-            {
-                Logger.Exception(ex, "CombatAssistManager.Update");
-            }
+            return player != null && player.Exists() && !player.IsDead;
         }
+
+        protected override void OnUpdate(Ped player, long currentTick)
+        {
+            // Check combat state transitions
+            UpdateCombatState(player);
+
+            // Check for damage and announce direction
+            UpdateDamageDirection(player, player.Position, currentTick);
+        }
+
+        #endregion
+
+        #region Passive Monitoring
 
         /// <summary>
         /// Announce combat enter/exit transitions.
@@ -82,12 +83,12 @@ namespace GrandTheftAccessibility
 
             if (isInCombat && !_wasInCombat)
             {
-                _audio.Speak("In combat");
+                Audio.Speak("In combat");
                 if (Logger.IsDebugEnabled) Logger.Debug("CombatAssistManager: Player entered combat");
             }
             else if (!isInCombat && _wasInCombat)
             {
-                _audio.Speak("Combat ended");
+                Audio.Speak("Combat ended");
                 if (Logger.IsDebugEnabled) Logger.Debug("CombatAssistManager: Player exited combat");
             }
 
@@ -120,17 +121,21 @@ namespace GrandTheftAccessibility
             if (attacker != null && attacker.Exists())
             {
                 string direction = GetRelativeDirection(player, playerPos, attacker.Position);
-                _audio.Speak($"Damage from the {direction}", true);
+                Audio.Speak($"Damage from the {direction}", true);
                 if (Logger.IsDebugEnabled) Logger.Debug($"CombatAssistManager: Damage from {direction}");
             }
             else
             {
                 // Could not identify attacker, just announce damage
-                _audio.Speak("Taking damage", true);
+                Audio.Speak("Taking damage", true);
             }
 
             _lastDamageAnnounceTick = currentTick;
         }
+
+        #endregion
+
+        #region Public API - on-demand announcements
 
         /// <summary>
         /// On-demand: Find and announce the nearest hostile ped's direction and distance.
@@ -143,7 +148,7 @@ namespace GrandTheftAccessibility
 
             try
             {
-                long currentTick = DateTime.Now.Ticks;
+                long currentTick = Game.GameTime;
                 if (currentTick - _lastEnemyAnnounceTick < ENEMY_ANNOUNCE_COOLDOWN)
                     return;
                 _lastEnemyAnnounceTick = currentTick;
@@ -155,12 +160,12 @@ namespace GrandTheftAccessibility
                     float distance = playerPos.DistanceTo(nearest.Position);
                     int distMeters = (int)Math.Round(distance);
                     string direction = GetRelativeDirection(player, playerPos, nearest.Position);
-                    _audio.Speak($"Enemy {distMeters} meters {direction}", true);
+                    Audio.Speak($"Enemy {distMeters} meters {direction}", true);
                     if (Logger.IsDebugEnabled) Logger.Debug($"CombatAssistManager: Nearest enemy {distMeters}m {direction}");
                 }
                 else
                 {
-                    _audio.Speak("No enemies nearby", true);
+                    Audio.Speak("No enemies nearby", true);
                 }
             }
             catch (Exception ex)
@@ -180,7 +185,7 @@ namespace GrandTheftAccessibility
 
             try
             {
-                long currentTick = DateTime.Now.Ticks;
+                long currentTick = Game.GameTime;
                 if (currentTick - _lastAmmoAnnounceTick < AMMO_ANNOUNCE_COOLDOWN)
                     return;
                 _lastAmmoAnnounceTick = currentTick;
@@ -188,14 +193,14 @@ namespace GrandTheftAccessibility
                 WeaponCollection weapons = player.Weapons;
                 if (weapons == null)
                 {
-                    _audio.Speak("Unarmed", true);
+                    Audio.Speak("Unarmed", true);
                     return;
                 }
 
                 Weapon current = weapons.Current;
                 if (current == null || current.Hash == WeaponHash.Unarmed)
                 {
-                    _audio.Speak("Unarmed", true);
+                    Audio.Speak("Unarmed", true);
                     return;
                 }
 
@@ -204,14 +209,14 @@ namespace GrandTheftAccessibility
                 // Melee weapons have no ammo - just announce the weapon type
                 if (maxClip <= 0)
                 {
-                    _audio.Speak($"Melee weapon equipped", true);
+                    Audio.Speak("Melee weapon equipped", true);
                     return;
                 }
 
                 int inClip = current.AmmoInClip;
                 int total = current.Ammo;
 
-                _audio.Speak($"{inClip} in clip, {total} total", true);
+                Audio.Speak($"{inClip} in clip, {total} total", true);
                 if (Logger.IsDebugEnabled) Logger.Debug($"CombatAssistManager: Ammo {inClip}/{maxClip} clip, {total} total");
             }
             catch (Exception ex)
@@ -219,6 +224,10 @@ namespace GrandTheftAccessibility
                 Logger.Exception(ex, "CombatAssistManager.AnnounceAmmo");
             }
         }
+
+        #endregion
+
+        #region Helpers
 
         /// <summary>
         /// Find the nearest hostile ped within the given radius.
@@ -291,7 +300,6 @@ namespace GrandTheftAccessibility
             double playerHeading = player.Heading;
 
             // Calculate relative angle: how far the target is from where the player faces
-            // Both are in GTA V's coordinate system (0=N, clockwise but mirrored E/W)
             double relativeAngle = angleToTarget - playerHeading;
 
             // Normalize to 0-360
@@ -316,5 +324,7 @@ namespace GrandTheftAccessibility
                 return "right";
             return "ahead-right";
         }
+
+        #endregion
     }
 }

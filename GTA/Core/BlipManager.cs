@@ -10,9 +10,12 @@ namespace GrandTheftAccessibility
     /// <summary>
     /// Provides audio alternatives to the minimap/radar by announcing nearby blips,
     /// mission objectives, and police presence via TTS.
+    /// Derives from MonitorBase for the shared throttle plumbing.
     /// </summary>
-    public class BlipManager
+    public class BlipManager : MonitorBase
     {
+        #region Constants
+
         // PERFORMANCE: Pre-cached Hash values to avoid repeated casting
         private static readonly Hash _getFirstBlipInfoId = Hash.GET_FIRST_BLIP_INFO_ID;
         private static readonly Hash _getNextBlipInfoId = Hash.GET_NEXT_BLIP_INFO_ID;
@@ -20,8 +23,13 @@ namespace GrandTheftAccessibility
         private static readonly Hash _getBlipInfoIdCoord = Hash.GET_BLIP_INFO_ID_COORD;
         private static readonly Hash _isWaypointActive = Hash.IS_WAYPOINT_ACTIVE;
 
-        private readonly AudioManager _audio;
-        private readonly SettingsManager _settings;
+        // Wanted-level polling interval (announcement cooldown is separate below)
+        private const long UPDATE_INTERVAL = 250; // 0.25 seconds
+
+        #endregion
+
+        #region Fields
+
         private readonly StringBuilder _resultBuilder;
 
         // Reusable list for blip scan results to avoid per-call allocation
@@ -32,11 +40,15 @@ namespace GrandTheftAccessibility
 
         // Throttle for police announcements
         private long _lastPoliceAnnounceTick;
-        private const long POLICE_ANNOUNCE_INTERVAL = 50_000_000; // 5 seconds
+        private const long POLICE_ANNOUNCE_INTERVAL = 5_000; // 5 seconds
 
         // Maximum nearby blips to announce
         private const int MAX_NEARBY_BLIPS = 5;
         private const float NEARBY_BLIP_RADIUS = 500f;
+
+        #endregion
+
+        #region Blip Sprite Tables
 
         // Common blip sprite IDs mapped to friendly names
         private static readonly Dictionary<int, string> BlipSpriteNames = new Dictionary<int, string>
@@ -92,22 +104,29 @@ namespace GrandTheftAccessibility
             1, 2, 3, 38, 40, 90, 143, 225, 227, 280, 304, 309, 380, 417, 478, 480
         };
 
+        #endregion
+
+        #region Construction
+
         public BlipManager(AudioManager audio, SettingsManager settings)
+            : base(audio, settings)
         {
-            _audio = audio;
-            _settings = settings;
             _resultBuilder = new StringBuilder(512);
             _blipResults = new List<BlipResult>(32);
             _lastWantedLevel = 0;
             _lastPoliceAnnounceTick = 0;
         }
 
+        #endregion
+
+        #region Public API - on-demand announcements
+
         /// <summary>
         /// Announce nearby blips sorted by distance (top 5 within 500m)
         /// </summary>
         public void AnnounceNearbyBlips(Vector3 playerPos)
         {
-            if (!_settings.GetSetting("announceBlips"))
+            if (!Settings.GetSetting("announceBlips"))
                 return;
 
             _blipResults.Clear();
@@ -142,7 +161,7 @@ namespace GrandTheftAccessibility
 
                 if (_blipResults.Count == 0)
                 {
-                    _audio.Speak("No blips nearby.");
+                    Audio.Speak("No blips nearby.");
                     return;
                 }
 
@@ -160,7 +179,7 @@ namespace GrandTheftAccessibility
                         .Append(". ");
                 }
 
-                _audio.Speak(_resultBuilder.ToString());
+                Audio.Speak(_resultBuilder.ToString());
             }
             catch (Exception ex)
             {
@@ -245,11 +264,11 @@ namespace GrandTheftAccessibility
                     }
 
                     _resultBuilder.Append(direction);
-                    _audio.Speak(_resultBuilder.ToString());
+                    Audio.Speak(_resultBuilder.ToString());
                 }
                 else
                 {
-                    _audio.Speak("No active mission objective.");
+                    Audio.Speak("No active mission objective.");
                 }
             }
             catch (Exception ex)
@@ -258,14 +277,23 @@ namespace GrandTheftAccessibility
             }
         }
 
+        #endregion
+
+        #region Update Loop
+
+        protected override long UpdateIntervalMs => UPDATE_INTERVAL;
+
         /// <summary>
         /// Passive update: announce wanted level changes
         /// </summary>
         public void Update(long currentTick)
         {
+            if (!TryBeginUpdate(currentTick))
+                return;
+
             try
             {
-                int wantedLevel = Game.Player.WantedLevel;
+                int wantedLevel = Game.Player.Wanted.WantedLevel;
 
                 if (wantedLevel != _lastWantedLevel)
                 {
@@ -278,19 +306,19 @@ namespace GrandTheftAccessibility
 
                     if (wantedLevel > 0 && _lastWantedLevel == 0)
                     {
-                        _audio.Speak($"Wanted: {wantedLevel} star{(wantedLevel > 1 ? "s" : "")}");
+                        Audio.Speak($"Wanted: {wantedLevel} star{(wantedLevel > 1 ? "s" : "")}");
                     }
                     else if (wantedLevel == 0 && _lastWantedLevel > 0)
                     {
-                        _audio.Speak("Wanted level cleared.");
+                        Audio.Speak("Wanted level cleared.");
                     }
                     else if (wantedLevel > _lastWantedLevel)
                     {
-                        _audio.Speak($"Wanted level increased to {wantedLevel} stars.");
+                        Audio.Speak($"Wanted level increased to {wantedLevel} stars.");
                     }
                     else if (wantedLevel < _lastWantedLevel)
                     {
-                        _audio.Speak($"Wanted level decreased to {wantedLevel} star{(wantedLevel > 1 ? "s" : "")}.");
+                        Audio.Speak($"Wanted level decreased to {wantedLevel} star{(wantedLevel > 1 ? "s" : "")}.");
                     }
 
                     _lastWantedLevel = wantedLevel;
@@ -302,6 +330,10 @@ namespace GrandTheftAccessibility
                 Logger.Exception(ex, "BlipManager.Update");
             }
         }
+
+        #endregion
+
+        #region Helpers
 
         /// <summary>
         /// Get a friendly name for a blip sprite ID
@@ -329,5 +361,7 @@ namespace GrandTheftAccessibility
                 Direction = direction;
             }
         }
+
+        #endregion
     }
 }

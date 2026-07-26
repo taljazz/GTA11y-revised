@@ -1,30 +1,69 @@
 using GTA;
-using DavyKager;
 
 namespace GrandTheftAccessibility.Menus
 {
     /// <summary>
-    /// Proxy menu for vehicle modifications
-    /// Creates/updates the actual VehicleModMenu when player is in a vehicle
-    /// Shows appropriate message when not in a vehicle
+    /// Proxy menu for vehicle modifications.
+    /// Creates/updates the actual VehicleModMenu when the player is in a vehicle
+    /// and delegates every menu operation to it; speaks an explanatory message
+    /// when not in a vehicle.
     /// </summary>
-    public class VehicleModMenuProxy : IMenuState
+    public class VehicleModMenuProxy : MenuBase
     {
+        #region Fields
+
         private readonly SettingsManager _settings;
+        private readonly AudioManager _audio;
         private VehicleModMenu _modMenu;
         private int _lastVehicleHandle;  // Compare by Handle, not reference
 
-        public VehicleModMenuProxy(SettingsManager settings)
+        #endregion
+
+        #region Construction
+
+        public VehicleModMenuProxy(SettingsManager settings, AudioManager audio) : base(audio)
         {
             _settings = settings;
+            _audio = audio;
             _modMenu = null;
             _lastVehicleHandle = 0;
         }
 
+        #endregion
+
+        #region MenuBase Overrides
+
+        // The proxy has no items of its own - everything is delegated to the
+        // real VehicleModMenu below. These satisfy the abstract contract.
+        protected override int ItemCount => 0;
+
+        protected override string EmptyMenuText => "Not in vehicle";
+
+        protected override string GetItemText(int index) => EmptyMenuText;
+
+        protected override void OnItemActivated(int index)
+        {
+        }
+
+        public override string GetMenuName()
+        {
+            RefreshForCurrentVehicle();
+            if (_modMenu != null)
+            {
+                return _modMenu.GetMenuName();
+            }
+            return "Vehicle Mods";
+        }
+
+        #endregion
+
+        #region Delegation
+
         /// <summary>
-        /// Check if player is in a vehicle and update the mod menu if needed
+        /// Check if player is in a vehicle and rebuild the mod menu if the vehicle changed.
+        /// Clears the menu when the player has no vehicle.
         /// </summary>
-        private void UpdateModMenu()
+        private void RefreshForCurrentVehicle()
         {
             Ped player = Game.Player?.Character;
             if (player == null || !player.Exists())
@@ -51,108 +90,60 @@ namespace GrandTheftAccessibility.Menus
             }
 
             // Create new mod menu for current vehicle
-            _modMenu = new VehicleModMenu(currentVehicle, _settings);
+            _modMenu = new VehicleModMenu(currentVehicle, _settings, _audio);
             _lastVehicleHandle = currentHandle;
         }
 
-        public void NavigatePrevious(bool fastScroll = false)
+        public override void NavigatePrevious(bool fastScroll = false)
         {
-            UpdateModMenu();
-            if (_modMenu != null)
-            {
-                _modMenu.NavigatePrevious(fastScroll);
-            }
+            RefreshForCurrentVehicle();
+            _modMenu?.NavigatePrevious(fastScroll);
         }
 
-        public void NavigateNext(bool fastScroll = false)
+        public override void NavigateNext(bool fastScroll = false)
         {
-            UpdateModMenu();
-            if (_modMenu != null)
-            {
-                _modMenu.NavigateNext(fastScroll);
-            }
+            RefreshForCurrentVehicle();
+            _modMenu?.NavigateNext(fastScroll);
         }
 
-        public string GetCurrentItemText()
+        public override string GetCurrentItemText()
         {
-            UpdateModMenu();
+            RefreshForCurrentVehicle();
             if (_modMenu != null)
             {
                 return _modMenu.GetCurrentItemText();
             }
-            return "Not in vehicle";
+            return EmptyMenuText;
         }
 
-        public void ExecuteSelection()
+        public override void ExecuteSelection()
         {
-            UpdateModMenu();
+            RefreshForCurrentVehicle();
             if (_modMenu != null)
             {
                 _modMenu.ExecuteSelection();
             }
             else
             {
-                Tolk.Speak("You must be in a vehicle to use mods.");
+                Speak("You must be in a vehicle to use mods.");
             }
         }
 
-        public string GetMenuName()
-        {
-            // Check if player left vehicle - reset menu state if so
-            Ped player = Game.Player?.Character;
-            if (player == null || !player.Exists())
-            {
-                _modMenu = null;
-                _lastVehicleHandle = 0;
-                return "Vehicle Mods";
-            }
-
-            Vehicle currentVehicle = player.CurrentVehicle;
-            if (currentVehicle == null && _modMenu != null)
-            {
-                _modMenu = null;
-                _lastVehicleHandle = 0;
-            }
-
-            if (_modMenu != null)
-            {
-                return _modMenu.GetMenuName();
-            }
-            return "Vehicle Mods";
-        }
-
-        public bool HasActiveSubmenu
+        public override bool HasActiveSubmenu
         {
             get
             {
-                // Check if player left vehicle - reset menu state if so
-                Ped player = Game.Player?.Character;
-                if (player == null || !player.Exists())
-                {
-                    _modMenu = null;
-                    _lastVehicleHandle = 0;
-                    return false;
-                }
-
-                Vehicle currentVehicle = player.CurrentVehicle;
-                if (currentVehicle == null && _modMenu != null)
-                {
-                    _modMenu = null;
-                    _lastVehicleHandle = 0;
-                    return false;
-                }
-
+                RefreshForCurrentVehicle();
                 return _modMenu != null && _modMenu.HasActiveSubmenu;
             }
         }
 
-        public void ExitSubmenu()
+        public override void ExitSubmenu()
         {
-            // Don't call UpdateModMenu - just exit existing submenu if any
-            if (_modMenu != null)
-            {
-                _modMenu.ExitSubmenu();
-            }
+            // Don't refresh - just exit existing submenu if any
+            _modMenu?.ExitSubmenu();
         }
+
+        #endregion
     }
 }

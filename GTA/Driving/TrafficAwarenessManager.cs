@@ -11,6 +11,8 @@ namespace GrandTheftAccessibility
     /// </summary>
     public class TrafficAwarenessManager
     {
+        #region Fields
+
         private readonly AudioManager _audio;
         private readonly AnnouncementQueue _announcementQueue;
 
@@ -44,6 +46,10 @@ namespace GrandTheftAccessibility
         // External state references (passed in via Update)
         private float _lastVehicleAheadDistance = float.MaxValue;
 
+        #endregion
+
+        #region Properties
+
         /// <summary>
         /// Current following time gap in seconds
         /// </summary>
@@ -58,6 +64,10 @@ namespace GrandTheftAccessibility
         /// Whether a lane change is currently in progress
         /// </summary>
         public bool IsLaneChangeInProgress => _laneChangeInProgress;
+
+        #endregion
+
+        #region Construction
 
         public TrafficAwarenessManager(AudioManager audio, AnnouncementQueue announcementQueue)
         {
@@ -107,6 +117,10 @@ namespace GrandTheftAccessibility
         {
             _lastVehicleAheadDistance = distance;
         }
+
+        #endregion
+
+        #region Lane Changes
 
         /// <summary>
         /// Check for lane changes based on lateral movement
@@ -182,6 +196,10 @@ namespace GrandTheftAccessibility
                 Logger.Exception(ex, "TrafficAwarenessManager.CheckLaneChange");
             }
         }
+
+        #endregion
+
+        #region Overtaking
 
         /// <summary>
         /// Check for overtaking maneuvers
@@ -306,7 +324,7 @@ namespace GrandTheftAccessibility
 
                 // Cleanup stale entries
                 _handleRemovalList.Clear();
-                long staleThreshold = currentTick - 30_000_000;
+                long staleThreshold = currentTick - 3_000;
                 foreach (var kvp in _overtakeTracking)
                 {
                     if (!_visibleHandles.Contains(kvp.Key) || kvp.Value.FirstSeenTick < staleThreshold)
@@ -331,6 +349,10 @@ namespace GrandTheftAccessibility
                 Logger.Exception(ex, "TrafficAwarenessManager.CheckOvertaking");
             }
         }
+
+        #endregion
+
+        #region Following Distance
 
         /// <summary>
         /// Check following distance using 2-3 second rule.
@@ -415,5 +437,6 @@ namespace GrandTheftAccessibility
             }
         }
 
+        #endregion
     }
 }

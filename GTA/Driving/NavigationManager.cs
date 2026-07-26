@@ -11,6 +11,8 @@ namespace GrandTheftAccessibility
     /// </summary>
     public class NavigationManager
     {
+        #region Fields
+
         // PERFORMANCE: Pre-cached Hash values to avoid repeated casting
         private static readonly Hash _isWaypointActiveHash = Hash.IS_WAYPOINT_ACTIVE;
         private static readonly Hash _getClosestNodeWithHeadingHash = (Hash)Constants.NATIVE_GET_CLOSEST_VEHICLE_NODE_WITH_HEADING;
@@ -44,6 +46,10 @@ namespace GrandTheftAccessibility
         private readonly OutputArgument _safeArrivalHeadingArg = new OutputArgument();
         private readonly OutputArgument _safePedCoordArg = new OutputArgument();
         private readonly OutputArgument _roadSidePosArg = new OutputArgument();
+
+        #endregion
+
+        #region Properties
 
         /// <summary>
         /// Whether final approach is active
@@ -81,6 +87,10 @@ namespace GrandTheftAccessibility
         /// </summary>
         public float ArrivalSlowdownSpeed => _arrivalSlowdownActive ? _lastArrivalSpeed : float.MaxValue;
 
+        #endregion
+
+        #region Construction
+
         public NavigationManager(AudioManager audio, AnnouncementQueue announcementQueue)
         {
             _audio = audio;
@@ -103,6 +113,10 @@ namespace GrandTheftAccessibility
             _lastAnnouncedArrivalDistance = int.MaxValue;
             _lastBearingAnnounceTick = 0;
         }
+
+        #endregion
+
+        #region Waypoint Progress
 
         /// <summary>
         /// Initialize navigation to a waypoint
@@ -288,6 +302,10 @@ namespace GrandTheftAccessibility
             return false;
         }
 
+        #endregion
+
+        #region Safe Arrival Position
+
         /// <summary>
         /// Find a safe road position near the waypoint for driving
         /// </summary>
@@ -420,5 +438,7 @@ namespace GrandTheftAccessibility
                 return $"{distanceMiles:F1} miles";
             }
         }
+
+        #endregion
     }
 }

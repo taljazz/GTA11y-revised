@@ -1,22 +1,15 @@
 using System.Collections.Generic;
 using GTA;
-using DavyKager;
 
 namespace GrandTheftAccessibility.Menus
 {
     /// <summary>
-    /// Menu for controlling AutoDrive functionality
-    /// Includes road seeking submenu for accessibility navigation
+    /// Menu for controlling AutoDrive functionality.
+    /// Top level = AutoDrive actions, submenu = road types for the seek feature.
     /// </summary>
-    public class AutoDriveMenu : IMenuState
+    public class AutoDriveMenu : HierarchicalMenuBase
     {
-        private readonly AutoDriveManager _manager;
-        private readonly List<string> _menuItems;
-        private int _currentIndex;
-
-        // Seek Road Type submenu state
-        private bool _inSeekSubmenu;
-        private int _seekSubmenuIndex;
+        #region Constants
 
         // Menu item indices
         private const int ITEM_WANDER = 0;
@@ -29,9 +22,24 @@ namespace GrandTheftAccessibility.Menus
         private const int ITEM_DECREASE_SPEED = 7;
         private const int ITEM_STATUS = 8;
 
+        #endregion
+
+        #region Fields
+
+        private readonly AutoDriveManager _manager;
+        private readonly List<string> _menuItems;
+
+        #endregion
+
+        #region Properties
+
         public AutoDriveManager Manager => _manager;
 
-        public AutoDriveMenu(AutoDriveManager manager)
+        #endregion
+
+        #region Construction
+
+        public AutoDriveMenu(AutoDriveManager manager, AudioManager audio) : base(audio)
         {
             _manager = manager;
 
@@ -47,104 +55,34 @@ namespace GrandTheftAccessibility.Menus
                 "Decrease Speed",
                 "Current Status"
             };
-
-            _currentIndex = 0;
-            _inSeekSubmenu = false;
-            _seekSubmenuIndex = 0;
         }
 
-        public void NavigatePrevious(bool fastScroll = false)
-        {
-            if (_inSeekSubmenu)
-            {
-                // Navigate seek submenu
-                int count = Constants.ROAD_SEEK_MODE_NAMES.Length;
-                if (_seekSubmenuIndex > 0)
-                    _seekSubmenuIndex--;
-                else
-                    _seekSubmenuIndex = count - 1;
-            }
-            else
-            {
-                // Navigate main menu
-                if (_currentIndex > 0)
-                    _currentIndex--;
-                else
-                    _currentIndex = _menuItems.Count - 1;
-            }
-        }
+        #endregion
 
-        public void NavigateNext(bool fastScroll = false)
-        {
-            if (_inSeekSubmenu)
-            {
-                // Navigate seek submenu
-                int count = Constants.ROAD_SEEK_MODE_NAMES.Length;
-                if (_seekSubmenuIndex < count - 1)
-                    _seekSubmenuIndex++;
-                else
-                    _seekSubmenuIndex = 0;
-            }
-            else
-            {
-                // Navigate main menu
-                if (_currentIndex < _menuItems.Count - 1)
-                    _currentIndex++;
-                else
-                    _currentIndex = 0;
-            }
-        }
+        #region Top Level - AutoDrive actions
 
-        public string GetCurrentItemText()
-        {
-            if (_inSeekSubmenu)
-            {
-                return Constants.GetRoadSeekModeName(_seekSubmenuIndex);
-            }
+        protected override int ItemCount => _menuItems.Count;
 
+        protected override string GetItemText(int index)
+        {
             // Show current driving style in the menu item
-            if (_currentIndex == ITEM_DRIVING_STYLE)
+            if (index == ITEM_DRIVING_STYLE)
             {
                 string styleName = Constants.GetDrivingStyleName(_manager.CurrentDrivingStyleMode);
                 return $"Driving Style: {styleName}";
             }
 
-            return _menuItems[_currentIndex];
+            return _menuItems[index];
         }
 
-        public string GetMenuName()
+        protected override void OnItemActivated(int index)
         {
-            if (_inSeekSubmenu)
-            {
-                return "Seek Road Type";
-            }
-            return "AutoDrive";
-        }
-
-        public bool HasActiveSubmenu => _inSeekSubmenu;
-
-        public void ExitSubmenu()
-        {
-            _inSeekSubmenu = false;
-            _seekSubmenuIndex = 0;
-        }
-
-        public void ExecuteSelection()
-        {
-            if (_inSeekSubmenu)
-            {
-                // Execute seek with selected mode
-                _manager.StartSeeking(_seekSubmenuIndex);
-                _inSeekSubmenu = false;
-                return;
-            }
-
-            switch (_currentIndex)
+            switch (index)
             {
                 case ITEM_WANDER:
                     if (Game.Player.Character?.CurrentVehicle == null)
                     {
-                        Tolk.Speak("Not in a vehicle");
+                        Speak("Not in a vehicle");
                         return;
                     }
                     _manager.StartWander();
@@ -152,15 +90,13 @@ namespace GrandTheftAccessibility.Menus
                 case ITEM_WAYPOINT:
                     if (Game.Player.Character?.CurrentVehicle == null)
                     {
-                        Tolk.Speak("Not in a vehicle");
+                        Speak("Not in a vehicle");
                         return;
                     }
                     _manager.StartWaypoint();
                     break;
                 case ITEM_SEEK_ROAD:
-                    // Enter seek submenu
-                    _inSeekSubmenu = true;
-                    _seekSubmenuIndex = 0;
+                    EnterSubmenu();
                     break;
                 case ITEM_DRIVING_STYLE:
                     _manager.CycleDrivingStyle();
@@ -182,5 +118,34 @@ namespace GrandTheftAccessibility.Menus
                     break;
             }
         }
+
+        public override string GetMenuName()
+        {
+            if (InSubmenu)
+            {
+                return "Seek Road Type";
+            }
+            return "AutoDrive";
+        }
+
+        #endregion
+
+        #region Submenu - seek road types
+
+        protected override int SubmenuItemCount => Constants.ROAD_SEEK_MODE_NAMES.Length;
+
+        protected override string GetSubmenuItemText(int index)
+        {
+            return Constants.GetRoadSeekModeName(index);
+        }
+
+        protected override void OnSubmenuItemActivated(int index)
+        {
+            // Execute seek with selected mode, then leave the submenu
+            _manager.StartSeeking((RoadSeekMode)index);
+            ExitSubmenu();
+        }
+
+        #endregion
     }
 }

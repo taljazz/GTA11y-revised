@@ -1,6 +1,4 @@
-using GTA;
 using GTA.Native;
-using DavyKager;
 using GrandTheftAccessibility.Data;
 
 namespace GrandTheftAccessibility.Menus
@@ -9,58 +7,44 @@ namespace GrandTheftAccessibility.Menus
     /// Menu for setting GPS waypoints to predefined driving destinations.
     /// Uses LocationDataLoader to load from JSON or fallback to hardcoded defaults.
     /// </summary>
-    public class WaypointMenu : IMenuState
+    public class WaypointMenu : MenuBase
     {
-        private int _currentIndex;
+        #region Fields
+
         private WaypointDestination[] _destinations;
 
         // PERFORMANCE: Pre-cached Hash for native calls
         private static readonly Hash _setNewWaypointHash = Hash.SET_NEW_WAYPOINT;
 
-        public WaypointMenu()
-        {
-            _currentIndex = 0;
+        #endregion
 
+        #region Construction
+
+        public WaypointMenu(AudioManager audio) : base(audio)
+        {
             // Pre-load waypoint destinations at construction
             _destinations = LocationDataLoader.LoadWaypointDestinations();
         }
 
-        public void NavigatePrevious(bool fastScroll = false)
+        #endregion
+
+        #region MenuBase Overrides
+
+        protected override int ItemCount => _destinations?.Length ?? 0;
+
+        protected override int FastScrollStep => 10;
+
+        protected override string EmptyMenuText => "No destinations available";
+
+        protected override string GetItemText(int index)
         {
-            if (_destinations.Length == 0) return;
-
-            int step = fastScroll ? 10 : 1;
-
-            _currentIndex -= step;
-            if (_currentIndex < 0)
-                _currentIndex = ((_currentIndex % _destinations.Length) + _destinations.Length) % _destinations.Length;
+            var dest = _destinations[index];
+            return $"{index + 1} of {_destinations.Length}: {dest.Name}";
         }
 
-        public void NavigateNext(bool fastScroll = false)
+        protected override void OnItemActivated(int index)
         {
-            if (_destinations.Length == 0) return;
-
-            int step = fastScroll ? 10 : 1;
-
-            _currentIndex += step;
-            if (_currentIndex >= _destinations.Length)
-                _currentIndex = _currentIndex % _destinations.Length;
-        }
-
-        public string GetCurrentItemText()
-        {
-            if (_destinations.Length == 0) return "No destinations available";
-
-            int displayIndex = _currentIndex + 1;
-            var dest = _destinations[_currentIndex];
-            return $"{displayIndex} of {_destinations.Length}: {dest.Name}";
-        }
-
-        public void ExecuteSelection()
-        {
-            if (_destinations.Length == 0) return;
-
-            var dest = _destinations[_currentIndex];
+            var dest = _destinations[index];
 
             // Set GPS waypoint on the map (uses X, Y coordinates only)
             Function.Call(_setNewWaypointHash, dest.Coords.X, dest.Coords.Y);
@@ -70,21 +54,18 @@ namespace GrandTheftAccessibility.Menus
             Function.Call(Hash.PLAY_SOUND_FRONTEND, soundId, "WAYPOINT_SET", "HUD_FRONTEND_DEFAULT_SOUNDSET", false);
             Function.Call(Hash.RELEASE_SOUND_ID, soundId);
 
-            Tolk.Speak($"Waypoint set to {dest.Name}");
+            Speak($"Waypoint set to {dest.Name}");
             Logger.Info($"Set waypoint to {dest.Name}");
         }
 
-        public string GetMenuName()
+        public override string GetMenuName()
         {
             return "Set GPS Waypoint";
         }
 
-        public bool HasActiveSubmenu => false;
+        #endregion
 
-        public void ExitSubmenu()
-        {
-            // No submenu - do nothing
-        }
+        #region Public API
 
         /// <summary>
         /// Reload destinations from JSON (useful for hot-reload)
@@ -93,8 +74,10 @@ namespace GrandTheftAccessibility.Menus
         {
             LocationDataLoader.ReloadLocations();
             _destinations = LocationDataLoader.LoadWaypointDestinations();
-            if (_currentIndex >= _destinations.Length)
-                _currentIndex = 0;
+            if (SelectedIndex >= _destinations.Length)
+                ResetSelection();
         }
+
+        #endregion
     }
 }

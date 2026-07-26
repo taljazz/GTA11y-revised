@@ -7,30 +7,43 @@ namespace GrandTheftAccessibility
     /// <summary>
     /// Detects and announces game state transitions (cutscenes, phone, loading, pause)
     /// via TTS so the player understands what the game is doing.
+    /// Derives from MonitorBase for the shared throttle plumbing; it has no
+    /// subject entity, so it exposes its own Update(long).
     /// </summary>
-    public class GameStateManager
+    public class GameStateManager : MonitorBase
     {
+        #region Constants
+
         // Phone detection: use GET_IS_TASK_ACTIVE with CTaskMobilePhone (task index 500)
         private const int TASK_MOBILE_PHONE = 500;
 
-        private readonly AudioManager _audio;
+        // State checks every 500ms (no need to check every frame)
+        private const long UPDATE_INTERVAL = 500;
+
+        #endregion
+
+        #region Fields
 
         // Previous state tracking for transition detection
         private bool _wasCutsceneActive;
         private bool _wasPhoneActive;
-        private bool _wasLoading;
         private bool _wasPaused;
 
-        public GameStateManager(AudioManager audio)
-        {
-            _audio = audio;
+        #endregion
 
+        #region Construction
+
+        public GameStateManager(AudioManager audio) : base(audio, null)
+        {
             // Initialize to current state to avoid false announcements on startup
             _wasCutsceneActive = false;
             _wasPhoneActive = false;
-            _wasLoading = false;
             _wasPaused = false;
         }
+
+        #endregion
+
+        #region Properties
 
         /// <summary>
         /// Whether a cutscene is currently playing
@@ -43,34 +56,29 @@ namespace GrandTheftAccessibility
         public bool IsPhoneActive => _wasPhoneActive;
 
         /// <summary>
-        /// Whether the game is currently loading
-        /// </summary>
-        public bool IsLoading => _wasLoading;
-
-        /// <summary>
         /// Whether the game is paused
         /// </summary>
         public bool IsPaused => _wasPaused;
+
+        #endregion
+
+        #region Update Loop
+
+        protected override long UpdateIntervalMs => UPDATE_INTERVAL;
 
         /// <summary>
         /// Check for state transitions and announce changes.
         /// Called from OnTick.
         /// </summary>
-        // Throttle: state checks every 500ms (no need to check every frame)
-        private long _lastUpdateTick;
-        private const long UPDATE_INTERVAL = 5_000_000; // 500ms
-
         public void Update(long currentTick)
         {
-            if (currentTick - _lastUpdateTick < UPDATE_INTERVAL)
+            if (!TryBeginUpdate(currentTick))
                 return;
-            _lastUpdateTick = currentTick;
 
             try
             {
                 CheckCutscene();
                 CheckPhone();
-                CheckLoading();
                 CheckPause();
             }
             catch (Exception ex)
@@ -79,13 +87,17 @@ namespace GrandTheftAccessibility
             }
         }
 
+        #endregion
+
+        #region State Checks
+
         private void CheckCutscene()
         {
             bool active = Game.IsCutsceneActive;
 
             if (active != _wasCutsceneActive)
             {
-                _audio.Speak(active ? "Cutscene started." : "Cutscene ended.");
+                Audio.Speak(active ? "Cutscene started." : "Cutscene ended.");
                 _wasCutsceneActive = active;
             }
         }
@@ -97,21 +109,14 @@ namespace GrandTheftAccessibility
 
             if (active != _wasPhoneActive)
             {
-                _audio.Speak(active ? "Phone active." : "Phone closed.");
+                Audio.Speak(active ? "Phone active." : "Phone closed.");
                 _wasPhoneActive = active;
             }
         }
 
-        private void CheckLoading()
-        {
-            bool loading = Game.IsLoading;
-
-            if (loading != _wasLoading)
-            {
-                _audio.Speak(loading ? "Loading." : "Game ready.");
-                _wasLoading = loading;
-            }
-        }
+        // Loading detection removed: since ScriptHookV 1.0.3351.0, scripts can no
+        // longer start before the loading screen finishes, so Game.IsLoading is
+        // deprecated and always false while scripts run.
 
         private void CheckPause()
         {
@@ -119,9 +124,11 @@ namespace GrandTheftAccessibility
 
             if (paused != _wasPaused)
             {
-                _audio.Speak(paused ? "Game paused." : "Game resumed.");
+                Audio.Speak(paused ? "Game paused." : "Game resumed.");
                 _wasPaused = paused;
             }
         }
+
+        #endregion
     }
 }

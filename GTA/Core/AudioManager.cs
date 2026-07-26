@@ -11,6 +11,8 @@ namespace GrandTheftAccessibility
     /// </summary>
     public class AudioManager : IDisposable
     {
+        #region Fields
+
         // Audio output devices
         private readonly WaveOutEvent _pedTargetOut;
         private readonly WaveOutEvent _vehicleTargetOut;
@@ -68,6 +70,10 @@ namespace GrandTheftAccessibility
         private long _lastTolkReconnectAttempt;
         private const int MAX_TOLK_FAILURES_BEFORE_RECONNECT = 3;
         private const long TOLK_RECONNECT_COOLDOWN = 50_000_000; // 5 seconds in ticks
+
+        #endregion
+
+        #region Construction
 
         public AudioManager()
         {
@@ -200,6 +206,10 @@ namespace GrandTheftAccessibility
             _collisionBeepInitialized = false;
         }
 
+        #endregion
+
+        #region Speech (Tolk)
+
         /// <summary>
         /// Initialize or reinitialize Tolk screen reader support
         /// </summary>
@@ -327,6 +337,10 @@ namespace GrandTheftAccessibility
             }
         }
 
+        #endregion
+
+        #region Target Lock Sounds
+
         /// <summary>
         /// Play pedestrian target lock sound
         /// </summary>
@@ -380,6 +394,10 @@ namespace GrandTheftAccessibility
                 Logger.Exception(ex, "PlayPropTargetSound");
             }
         }
+
+        #endregion
+
+        #region Altitude and Pitch Indicators
 
         /// <summary>
         /// Play altitude indicator beep based on height
@@ -450,6 +468,10 @@ namespace GrandTheftAccessibility
                 Logger.Exception(ex, "PlayPitchIndicator");
             }
         }
+
+        #endregion
+
+        #region Aircraft Attitude Indicators
 
         /// <summary>
         /// Play aircraft pitch indicator (nose up/down)
@@ -522,6 +544,10 @@ namespace GrandTheftAccessibility
                 Logger.Exception(ex, "PlayAircraftRollIndicator");
             }
         }
+
+        #endregion
+
+        #region Beacon and Collision Audio
 
         /// <summary>
         /// Play a landing beacon pulse with stereo panning and frequency modulation
@@ -620,6 +646,10 @@ namespace GrandTheftAccessibility
             _collisionBeepStopTick = 0;
         }
 
+        #endregion
+
+        #region Update and Disposal
+
         /// <summary>
         /// Call this periodically to stop indicator audio after duration
         /// Should be called from OnTick - handles all timed audio stops
@@ -715,5 +745,7 @@ namespace GrandTheftAccessibility
 
             _disposed = true;
         }
+
+        #endregion
     }
 }

@@ -11,14 +11,16 @@ namespace GrandTheftAccessibility
     /// </summary>
     public class StructureDetector
     {
+        #region Fields
+
         // PERFORMANCE: Pre-cached Hash value to avoid repeated casting
         private static readonly Hash _getGroundZHash = (Hash)Constants.NATIVE_GET_GROUND_Z_FOR_3D_COORD;
 
         private readonly AudioManager _audio;
         private readonly AnnouncementQueue _announcementQueue;
 
-        // Structure detection state
-        private int _currentStructureType;
+        // Structure detection state (enum-tracked)
+        private StructureType _currentStructureType;
         private long _lastStructureCheckTick;
         private long _lastStructureAnnounceTick;
         private bool _inStructure;
@@ -37,10 +39,14 @@ namespace GrandTheftAccessibility
         private bool _announcedCurrentHill;
         private float _lastHillGradient;
 
+        #endregion
+
+        #region Properties
+
         /// <summary>
-        /// Current structure type (STRUCTURE_TYPE_NONE, TUNNEL, BRIDGE, etc.)
+        /// Current structure type
         /// </summary>
-        public int CurrentStructureType => _currentStructureType;
+        public StructureType CurrentStructureType => _currentStructureType;
 
         /// <summary>
         /// Whether currently in a structure
@@ -51,6 +57,10 @@ namespace GrandTheftAccessibility
         /// Whether a hill has been announced
         /// </summary>
         public bool AnnouncedCurrentHill => _announcedCurrentHill;
+
+        #endregion
+
+        #region Construction
 
         public StructureDetector(AudioManager audio, AnnouncementQueue announcementQueue)
         {
@@ -64,7 +74,7 @@ namespace GrandTheftAccessibility
         /// </summary>
         public void Reset()
         {
-            _currentStructureType = Constants.STRUCTURE_TYPE_NONE;
+            _currentStructureType = StructureType.None;
             _lastStructureCheckTick = 0;
             _lastStructureAnnounceTick = 0;
             _inStructure = false;
@@ -77,6 +87,10 @@ namespace GrandTheftAccessibility
             _announcedCurrentHill = false;
             _lastHillGradient = 0f;
         }
+
+        #endregion
+
+        #region Detection
 
         /// <summary>
         /// Initialize U-turn tracking when driving starts
@@ -189,7 +203,7 @@ namespace GrandTheftAccessibility
         /// <param name="position">Current position</param>
         /// <param name="currentTick">Current game tick</param>
         /// <param name="currentRoadType">Current road type from RoadTypeManager</param>
-        public void CheckStructures(Vehicle vehicle, Vector3 position, long currentTick, int currentRoadType)
+        public void CheckStructures(Vehicle vehicle, Vector3 position, long currentTick, RoadType currentRoadType)
         {
             if (vehicle == null || !vehicle.Exists())
                 return;
@@ -202,7 +216,7 @@ namespace GrandTheftAccessibility
 
             try
             {
-                int detectedType = Constants.STRUCTURE_TYPE_NONE;
+                StructureType detectedType = StructureType.None;
 
                 // Check for ceiling above (tunnel/overpass) - result not used but call determines if something is above
                 // Uses pre-allocated OutputArgument to avoid per-tick allocations
@@ -213,9 +227,9 @@ namespace GrandTheftAccessibility
                     false);
 
                 // Check current road type for tunnel
-                if (currentRoadType == Constants.ROAD_TYPE_TUNNEL)
+                if (currentRoadType == RoadType.Tunnel)
                 {
-                    detectedType = Constants.STRUCTURE_TYPE_TUNNEL;
+                    detectedType = StructureType.Tunnel;
                 }
                 else
                 {
@@ -238,7 +252,7 @@ namespace GrandTheftAccessibility
 
                         if (heightAboveGround > Constants.BRIDGE_MIN_HEIGHT_BELOW)
                         {
-                            detectedType = Constants.STRUCTURE_TYPE_BRIDGE;
+                            detectedType = StructureType.Bridge;
                         }
                     }
                 }
@@ -248,7 +262,7 @@ namespace GrandTheftAccessibility
                 {
                     bool wasInStructure = _inStructure;
                     _currentStructureType = detectedType;
-                    _inStructure = detectedType != Constants.STRUCTURE_TYPE_NONE;
+                    _inStructure = detectedType != StructureType.None;
 
                     if (currentTick - _lastStructureAnnounceTick > Constants.STRUCTURE_ANNOUNCE_COOLDOWN)
                     {
@@ -277,17 +291,18 @@ namespace GrandTheftAccessibility
         /// <summary>
         /// Get structure name for announcement
         /// </summary>
-        public static string GetStructureName(int structureType)
+        public static string GetStructureName(StructureType structureType)
         {
             switch (structureType)
             {
-                case Constants.STRUCTURE_TYPE_TUNNEL: return "tunnel";
-                case Constants.STRUCTURE_TYPE_BRIDGE: return "bridge";
-                case Constants.STRUCTURE_TYPE_OVERPASS: return "overpass";
-                case Constants.STRUCTURE_TYPE_UNDERPASS: return "underpass";
+                case StructureType.Tunnel: return "tunnel";
+                case StructureType.Bridge: return "bridge";
+                case StructureType.Overpass: return "overpass";
+                case StructureType.Underpass: return "underpass";
                 default: return "structure";
             }
         }
 
+        #endregion
     }
 }

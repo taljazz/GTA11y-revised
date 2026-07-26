@@ -1,26 +1,19 @@
 using System.Collections.Generic;
 using GTA;
-using DavyKager;
 
 namespace GrandTheftAccessibility.Menus
 {
     /// <summary>
-    /// Menu for saving, loading, and clearing vehicle save slots
+    /// Menu for saving, loading, and clearing vehicle save slots.
+    /// Top level = the three actions, submenu = the ten slots.
+    /// The active action is tracked with an enum (SubmenuMode) rather than
+    /// re-deriving it from the selection index.
     /// </summary>
-    public class VehicleSaveLoadMenu : IMenuState
+    public class VehicleSaveLoadMenu : HierarchicalMenuBase
     {
-        private readonly VehicleSaveManager _saveManager;
-        private readonly SettingsManager _settings;
+        #region Types
 
-        // Menu options at top level
-        private readonly List<string> _options;
-        private int _currentOptionIndex;
-
-        // Submenu state (slot selection)
-        private bool _inSubmenu;
-        private int _currentSlotIndex;
-        private SubmenuMode _submenuMode;
-
+        /// <summary>Which action the slot submenu applies to.</summary>
         private enum SubmenuMode
         {
             Save,
@@ -28,12 +21,24 @@ namespace GrandTheftAccessibility.Menus
             Clear
         }
 
-        public VehicleSaveLoadMenu(VehicleSaveManager saveManager, SettingsManager settings)
+        #endregion
+
+        #region Fields
+
+        private readonly VehicleSaveManager _saveManager;
+        private readonly SettingsManager _settings;
+        private readonly List<string> _options;
+        private SubmenuMode _submenuMode;
+
+        #endregion
+
+        #region Construction
+
+        public VehicleSaveLoadMenu(VehicleSaveManager saveManager, SettingsManager settings, AudioManager audio)
+            : base(audio)
         {
             _saveManager = saveManager;
             _settings = settings;
-            _inSubmenu = false;
-            _currentSlotIndex = 0;
 
             _options = new List<string>
             {
@@ -41,83 +46,28 @@ namespace GrandTheftAccessibility.Menus
                 "Load Saved Vehicle",
                 "Clear Slot"
             };
-
-            _currentOptionIndex = 0;
         }
 
-        public void NavigatePrevious(bool fastScroll = false)
+        #endregion
+
+        #region Top Level - actions
+
+        protected override int ItemCount => _options.Count;
+
+        protected override string GetItemText(int index)
         {
-            if (_inSubmenu)
-            {
-                // Navigate slots
-                int step = fastScroll ? 5 : 1;
-                _currentSlotIndex -= step;
-                if (_currentSlotIndex < 0)
-                    _currentSlotIndex = (((_currentSlotIndex % Constants.VEHICLE_SAVE_SLOT_COUNT) + Constants.VEHICLE_SAVE_SLOT_COUNT) % Constants.VEHICLE_SAVE_SLOT_COUNT);
-            }
-            else
-            {
-                // Navigate options
-                if (_currentOptionIndex > 0)
-                    _currentOptionIndex--;
-                else
-                    _currentOptionIndex = _options.Count - 1;
-            }
+            return _options[index];
         }
 
-        public void NavigateNext(bool fastScroll = false)
+        protected override void OnItemActivated(int index)
         {
-            if (_inSubmenu)
-            {
-                // Navigate slots
-                int step = fastScroll ? 5 : 1;
-                _currentSlotIndex += step;
-                if (_currentSlotIndex >= Constants.VEHICLE_SAVE_SLOT_COUNT)
-                    _currentSlotIndex = _currentSlotIndex % Constants.VEHICLE_SAVE_SLOT_COUNT;
-            }
-            else
-            {
-                // Navigate options
-                if (_currentOptionIndex < _options.Count - 1)
-                    _currentOptionIndex++;
-                else
-                    _currentOptionIndex = 0;
-            }
-        }
-
-        public string GetCurrentItemText()
-        {
-            if (_inSubmenu)
-            {
-                return _saveManager.GetSlotDescription(_currentSlotIndex);
-            }
-            else
-            {
-                return _options[_currentOptionIndex];
-            }
-        }
-
-        public void ExecuteSelection()
-        {
-            if (_inSubmenu)
-            {
-                ExecuteSlotAction();
-            }
-            else
-            {
-                EnterSubmenu();
-            }
-        }
-
-        private void EnterSubmenu()
-        {
-            switch (_currentOptionIndex)
+            switch (index)
             {
                 case 0:
                     // Save - check if player is in a vehicle (use IsInVehicle to avoid stale references)
                     if (!Game.Player.Character.IsInVehicle())
                     {
-                        Tolk.Speak("You must be in a vehicle to save.");
+                        Speak("You must be in a vehicle to save.");
                         return;
                     }
                     _submenuMode = SubmenuMode.Save;
@@ -132,97 +82,12 @@ namespace GrandTheftAccessibility.Menus
                     break;
             }
 
-            _inSubmenu = true;
-            _currentSlotIndex = 0;
+            EnterSubmenu();
         }
 
-        private void ExecuteSlotAction()
+        public override string GetMenuName()
         {
-            // Defensive: Validate slot index
-            if (_currentSlotIndex < 0 || _currentSlotIndex >= Constants.VEHICLE_SAVE_SLOT_COUNT)
-            {
-                _currentSlotIndex = 0;
-                return;
-            }
-
-            // Defensive: Validate save manager
-            if (_saveManager == null)
-            {
-                Tolk.Speak("Save system unavailable.");
-                return;
-            }
-
-            switch (_submenuMode)
-            {
-                case SubmenuMode.Save:
-                    // Defensive: Check player exists
-                    Ped player = Game.Player?.Character;
-                    if (player == null || !player.Exists())
-                    {
-                        Tolk.Speak("Player unavailable.");
-                        return;
-                    }
-
-                    // Use IsInVehicle() to avoid stale CurrentVehicle references
-                    if (!player.IsInVehicle())
-                    {
-                        Tolk.Speak("No vehicle to save.");
-                        return;
-                    }
-                    Vehicle vehicle = player.CurrentVehicle;
-
-                    // Defensive: Validate vehicle
-                    if (vehicle == null || !vehicle.Exists())
-                    {
-                        Tolk.Speak("Vehicle unavailable.");
-                        return;
-                    }
-
-                    bool saved = _saveManager.SaveVehicleToSlot(vehicle, _currentSlotIndex);
-                    if (saved)
-                    {
-                        Tolk.Speak($"Saved {vehicle.DisplayName} to slot {_currentSlotIndex + 1}");
-                    }
-                    else
-                    {
-                        Tolk.Speak("Failed to save vehicle.");
-                    }
-                    break;
-
-                case SubmenuMode.Load:
-                    if (!_saveManager.IsSlotOccupied(_currentSlotIndex))
-                    {
-                        Tolk.Speak("Slot is empty.");
-                        return;
-                    }
-
-                    Vehicle spawned = _saveManager.SpawnVehicleFromSlot(_currentSlotIndex, _settings);
-                    if (spawned != null)
-                    {
-                        Tolk.Speak($"Loaded {spawned.DisplayName}");
-                    }
-                    else
-                    {
-                        Tolk.Speak("Failed to load vehicle.");
-                    }
-                    break;
-
-                case SubmenuMode.Clear:
-                    if (!_saveManager.IsSlotOccupied(_currentSlotIndex))
-                    {
-                        Tolk.Speak("Slot is already empty.");
-                        return;
-                    }
-
-                    _saveManager.ClearSlot(_currentSlotIndex);
-                    Tolk.Speak($"Cleared slot {_currentSlotIndex + 1}");
-                    break;
-            }
-        }
-
-        public string GetMenuName()
-        {
-            if (_inSubmenu)
+            if (InSubmenu)
             {
                 switch (_submenuMode)
                 {
@@ -237,15 +102,113 @@ namespace GrandTheftAccessibility.Menus
             return "Vehicle Save/Load";
         }
 
-        public bool HasActiveSubmenu => _inSubmenu;
+        #endregion
 
-        public void ExitSubmenu()
+        #region Submenu - slots
+
+        protected override int SubmenuItemCount => Constants.VEHICLE_SAVE_SLOT_COUNT;
+
+        protected override string GetSubmenuItemText(int index)
         {
-            if (_inSubmenu)
+            return _saveManager.GetSlotDescription(index);
+        }
+
+        protected override void OnSubmenuItemActivated(int index)
+        {
+            // Defensive: Validate save manager
+            if (_saveManager == null)
             {
-                _inSubmenu = false;
-                _currentSlotIndex = 0;
+                Speak("Save system unavailable.");
+                return;
+            }
+
+            switch (_submenuMode)
+            {
+                case SubmenuMode.Save:
+                    ExecuteSave(index);
+                    break;
+
+                case SubmenuMode.Load:
+                    ExecuteLoad(index);
+                    break;
+
+                case SubmenuMode.Clear:
+                    ExecuteClear(index);
+                    break;
             }
         }
+
+        #endregion
+
+        #region Slot Actions
+
+        private void ExecuteSave(int slotIndex)
+        {
+            // Defensive: Check player exists
+            Ped player = Game.Player?.Character;
+            if (player == null || !player.Exists())
+            {
+                Speak("Player unavailable.");
+                return;
+            }
+
+            // Use IsInVehicle() to avoid stale CurrentVehicle references
+            if (!player.IsInVehicle())
+            {
+                Speak("No vehicle to save.");
+                return;
+            }
+            Vehicle vehicle = player.CurrentVehicle;
+
+            // Defensive: Validate vehicle
+            if (vehicle == null || !vehicle.Exists())
+            {
+                Speak("Vehicle unavailable.");
+                return;
+            }
+
+            bool saved = _saveManager.SaveVehicleToSlot(vehicle, slotIndex);
+            if (saved)
+            {
+                Speak($"Saved {vehicle.DisplayName} to slot {slotIndex + 1}");
+            }
+            else
+            {
+                Speak("Failed to save vehicle.");
+            }
+        }
+
+        private void ExecuteLoad(int slotIndex)
+        {
+            if (!_saveManager.IsSlotOccupied(slotIndex))
+            {
+                Speak("Slot is empty.");
+                return;
+            }
+
+            Vehicle spawned = _saveManager.SpawnVehicleFromSlot(slotIndex, _settings);
+            if (spawned != null)
+            {
+                Speak($"Loaded {spawned.DisplayName}");
+            }
+            else
+            {
+                Speak("Failed to load vehicle.");
+            }
+        }
+
+        private void ExecuteClear(int slotIndex)
+        {
+            if (!_saveManager.IsSlotOccupied(slotIndex))
+            {
+                Speak("Slot is already empty.");
+                return;
+            }
+
+            _saveManager.ClearSlot(slotIndex);
+            Speak($"Cleared slot {slotIndex + 1}");
+        }
+
+        #endregion
     }
 }

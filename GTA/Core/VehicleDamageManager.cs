@@ -8,12 +8,25 @@ namespace GrandTheftAccessibility
     /// Monitors vehicle damage state (engine, body, tires, fire) and announces
     /// significant changes via TTS. Resets tracking when the player changes vehicles.
     /// Engine/body health: 0-1000 scale (1000 = perfect).
-    /// Tire burst detection via IsTireBurst for wheel indices 0-3.
+    /// Tire burst detection via IS_VEHICLE_TYRE_BURST for wheel indices 0-3.
+    /// Derives from MonitorBase&lt;Vehicle&gt; which supplies throttling, the enabled
+    /// setting check, and exception handling.
     /// </summary>
-    public class VehicleDamageManager
+    public class VehicleDamageManager : MonitorBase<Vehicle>
     {
-        private readonly AudioManager _audio;
-        private readonly SettingsManager _settings;
+        #region Constants
+
+        private const long UPDATE_INTERVAL = 1_000;   // 1 second
+
+        // Cached native hash for tire burst check
+        private static readonly Hash _isTireBurstHash = Hash.IS_VEHICLE_TYRE_BURST;
+
+        // Tire name lookup by wheel index
+        private static readonly string[] TireNames = { "Front left", "Front right", "Rear left", "Rear right" };
+
+        #endregion
+
+        #region Fields
 
         // Vehicle tracking - reset when vehicle changes
         private int _lastVehicleHandle;
@@ -29,71 +42,50 @@ namespace GrandTheftAccessibility
         private bool _tireBurst2;
         private bool _tireBurst3;
 
-        // Tick throttling (1 second)
-        private long _lastUpdateTick;
-        private const long UPDATE_INTERVAL = 10_000_000;
+        #endregion
 
-        // Cached native hash for tire burst check
-        private static readonly Hash _isTireBurstHash = Hash.IS_VEHICLE_TYRE_BURST;
-
-        // Tire name lookup by wheel index
-        private static readonly string[] TireNames = { "Front left", "Front right", "Rear left", "Rear right" };
+        #region Construction
 
         public VehicleDamageManager(AudioManager audio, SettingsManager settings)
+            : base(audio, settings)
         {
-            _audio = audio;
-            _settings = settings;
-
             _lastVehicleHandle = 0;
-            _lastEngineThreshold = 1000;
-            _lastBodyThreshold = 1000;
-            _wasOnFire = false;
-            _tireBurst0 = false;
-            _tireBurst1 = false;
-            _tireBurst2 = false;
-            _tireBurst3 = false;
-            _lastUpdateTick = 0;
+            ResetTracking();
         }
 
-        /// <summary>
-        /// Periodically check vehicle damage and announce changes.
-        /// Call from OnTick. Throttled to 1-second intervals.
-        /// Pass null if the player is not in a vehicle.
-        /// </summary>
-        public void Update(Vehicle vehicle, long currentTick)
+        #endregion
+
+        #region MonitorBase Overrides
+
+        protected override long UpdateIntervalMs => UPDATE_INTERVAL;
+
+        protected override string EnabledSettingKey => "announceVehicleDamage";
+
+        protected override bool ValidateSubject(Vehicle vehicle)
         {
-            if (currentTick - _lastUpdateTick < UPDATE_INTERVAL)
-                return;
-
-            _lastUpdateTick = currentTick;
-
-            if (vehicle == null || !vehicle.Exists())
-                return;
-
-            if (!_settings.GetSetting("announceVehicleDamage"))
-                return;
-
-            try
-            {
-                // Reset tracking when vehicle changes
-                int vehicleHandle = vehicle.Handle;
-                if (vehicleHandle != _lastVehicleHandle)
-                {
-                    ResetTracking();
-                    _lastVehicleHandle = vehicleHandle;
-                    return; // Skip first tick for new vehicle to establish baseline
-                }
-
-                CheckEngineHealth(vehicle);
-                CheckBodyHealth(vehicle);
-                CheckTires(vehicle);
-                CheckFire(vehicle);
-            }
-            catch (Exception ex)
-            {
-                Logger.Exception(ex, "VehicleDamageManager.Update");
-            }
+            return vehicle != null && vehicle.Exists();
         }
+
+        protected override void OnUpdate(Vehicle vehicle, long currentTick)
+        {
+            // Reset tracking when vehicle changes
+            int vehicleHandle = vehicle.Handle;
+            if (vehicleHandle != _lastVehicleHandle)
+            {
+                ResetTracking();
+                _lastVehicleHandle = vehicleHandle;
+                return; // Skip first tick for new vehicle to establish baseline
+            }
+
+            CheckEngineHealth(vehicle);
+            CheckBodyHealth(vehicle);
+            CheckTires(vehicle);
+            CheckFire(vehicle);
+        }
+
+        #endregion
+
+        #region Public API
 
         /// <summary>
         /// Speak a full vehicle health summary on demand.
@@ -128,13 +120,17 @@ namespace GrandTheftAccessibility
                 if (onFire)
                     status += ", Vehicle on fire";
 
-                _audio.Speak(status, true);
+                Audio.Speak(status, true);
             }
             catch (Exception ex)
             {
                 Logger.Exception(ex, "VehicleDamageManager.AnnounceStatus");
             }
         }
+
+        #endregion
+
+        #region Damage Checks
 
         /// <summary>
         /// Check engine health and announce threshold crossings.
@@ -149,7 +145,7 @@ namespace GrandTheftAccessibility
             {
                 string message = GetEngineThresholdMessage(engineHealth);
                 if (message != null)
-                    _audio.Speak(message, true);
+                    Audio.Speak(message, true);
             }
 
             _lastEngineThreshold = threshold;
@@ -168,7 +164,7 @@ namespace GrandTheftAccessibility
             {
                 string message = GetBodyThresholdMessage(bodyHealth);
                 if (message != null)
-                    _audio.Speak(message, true);
+                    Audio.Speak(message, true);
             }
 
             _lastBodyThreshold = threshold;
@@ -197,7 +193,7 @@ namespace GrandTheftAccessibility
             if (isBurst && !wasBurst)
             {
                 string tireName = wheelIndex < TireNames.Length ? TireNames[wheelIndex] : $"Tire {wheelIndex}";
-                _audio.Speak($"{tireName} tire burst", true);
+                Audio.Speak($"{tireName} tire burst", true);
             }
 
             wasBurst = isBurst;
@@ -211,7 +207,7 @@ namespace GrandTheftAccessibility
             bool onFire = vehicle.IsOnFire;
 
             if (onFire && !_wasOnFire)
-                _audio.Speak("Vehicle on fire!", true);
+                Audio.Speak("Vehicle on fire!", true);
 
             _wasOnFire = onFire;
         }
@@ -229,6 +225,10 @@ namespace GrandTheftAccessibility
             _tireBurst2 = false;
             _tireBurst3 = false;
         }
+
+        #endregion
+
+        #region Threshold Helpers
 
         /// <summary>
         /// Get threshold bucket for engine health.
@@ -303,5 +303,7 @@ namespace GrandTheftAccessibility
             if (health < 900f) return "minor damage";
             return "perfect";
         }
+
+        #endregion
     }
 }

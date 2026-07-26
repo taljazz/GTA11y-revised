@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using GTA;
 
 namespace GrandTheftAccessibility
 {
@@ -8,14 +9,16 @@ namespace GrandTheftAccessibility
     /// </summary>
     public static class Constants
     {
-        // Tick intervals (in .NET ticks, 10,000 ticks = 1ms)
-        public const long TICK_INTERVAL_VEHICLE_SPEED = 25_000_000;      // 2.5 seconds
-        public const long TICK_INTERVAL_TARGET = 2_000_000;              // 0.2 seconds
-        public const long TICK_INTERVAL_STREET_CHECK = 5_000_000;        // 0.5 seconds
-        public const long TICK_INTERVAL_ZONE_CHECK = 5_000_000;          // 0.5 seconds
-        public const long TICK_INTERVAL_ALTITUDE = 1_000_000;            // 0.1 seconds
-        public const long TICK_INTERVAL_PITCH = 500_000;                 // 0.05 seconds
-        public const long TICK_INTERVAL_TOLK_HEALTH = 100_000_000;       // 10 seconds
+        #region Timing, Distances, and Conversions
+
+        // Tick intervals in game-time milliseconds (Game.GameTime - pauses with the game)
+        public const long TICK_INTERVAL_VEHICLE_SPEED = 2_500;      // 2.5 seconds
+        public const long TICK_INTERVAL_TARGET = 200;              // 0.2 seconds
+        public const long TICK_INTERVAL_STREET_CHECK = 500;        // 0.5 seconds
+        public const long TICK_INTERVAL_ZONE_CHECK = 500;          // 0.5 seconds
+        public const long TICK_INTERVAL_ALTITUDE = 100;            // 0.1 seconds
+        public const long TICK_INTERVAL_PITCH = 50;                 // 0.05 seconds
+        public const long TICK_INTERVAL_TOLK_HEALTH = 10_000;       // 10 seconds
 
         // Search radii
         public const float NEARBY_ENTITY_RADIUS = 50f;
@@ -59,13 +62,17 @@ namespace GrandTheftAccessibility
         public const float METERS_TO_FEET = 3.28084f;
         public const float METERS_TO_MILES = 0.000621371f;         // Conversion factor
 
+        #endregion
+
+        #region Altitude and Aircraft Attitude
+
         // Altitude mode values
         public const int ALTITUDE_MODE_OFF = 0;
         public const int ALTITUDE_MODE_NORMAL = 1;
         public const int ALTITUDE_MODE_AIRCRAFT = 2;
 
         // Aircraft attitude indicator - base check interval
-        public const long TICK_INTERVAL_AIRCRAFT_ATTITUDE = 500_000;    // 0.05 seconds (check frequently)
+        public const long TICK_INTERVAL_AIRCRAFT_ATTITUDE = 50;    // 0.05 seconds (check frequently)
 
         // Aircraft type classification
         public const int AIRCRAFT_TYPE_FIXED_WING = 0;
@@ -100,9 +107,9 @@ namespace GrandTheftAccessibility
 
         // Aircraft attitude pulse intervals (ticks) - varies with angle
         public const long AIRCRAFT_PULSE_SILENT = long.MaxValue;        // No pulse (level)
-        public const long AIRCRAFT_PULSE_SLOW = 5_000_000;              // 0.5 seconds (slight)
-        public const long AIRCRAFT_PULSE_MEDIUM = 2_500_000;            // 0.25 seconds (moderate)
-        public const long AIRCRAFT_PULSE_RAPID = 1_000_000;             // 0.1 seconds (steep)
+        public const long AIRCRAFT_PULSE_SLOW = 500;              // 0.5 seconds (slight)
+        public const long AIRCRAFT_PULSE_MEDIUM = 250;            // 0.25 seconds (moderate)
+        public const long AIRCRAFT_PULSE_RAPID = 100;             // 0.1 seconds (steep)
 
         // Aircraft pitch audio (center channel)
         public const double AIRCRAFT_PITCH_GAIN = 0.08;
@@ -114,6 +121,10 @@ namespace GrandTheftAccessibility
         public const double AIRCRAFT_ROLL_FREQUENCY = 300.0;            // Hz (constant)
         public const double AIRCRAFT_ROLL_DURATION_SECONDS = 0.08;
 
+        #endregion
+
+        #region Landing Beacon and Collision Audio
+
         // Landing beacon audio (3D audio beacon for aircraft navigation)
         public const float BEACON_GAIN = 0.08f;
         public const float BEACON_MIN_GAIN = BEACON_GAIN * 0.1f;   // Floor gain when behind
@@ -122,14 +133,14 @@ namespace GrandTheftAccessibility
         public const float BEACON_MAX_FREQUENCY = 800f;            // Hz when below destination
         public const float BEACON_ALTITUDE_SCALE = 0.5f;           // Hz reduction per foot above destination
         public const float BEACON_PULSE_DURATION = 0.06f;          // seconds per pulse (60ms beep)
-        public const long BEACON_PULSE_DURATION_TICKS = (long)(BEACON_PULSE_DURATION * 10_000_000);
+        public const long BEACON_PULSE_DURATION_TICKS = (long)(BEACON_PULSE_DURATION * 1_000);
 
         // Beacon pulse rate (pre-calculated as ticks to avoid per-pulse float→long conversion)
-        public const long BEACON_PULSE_FAR_TICKS = (long)(1.5f * 10_000_000);      // >2 miles
-        public const long BEACON_PULSE_MEDIUM_TICKS = (long)(0.8f * 10_000_000);   // 1-2 miles
-        public const long BEACON_PULSE_NEAR_TICKS = (long)(0.4f * 10_000_000);     // 0.25-1 mile
-        public const long BEACON_PULSE_CLOSE_TICKS = (long)(0.15f * 10_000_000);   // <0.25 mile
-        public const long BEACON_PULSE_OVERHEAD_TICKS = (long)(0.06f * 10_000_000); // directly over
+        public const long BEACON_PULSE_FAR_TICKS = (long)(1.5f * 1_000);      // >2 miles
+        public const long BEACON_PULSE_MEDIUM_TICKS = (long)(0.8f * 1_000);   // 1-2 miles
+        public const long BEACON_PULSE_NEAR_TICKS = (long)(0.4f * 1_000);     // 0.25-1 mile
+        public const long BEACON_PULSE_CLOSE_TICKS = (long)(0.15f * 1_000);   // <0.25 mile
+        public const long BEACON_PULSE_OVERHEAD_TICKS = (long)(0.06f * 1_000); // directly over
 
         // Collision proximity beep (AutoDrive)
         public const double COLLISION_BEEP_GAIN = 0.08;
@@ -150,6 +161,10 @@ namespace GrandTheftAccessibility
         public const float BEACON_PAN_MAX_ANGLE = 90f;             // degrees - full pan at 90+ off heading
         public const float BEACON_PAN_RANGE_INV = 1f / (BEACON_PAN_MAX_ANGLE - BEACON_PAN_DEAD_ZONE); // pre-calculated
         public const float BEACON_BEHIND_GAIN_FACTOR = 0.3f;       // reduce volume when behind (>120 degrees off)
+
+        #endregion
+
+        #region Compass and Headings
 
         // Compass directions (degrees)
         public const double NORTH = 0;
@@ -173,6 +188,10 @@ namespace GrandTheftAccessibility
         public const int HEADING_SLICE_COUNT = 8;
         public const double HEADING_SLICE_DEGREES = 45.0;
 
+        #endregion
+
+        #region File Paths and Player Models
+
         // File paths
         public const string HASH_FILE_PATH = "scripts/hashes.txt";
         public const string AUDIO_TPED_PATH = "scripts/tped.wav";
@@ -183,6 +202,10 @@ namespace GrandTheftAccessibility
 
         // Player model names (to exclude from NPC lists)
         public static readonly string[] PLAYER_MODELS = { "player_zero", "player_one", "player_two" };
+
+        #endregion
+
+        #region Vehicle Data
 
         // VTOL-capable vehicle model hashes (use HashSet for O(1) lookup)
         public static readonly HashSet<int> VTOL_VEHICLE_HASHES = new HashSet<int>
@@ -415,18 +438,20 @@ namespace GrandTheftAccessibility
             // Motorcycles
             "deathbike", "deathbike2", "deathbike3", "oppressor", "oppressor2",
 
-            // Boats
-            "dinghy5", "patrolboat", "seabreeze",
+            // Boats (dinghy5 and seabreeze listed with aircraft/other groups above)
+            "patrolboat",
 
             // Other
-            "turretlimo", "pounder2", "mule4", "boxville5", "speedo4", "rcv"
+            "turretlimo", "pounder2", "mule4", "boxville5", "rcv"
         };
 
-        // ===== AUTODRIVE SYSTEM =====
+        #endregion
+
+        #region AutoDrive System
 
         // AutoDrive tick intervals
-        public const long TICK_INTERVAL_AUTODRIVE_UPDATE = 2_000_000;     // 0.2s for navigation updates
-        public const long TICK_INTERVAL_ROAD_FEATURE = 5_000_000;         // 0.5s for road feature checks
+        public const long TICK_INTERVAL_AUTODRIVE_UPDATE = 200;     // 0.2s for navigation updates
+        public const long TICK_INTERVAL_ROAD_FEATURE = 500;         // 0.5s for road feature checks
 
         // AutoDrive parameters
         public const float AUTODRIVE_DEFAULT_SPEED = 15f;                 // m/s (~33 mph)
@@ -481,57 +506,72 @@ namespace GrandTheftAccessibility
         // + SET_DRIVER_AGGRESSIVENESS as the primary behavior differentiators.
         // Key insight: Each style should have DISTINCT flag values for noticeably different behavior.
 
-        // Cautious: Maximum safety - stops for everything, obeys all laws
-        // = StopForVehicles(1) + StopForPeds(2) + SwerveAroundAllVehicles(4) +
-        //   SteerAroundStationaryVehicles(8) + SteerAroundPeds(16) + SteerAroundObjects(32) +
-        //   StopAtTrafficLights(128) +
-        //   AdjustCruiseSpeedBasedOnRoadSpeed(16384) + UseShortCutLinks(262144) +
-        //   ChangeLanesAroundObstructions(524288) +
-        //   AvoidAdverseConditions(67108864) + ForceJoinInRoadDirection(1073741824)
-        // Removed: GoOffRoadWhenAvoiding(256) - cautious drivers stay on road
-        // Removed: DontTerminateTaskWhenAchieved(2147483648) - causes circling at destination
-        // Added: AvoidAdverseConditions(67108864) - avoids hazards
-        public const int DRIVING_STYLE_CAUTIOUS = unchecked((int)(
-            1u + 2u + 4u + 8u + 16u + 32u + 128u +
-            16384u + 262144u + 524288u +
-            67108864u + 1073741824u));
+        // Driving styles are now built from the typed GTA.VehicleDrivingFlags enum
+        // (SHVDN 3.7) instead of hand-summed bit values. The combinations are
+        // bit-for-bit identical to the tuned legacy values, with one addition:
+        // AvoidRestrictedAreas (4096) on Cautious and Normal, which the original
+        // comments claimed was set but never actually was.
+        //
+        // Bit 67108864 has no name in the SHVDN enum; community docs call it
+        // "avoid adverse conditions" and the original Cautious tuning relied on it.
+        private const VehicleDrivingFlags UNNAMED_AVOID_ADVERSE_CONDITIONS = (VehicleDrivingFlags)67108864u;
+
+        // Cautious: Maximum safety - stops for everything, obeys all laws, stays on road
+        public static readonly int DRIVING_STYLE_CAUTIOUS = unchecked((int)(
+            VehicleDrivingFlags.StopForVehicles |
+            VehicleDrivingFlags.StopForPeds |
+            VehicleDrivingFlags.SwerveAroundAllVehicles |
+            VehicleDrivingFlags.SteerAroundStationaryVehicles |
+            VehicleDrivingFlags.SteerAroundPeds |
+            VehicleDrivingFlags.SteerAroundObjects |
+            VehicleDrivingFlags.StopAtTrafficLights |
+            VehicleDrivingFlags.AvoidRestrictedAreas |
+            VehicleDrivingFlags.AdjustCruiseSpeedBasedOnRoadSpeed |
+            VehicleDrivingFlags.UseShortCutLinks |
+            VehicleDrivingFlags.ChangeLanesAroundObstructions |
+            UNNAMED_AVOID_ADVERSE_CONDITIONS |
+            VehicleDrivingFlags.ForceJoinInRoadDirection));
 
         // Normal: Balanced driving - stops for vehicles and peds, obeys lights, smooth junctions
-        // Based on SHVDN DrivingModeStopForVehicles (786603) but with ForceJoinRoadDirection
-        // = StopForVehicles(1) + StopForPeds(2) + SwerveAroundAllVehicles(4) +
-        //   SteerAroundStationaryVehicles(8) + SteerAroundPeds(16) + SteerAroundObjects(32) +
-        //   StopAtTrafficLights(128) +
-        //   AdjustCruiseSpeedBasedOnRoadSpeed(16384) + UseShortCutLinks(262144) +
-        //   ChangeLanesAroundObstructions(524288) +
-        //   UseStringPullingAtJunctions(33554432) + ForceJoinInRoadDirection(1073741824)
-        // Added: SwerveAroundAllVehicles(4), SteerAroundPeds(16) - complete obstacle avoidance
-        public const int DRIVING_STYLE_NORMAL = unchecked((int)(
-            1u + 2u + 4u + 8u + 16u + 32u + 128u +
-            16384u + 262144u + 524288u +
-            33554432u + 1073741824u));
+        public static readonly int DRIVING_STYLE_NORMAL = unchecked((int)(
+            VehicleDrivingFlags.StopForVehicles |
+            VehicleDrivingFlags.StopForPeds |
+            VehicleDrivingFlags.SwerveAroundAllVehicles |
+            VehicleDrivingFlags.SteerAroundStationaryVehicles |
+            VehicleDrivingFlags.SteerAroundPeds |
+            VehicleDrivingFlags.SteerAroundObjects |
+            VehicleDrivingFlags.StopAtTrafficLights |
+            VehicleDrivingFlags.AvoidRestrictedAreas |
+            VehicleDrivingFlags.AdjustCruiseSpeedBasedOnRoadSpeed |
+            VehicleDrivingFlags.UseShortCutLinks |
+            VehicleDrivingFlags.ChangeLanesAroundObstructions |
+            VehicleDrivingFlags.UseStringPullingAtJunctions |
+            VehicleDrivingFlags.ForceJoinInRoadDirection));
 
         // Aggressive: Ignores lights, swerves around traffic, allows wrong way, overtakes
-        // Distinct from Normal - more assertive, skips traffic lights, takes shortcuts
-        // = StopForVehicles(1) + SwerveAroundAllVehicles(4) + SteerAroundObjects(32) +
-        //   AllowGoingWrongWay(512) +
-        //   AdjustCruiseSpeedBasedOnRoadSpeed(16384) + UseShortCutLinks(262144) +
-        //   ChangeLanesAroundObstructions(524288) + UseSwitchedOffNodes(2097152) +
-        //   UseStringPullingAtJunctions(33554432) + ForceJoinInRoadDirection(1073741824)
-        public const int DRIVING_STYLE_AGGRESSIVE = unchecked((int)(
-            1u + 4u + 32u + 512u +
-            16384u + 262144u + 524288u + 2097152u +
-            33554432u + 1073741824u));
+        public static readonly int DRIVING_STYLE_AGGRESSIVE = unchecked((int)(
+            VehicleDrivingFlags.StopForVehicles |
+            VehicleDrivingFlags.SwerveAroundAllVehicles |
+            VehicleDrivingFlags.SteerAroundObjects |
+            VehicleDrivingFlags.AllowGoingWrongWay |
+            VehicleDrivingFlags.AdjustCruiseSpeedBasedOnRoadSpeed |
+            VehicleDrivingFlags.UseShortCutLinks |
+            VehicleDrivingFlags.ChangeLanesAroundObstructions |
+            VehicleDrivingFlags.UseSwitchedOffNodes |
+            VehicleDrivingFlags.UseStringPullingAtJunctions |
+            VehicleDrivingFlags.ForceJoinInRoadDirection));
 
         // Reckless: Swerves around traffic without braking, dodges peds/objects, takes any path
-        // Based on SHVDN DrivingModeAvoidVehiclesReckless — "doesn't use brakes AT ALL for steering"
-        // = SwerveAroundAllVehicles(4) + SteerAroundPeds(16) + SteerAroundObjects(32) +
-        //   AllowGoingWrongWay(512) + UseShortCutLinks(262144) +
-        //   ChangeLanesAroundObstructions(524288) + UseSwitchedOffNodes(2097152) +
-        //   ForceJoinInRoadDirection(1073741824)
-        // No speed limits, no stopping for cars, no traffic lights. AI handles all speed management.
-        public const int DRIVING_STYLE_RECKLESS = unchecked((int)(
-            4u + 16u + 32u + 512u +
-            262144u + 524288u + 2097152u + 1073741824u));
+        // Based on the engine's reckless avoidance mode - "doesn't use brakes AT ALL for steering"
+        public static readonly int DRIVING_STYLE_RECKLESS = unchecked((int)(
+            VehicleDrivingFlags.SwerveAroundAllVehicles |
+            VehicleDrivingFlags.SteerAroundPeds |
+            VehicleDrivingFlags.SteerAroundObjects |
+            VehicleDrivingFlags.AllowGoingWrongWay |
+            VehicleDrivingFlags.UseShortCutLinks |
+            VehicleDrivingFlags.ChangeLanesAroundObstructions |
+            VehicleDrivingFlags.UseSwitchedOffNodes |
+            VehicleDrivingFlags.ForceJoinInRoadDirection));
 
         // Driving style values array (indexed by mode)
         public static readonly int[] DRIVING_STYLE_VALUES = new int[]
@@ -596,8 +636,8 @@ namespace GrandTheftAccessibility
         public const float SHARP_CURVE_THRESHOLD = 45f;                   // >45 degree = sharp curve
 
         // Speed-scaled announcement cooldowns
-        public const long ROAD_FEATURE_COOLDOWN_MIN = 20_000_000;         // 2 seconds at high speed
-        public const long ROAD_FEATURE_COOLDOWN_MAX = 50_000_000;         // 5 seconds at low speed
+        public const long ROAD_FEATURE_COOLDOWN_MIN = 2_000;         // 2 seconds at high speed
+        public const long ROAD_FEATURE_COOLDOWN_MAX = 5_000;         // 5 seconds at low speed
         public const float ROAD_FEATURE_COOLDOWN_SPEED_THRESHOLD = 20f;   // Speed (m/s) for minimum cooldown
         public const float ROAD_FEATURE_MIN_SPEED = 5f;                   // m/s - skip when slow
 
@@ -607,7 +647,7 @@ namespace GrandTheftAccessibility
         public const float CURVE_SLOWDOWN_DISTANCE_SPEED_FACTOR = 4.0f;   // Multiply speed by this for lookahead
         public const float CURVE_SLOWDOWN_DISTANCE_MIN = 50f;             // Minimum slowdown distance
         public const float CURVE_SLOWDOWN_DISTANCE_MAX = 200f;            // Maximum slowdown distance
-        public const long CURVE_SLOWDOWN_MAX_DURATION = 80_000_000;       // 8 second safety timeout (condition-based end is primary)
+        public const long CURVE_SLOWDOWN_MAX_DURATION = 8_000;       // 8 second safety timeout (condition-based end is primary)
         public const float CURVE_REALIGN_LOOKAHEAD = 15f;                  // Meters ahead to check road alignment for curve end
 
         // Smooth arrival deceleration (waypoint mode)
@@ -680,8 +720,8 @@ namespace GrandTheftAccessibility
         };
 
         // Road type detection tick interval
-        public const long TICK_INTERVAL_ROAD_TYPE_CHECK = 10_000_000;    // 1.0s
-        public const long ROAD_TYPE_ANNOUNCE_COOLDOWN = 100_000_000;     // 10s between same type announcements
+        public const long TICK_INTERVAL_ROAD_TYPE_CHECK = 1_000;    // 1.0s
+        public const long ROAD_TYPE_ANNOUNCE_COOLDOWN = 10_000;     // 10s between same type announcements
 
         // Road type speed multipliers (indexed by ROAD_TYPE_* values)
         // Note: DF_ADJUST_CRUISE_SPEED_BASED_ON_ROAD_SPEED (flag 16384) in driving styles
@@ -716,11 +756,12 @@ namespace GrandTheftAccessibility
         /// <summary>
         /// Get suggested driving style for a road type (for dynamic style switching)
         /// </summary>
-        public static int GetSuggestedDrivingStyle(int roadType)
+        public static DrivingStyleMode GetSuggestedDrivingStyle(RoadType roadType)
         {
-            if (roadType >= 0 && roadType < ROAD_TYPE_DRIVING_STYLES.Length)
-                return ROAD_TYPE_DRIVING_STYLES[roadType];
-            return DRIVING_STYLE_MODE_NORMAL;
+            int index = (int)roadType;
+            if (index >= 0 && index < ROAD_TYPE_DRIVING_STYLES.Length)
+                return (DrivingStyleMode)ROAD_TYPE_DRIVING_STYLES[index];
+            return DrivingStyleMode.Normal;
         }
 
         // Granular arrival distance announcements (in feet)
@@ -732,39 +773,39 @@ namespace GrandTheftAccessibility
         // Traffic light state detection
         public const float TRAFFIC_LIGHT_STOP_SPEED = 0.5f;              // m/s - considered stopped
         public const float TRAFFIC_LIGHT_DETECTION_RADIUS = 30f;         // meters to check for lights
-        public const long TRAFFIC_LIGHT_STATE_COOLDOWN = 30_000_000;     // 3 seconds between state announcements
+        public const long TRAFFIC_LIGHT_STATE_COOLDOWN = 3_000;     // 3 seconds between state announcements
 
         // U-turn detection
         public const float UTURN_HEADING_THRESHOLD = 150f;               // degrees - heading change for U-turn
         public const float UTURN_DISTANCE_THRESHOLD = 30f;               // meters - distance over which to measure
-        public const long UTURN_ANNOUNCE_COOLDOWN = 50_000_000;          // 5 seconds between U-turn announcements
+        public const long UTURN_ANNOUNCE_COOLDOWN = 5_000;          // 5 seconds between U-turn announcements
 
         // Hill/gradient detection
         public const float HILL_STEEP_THRESHOLD = 8f;                    // degrees - steep hill
         public const float HILL_MODERATE_THRESHOLD = 4f;                 // degrees - moderate hill
         public const float HILL_DETECTION_DISTANCE = 50f;                // meters ahead to check
-        public const long HILL_ANNOUNCE_COOLDOWN = 50_000_000;           // 5 seconds between hill announcements
+        public const long HILL_ANNOUNCE_COOLDOWN = 5_000;           // 5 seconds between hill announcements
 
         // Announcement priority levels (higher = more important, but lower number = higher priority)
         public const int ANNOUNCE_PRIORITY_CRITICAL = 0;     // Recovery, arrival, errors
         public const int ANNOUNCE_PRIORITY_HIGH = 1;         // Traffic lights, hills
         public const int ANNOUNCE_PRIORITY_MEDIUM = 2;       // Curves, intersections
         public const int ANNOUNCE_PRIORITY_LOW = 3;          // Distance updates, road type
-        public const long ANNOUNCE_MIN_GAP = 5_000_000;      // 0.5 seconds minimum between announcements
+        public const long ANNOUNCE_MIN_GAP = 500;      // 0.5 seconds minimum between announcements
 
         // Per-priority cooldown durations (ticks)
-        public const long ANNOUNCE_COOLDOWN_CRITICAL = 5_000_000;    // 0.5 seconds
-        public const long ANNOUNCE_COOLDOWN_HIGH = 20_000_000;       // 2 seconds
-        public const long ANNOUNCE_COOLDOWN_MEDIUM = 30_000_000;     // 3 seconds
-        public const long ANNOUNCE_COOLDOWN_LOW = 50_000_000;        // 5 seconds
-        public const long ANNOUNCE_GLOBAL_COOLDOWN = 5_000_000;      // 0.5 second minimum between any announcements
+        public const long ANNOUNCE_COOLDOWN_CRITICAL = 500;    // 0.5 seconds
+        public const long ANNOUNCE_COOLDOWN_HIGH = 2_000;       // 2 seconds
+        public const long ANNOUNCE_COOLDOWN_MEDIUM = 3_000;     // 3 seconds
+        public const long ANNOUNCE_COOLDOWN_LOW = 5_000;        // 5 seconds
+        public const long ANNOUNCE_GLOBAL_COOLDOWN = 500;      // 0.5 second minimum between any announcements
 
         // Waypoint bearing announcements (standalone, between milestones)
-        public const long BEARING_ANNOUNCE_INTERVAL = 300_000_000;  // 30 seconds
+        public const long BEARING_ANNOUNCE_INTERVAL = 30_000;  // 30 seconds
 
         // Speed change announcements (catch-all for combined multiplier changes)
         public const float SPEED_ANNOUNCE_CHANGE_THRESHOLD = 2.2f;  // m/s (~5 mph)
-        public const long SPEED_ANNOUNCE_COOLDOWN = 150_000_000;    // 15 seconds
+        public const long SPEED_ANNOUNCE_COOLDOWN = 15_000;    // 15 seconds
 
         // ===== ROAD SEEKING =====
 
@@ -788,16 +829,16 @@ namespace GrandTheftAccessibility
         };
 
         // Road seeking parameters
-        public const long TICK_INTERVAL_ROAD_SEEK_SCAN = 30_000_000;     // 3.0s between scans
+        public const long TICK_INTERVAL_ROAD_SEEK_SCAN = 3_000;     // 3.0s between scans
         public const int ROAD_SEEK_MAX_NODES = 30;                       // Check 30 closest road nodes per scan
         public const float ROAD_SEEK_ARRIVAL_THRESHOLD = 30f;            // Within 30m = arrived
 
         // ===== AUTODRIVE RECOVERY SYSTEM =====
 
         // Recovery check intervals
-        public const long TICK_INTERVAL_RECOVERY_CHECK = 5_000_000;       // 0.5s between recovery checks
-        public const long TICK_INTERVAL_STUCK_CHECK = 10_000_000;         // 1.0s between stuck checks
-        public const long TICK_INTERVAL_PROGRESS_CHECK = 20_000_000;      // 2.0s between progress checks
+        public const long TICK_INTERVAL_RECOVERY_CHECK = 500;       // 0.5s between recovery checks
+        public const long TICK_INTERVAL_STUCK_CHECK = 1_000;         // 1.0s between stuck checks
+        public const long TICK_INTERVAL_PROGRESS_CHECK = 2_000;      // 2.0s between progress checks
 
         // Stuck detection thresholds (optimized per Grok recommendations - 5s threshold)
         public const float STUCK_MOVEMENT_THRESHOLD = 2f;                 // Less than 2m movement = potentially stuck
@@ -813,7 +854,7 @@ namespace GrandTheftAccessibility
         public const float TASK_HEADING_DEVIATION_THRESHOLD = 45f;        // Only re-issue if heading differs >45° from target
 
         // Progress timeout (waypoint mode)
-        public const long PROGRESS_TIMEOUT_TICKS = 300_000_000;           // 30 seconds without progress = timeout
+        public const long PROGRESS_TIMEOUT_TICKS = 30_000;           // 30 seconds without progress = timeout
         public const float PROGRESS_DISTANCE_THRESHOLD = 10f;             // Must get 10m closer within timeout
 
         // Vehicle state thresholds
@@ -830,7 +871,7 @@ namespace GrandTheftAccessibility
         public const ulong NATIVE_SET_DRIVE_TASK_MAX_CRUISE_SPEED = 0x404A5AA9B9F0B746;
 
         // Dead-end detection
-        public const long TICK_INTERVAL_DEAD_END_CHECK = 20_000_000;      // 2 seconds between checks
+        public const long TICK_INTERVAL_DEAD_END_CHECK = 2_000;      // 2 seconds between checks
         public const float DEAD_END_ESCAPE_DISTANCE = 50f;                // meters from entry to consider escaped
         // Note: ROAD_FLAG_DEAD_END is defined in Road Type Detection section
 
@@ -840,8 +881,8 @@ namespace GrandTheftAccessibility
         public const float RECOVERY_ESCAPE_MAX_DISTANCE = 150f;           // max search distance
         public const float RECOVERY_ESCAPE_ARRIVAL_RADIUS = 12f;          // generous arrival threshold
         public const float RECOVERY_ESCAPE_SPEED = 8f;                    // m/s (~18 mph) cautious escape
-        public const long RECOVERY_ESCAPE_TIMEOUT = 150_000_000;          // 15 seconds to reach escape node
-        public const long RECOVERY_COOLDOWN = 50_000_000;                 // 5s cooldown after success
+        public const long RECOVERY_ESCAPE_TIMEOUT = 15_000;          // 15 seconds to reach escape node
+        public const long RECOVERY_COOLDOWN = 5_000;                 // 5s cooldown after success
         public const int RECOVERY_MAX_ATTEMPTS = 5;                       // stop after 5 failures
         public const int RECOVERY_NODE_SCAN_COUNT = 5;                    // scan 5 nearest nodes to find one behind
 
@@ -875,7 +916,7 @@ namespace GrandTheftAccessibility
         public const float WEATHER_SPEED_BLIZZARD = 0.35f;     // Crawl in blizzard (near-zero visibility + ice)
 
         // Weather check interval
-        public const long TICK_INTERVAL_WEATHER_CHECK = 50_000_000;  // 5 seconds
+        public const long TICK_INTERVAL_WEATHER_CHECK = 5_000;  // 5 seconds
 
         // Native for weather
         public const ulong NATIVE_GET_PREV_WEATHER_TYPE_HASH_NAME = 0x564B884A05EC45A3;
@@ -900,8 +941,8 @@ namespace GrandTheftAccessibility
 
         // Collision scan parameters
         public const float COLLISION_SCAN_ANGLE = 30f;         // degrees - cone in front
-        public const long TICK_INTERVAL_COLLISION_CHECK = 3_000_000;  // 0.3 seconds (faster for safety)
-        public const long COLLISION_WARNING_COOLDOWN = 15_000_000;    // 1.5 seconds between same warning
+        public const long TICK_INTERVAL_COLLISION_CHECK = 300;  // 0.3 seconds (faster for safety)
+        public const long COLLISION_WARNING_COOLDOWN = 1_500;    // 1.5 seconds between same warning
 
         // Following distance (time-based, in seconds at current speed)
         // Based on real-world "2-second rule" (3+ seconds in adverse conditions)
@@ -924,7 +965,7 @@ namespace GrandTheftAccessibility
         public const float TIME_SPEED_NIGHT = 0.8f;            // Slower at night (visibility)
 
         // Time check interval
-        public const long TICK_INTERVAL_TIME_CHECK = 100_000_000;  // 10 seconds
+        public const long TICK_INTERVAL_TIME_CHECK = 10_000;  // 10 seconds
 
         // Headlight natives
         public const ulong NATIVE_SET_VEHICLE_LIGHTS = 0x34E710FF01247C5A;
@@ -935,8 +976,8 @@ namespace GrandTheftAccessibility
         // Emergency vehicle detection
         public const float EMERGENCY_DETECTION_RADIUS = 100f;  // meters to detect sirens
         public const float EMERGENCY_YIELD_DISTANCE = 30f;     // meters to start yielding
-        public const long TICK_INTERVAL_EMERGENCY_CHECK = 10_000_000;  // 1 second
-        public const long EMERGENCY_YIELD_DURATION = 50_000_000;  // 5 seconds of yielding
+        public const long TICK_INTERVAL_EMERGENCY_CHECK = 1_000;  // 1 second
+        public const long EMERGENCY_YIELD_DURATION = 5_000;  // 5 seconds of yielding
 
         // Native for siren check
         public const ulong NATIVE_IS_VEHICLE_SIREN_ON = 0x4C9BF537BE2634B2;
@@ -945,7 +986,7 @@ namespace GrandTheftAccessibility
         // ===== ETA ANNOUNCEMENTS =====
 
         // ETA calculation
-        public const long TICK_INTERVAL_ETA_UPDATE = 300_000_000;  // 30 seconds
+        public const long TICK_INTERVAL_ETA_UPDATE = 30_000;  // 30 seconds
         public const float ETA_ANNOUNCE_CHANGE_THRESHOLD = 60f;    // Announce if ETA changes by 1+ minute
         public const float ETA_MIN_DISTANCE_FOR_ANNOUNCE = 500f;   // meters - don't announce ETA under this
 
@@ -966,7 +1007,7 @@ namespace GrandTheftAccessibility
 
         // Pause behavior
         public const float PAUSE_BRAKE_FORCE = 1.0f;               // Full brakes when pausing
-        public const long PAUSE_RESUME_DELAY = 10_000_000;         // 1 second delay before resuming
+        public const long PAUSE_RESUME_DELAY = 1_000;         // 1 second delay before resuming
 
         // Native for braking
         public const ulong NATIVE_SET_VEHICLE_HANDBRAKE = 0x684785568EF26A22;
@@ -981,16 +1022,16 @@ namespace GrandTheftAccessibility
         public const float FOLLOWING_DANGEROUS = 5f;               // Dangerous
 
         // Following distance announcements
-        public const long TICK_INTERVAL_FOLLOWING_CHECK = 20_000_000;  // 2 seconds
-        public const long FOLLOWING_ANNOUNCE_COOLDOWN = 100_000_000;   // 10 seconds between same state
+        public const long TICK_INTERVAL_FOLLOWING_CHECK = 2_000;  // 2 seconds
+        public const long FOLLOWING_ANNOUNCE_COOLDOWN = 10_000;   // 10 seconds between same state
 
         // ===== TUNNEL/BRIDGE DETECTION =====
 
         // Structure detection
         public const float STRUCTURE_CHECK_HEIGHT = 10f;           // meters above to check for ceiling
         public const float BRIDGE_MIN_HEIGHT_BELOW = 5f;           // meters of clearance below = bridge
-        public const long TICK_INTERVAL_STRUCTURE_CHECK = 20_000_000;  // 2 seconds
-        public const long STRUCTURE_ANNOUNCE_COOLDOWN = 50_000_000;    // 5 seconds
+        public const long TICK_INTERVAL_STRUCTURE_CHECK = 2_000;  // 2 seconds
+        public const long STRUCTURE_ANNOUNCE_COOLDOWN = 5_000;    // 5 seconds
 
         // Structure types
         public const int STRUCTURE_TYPE_NONE = 0;
@@ -1009,8 +1050,8 @@ namespace GrandTheftAccessibility
         public const float LANE_WIDTH = 3.5f;                      // meters - typical lane width
         public const float LANE_CHANGE_THRESHOLD = 2.5f;           // meters lateral movement = lane change
         public const float LANE_CHANGE_MIN_SPEED = 8f;             // m/s - minimum speed to detect lane changes
-        public const long TICK_INTERVAL_LANE_CHECK = 5_000_000;    // 0.5 seconds
-        public const long LANE_CHANGE_ANNOUNCE_COOLDOWN = 30_000_000;  // 3 seconds between announcements
+        public const long TICK_INTERVAL_LANE_CHECK = 500;    // 0.5 seconds
+        public const long LANE_CHANGE_ANNOUNCE_COOLDOWN = 3_000;  // 3 seconds between announcements
         public const float LANE_CHANGE_HEADING_TOLERANCE = 15f;    // degrees - must maintain similar heading
 
         // Overtaking detection
@@ -1018,13 +1059,15 @@ namespace GrandTheftAccessibility
         public const float OVERTAKE_SIDE_DISTANCE = 8f;            // meters - how far to the side to consider "beside"
         public const float OVERTAKE_BEHIND_DISTANCE = 15f;         // meters - how far behind = "passed"
         public const float OVERTAKE_MIN_SPEED_DIFF = 5f;           // m/s - must be going faster than overtaken vehicle
-        public const long TICK_INTERVAL_OVERTAKE_CHECK = 10_000_000;  // 1.0 seconds
-        public const long OVERTAKE_ANNOUNCE_COOLDOWN = 50_000_000;   // 5 seconds between announcements
+        public const long TICK_INTERVAL_OVERTAKE_CHECK = 1_000;  // 1.0 seconds
+        public const long OVERTAKE_ANNOUNCE_COOLDOWN = 5_000;   // 5 seconds between announcements
         public const int OVERTAKE_TRACKING_MAX = 5;                // max vehicles to track for overtaking
 
         // ===== END AUTODRIVE SYSTEM =====
 
-        // ===== AIRCRAFT DATA =====
+        #endregion
+
+        #region Aircraft and Vehicle Display Data
 
         // Default runway length for landing destination calculations (used by AircraftLandingMenu)
         public const float DEFAULT_RUNWAY_LENGTH = 800f;         // meters (~2625 feet)
@@ -1115,7 +1158,9 @@ namespace GrandTheftAccessibility
             "Chrome"
         };
 
-        // ===== SAFE ARRIVAL POSITION CALCULATION =====
+        #endregion
+
+        #region Safe Arrival and Navigation Tuning
 
         // Search radius/distance thresholds for finding safe road position near waypoint
         public const float SAFE_ARRIVAL_MAX_DISTANCE = 150f;              // meters - max acceptable distance from waypoint
@@ -1145,88 +1190,106 @@ namespace GrandTheftAccessibility
         public const float COLLISION_LOOKAHEAD_MIN = 30f;                 // meters - minimum lookahead distance
         public const float COLLISION_LOOKAHEAD_TIME_FACTOR = 2f;          // seconds ahead to scan
 
-        // ===== SAFE ARRAY ACCESS HELPER METHODS =====
+        #endregion
+
+        #region Safe Accessor Methods
         // These methods provide bounds-checked access to constant arrays to prevent IndexOutOfRangeException
 
         /// <summary>
-        /// Safely get driving style value by mode index with bounds checking.
+        /// Safely get the native driving style flag value for a mode with bounds checking.
         /// </summary>
-        public static int GetDrivingStyleValue(int modeIndex)
+        public static int GetDrivingStyleValue(DrivingStyleMode mode)
         {
-            if (modeIndex >= 0 && modeIndex < DRIVING_STYLE_VALUES.Length)
-                return DRIVING_STYLE_VALUES[modeIndex];
+            int index = (int)mode;
+            if (index >= 0 && index < DRIVING_STYLE_VALUES.Length)
+                return DRIVING_STYLE_VALUES[index];
             return DRIVING_STYLE_VALUES[DRIVING_STYLE_MODE_NORMAL]; // Default to normal
         }
 
         /// <summary>
-        /// Safely get driving style ability by mode index with bounds checking.
+        /// Safely get driving style ability by mode with bounds checking.
         /// </summary>
-        public static float GetDrivingStyleAbility(int modeIndex)
+        public static float GetDrivingStyleAbility(DrivingStyleMode mode)
         {
-            if (modeIndex >= 0 && modeIndex < DRIVING_STYLE_ABILITIES.Length)
-                return DRIVING_STYLE_ABILITIES[modeIndex];
+            int index = (int)mode;
+            if (index >= 0 && index < DRIVING_STYLE_ABILITIES.Length)
+                return DRIVING_STYLE_ABILITIES[index];
             return DRIVING_STYLE_ABILITIES[DRIVING_STYLE_MODE_NORMAL];
         }
 
         /// <summary>
-        /// Safely get driving style aggressiveness by mode index with bounds checking.
+        /// Safely get driving style aggressiveness by mode with bounds checking.
         /// </summary>
-        public static float GetDrivingStyleAggressiveness(int modeIndex)
+        public static float GetDrivingStyleAggressiveness(DrivingStyleMode mode)
         {
-            if (modeIndex >= 0 && modeIndex < DRIVING_STYLE_AGGRESSIVENESS.Length)
-                return DRIVING_STYLE_AGGRESSIVENESS[modeIndex];
+            int index = (int)mode;
+            if (index >= 0 && index < DRIVING_STYLE_AGGRESSIVENESS.Length)
+                return DRIVING_STYLE_AGGRESSIVENESS[index];
             return DRIVING_STYLE_AGGRESSIVENESS[DRIVING_STYLE_MODE_NORMAL];
         }
 
         /// <summary>
-        /// Safely get driving style speed multiplier by mode index with bounds checking.
+        /// Safely get driving style speed multiplier by mode with bounds checking.
         /// This is the PRIMARY differentiator between styles (reference: AutoDriveScript2.cs)
         /// </summary>
-        public static float GetDrivingStyleSpeedMultiplier(int modeIndex)
+        public static float GetDrivingStyleSpeedMultiplier(DrivingStyleMode mode)
         {
-            if (modeIndex >= 0 && modeIndex < DRIVING_STYLE_SPEED_MULTIPLIERS.Length)
-                return DRIVING_STYLE_SPEED_MULTIPLIERS[modeIndex];
+            int index = (int)mode;
+            if (index >= 0 && index < DRIVING_STYLE_SPEED_MULTIPLIERS.Length)
+                return DRIVING_STYLE_SPEED_MULTIPLIERS[index];
             return DRIVING_STYLE_SPEED_MULTIPLIERS[DRIVING_STYLE_MODE_NORMAL];
         }
 
         /// <summary>
-        /// Safely get driving style name by mode index with bounds checking.
+        /// Safely get driving style display name by mode with bounds checking.
         /// </summary>
-        public static string GetDrivingStyleName(int modeIndex)
+        public static string GetDrivingStyleName(DrivingStyleMode mode)
         {
-            if (modeIndex >= 0 && modeIndex < DRIVING_STYLE_NAMES.Length)
-                return DRIVING_STYLE_NAMES[modeIndex];
+            int index = (int)mode;
+            if (index >= 0 && index < DRIVING_STYLE_NAMES.Length)
+                return DRIVING_STYLE_NAMES[index];
             return "Unknown";
         }
 
         /// <summary>
-        /// Safely get road type name by road type index with bounds checking.
+        /// Safely get road type display name with bounds checking.
         /// </summary>
-        public static string GetRoadTypeName(int roadType)
+        public static string GetRoadTypeName(RoadType roadType)
         {
-            if (roadType >= 0 && roadType < ROAD_TYPE_NAMES.Length)
-                return ROAD_TYPE_NAMES[roadType];
+            int index = (int)roadType;
+            if (index >= 0 && index < ROAD_TYPE_NAMES.Length)
+                return ROAD_TYPE_NAMES[index];
             return "unknown road";
         }
 
         /// <summary>
-        /// Safely get road type speed multiplier by road type index with bounds checking.
+        /// Safely get road type speed multiplier with bounds checking.
         /// </summary>
-        public static float GetRoadTypeSpeedMultiplier(int roadType)
+        public static float GetRoadTypeSpeedMultiplier(RoadType roadType)
         {
-            if (roadType >= 0 && roadType < ROAD_TYPE_SPEED_MULTIPLIERS.Length)
-                return ROAD_TYPE_SPEED_MULTIPLIERS[roadType];
+            int index = (int)roadType;
+            if (index >= 0 && index < ROAD_TYPE_SPEED_MULTIPLIERS.Length)
+                return ROAD_TYPE_SPEED_MULTIPLIERS[index];
             return 0.8f; // Default to cautious multiplier for unknown
         }
 
         /// <summary>
-        /// Safely get road seek mode name by seek mode index with bounds checking.
+        /// Safely get road seek mode display name with bounds checking.
+        /// Accepts an int index for menu use.
         /// </summary>
-        public static string GetRoadSeekModeName(int seekMode)
+        public static string GetRoadSeekModeName(int seekModeIndex)
         {
-            if (seekMode >= 0 && seekMode < ROAD_SEEK_MODE_NAMES.Length)
-                return ROAD_SEEK_MODE_NAMES[seekMode];
+            if (seekModeIndex >= 0 && seekModeIndex < ROAD_SEEK_MODE_NAMES.Length)
+                return ROAD_SEEK_MODE_NAMES[seekModeIndex];
             return "Unknown";
+        }
+
+        /// <summary>
+        /// Safely get road seek mode display name with bounds checking.
+        /// </summary>
+        public static string GetRoadSeekModeName(RoadSeekMode seekMode)
+        {
+            return GetRoadSeekModeName((int)seekMode);
         }
 
         /// <summary>
@@ -1261,30 +1324,32 @@ namespace GrandTheftAccessibility
         }
 
         /// <summary>
-        /// Validate driving style mode index is within valid range.
+        /// Validate driving style mode is within valid range.
         /// </summary>
-        public static bool IsValidDrivingStyleMode(int modeIndex)
+        public static bool IsValidDrivingStyleMode(DrivingStyleMode mode)
         {
-            return modeIndex >= 0 && modeIndex < DRIVING_STYLE_VALUES.Length;
+            return (int)mode >= 0 && (int)mode < DRIVING_STYLE_VALUES.Length;
         }
 
         /// <summary>
-        /// Validate road type index is within valid range.
+        /// Validate road type is within valid range.
         /// </summary>
-        public static bool IsValidRoadType(int roadType)
+        public static bool IsValidRoadType(RoadType roadType)
         {
-            return roadType >= 0 && roadType < ROAD_TYPE_NAMES.Length;
+            return (int)roadType >= 0 && (int)roadType < ROAD_TYPE_NAMES.Length;
         }
 
         /// <summary>
-        /// Validate road seek mode index is within valid range.
+        /// Validate road seek mode is within valid range.
         /// </summary>
-        public static bool IsValidRoadSeekMode(int seekMode)
+        public static bool IsValidRoadSeekMode(RoadSeekMode seekMode)
         {
-            return seekMode >= 0 && seekMode < ROAD_SEEK_MODE_NAMES.Length;
+            return (int)seekMode >= 0 && (int)seekMode < ROAD_SEEK_MODE_NAMES.Length;
         }
 
-        // ===== TURRET CREW SYSTEM =====
+        #endregion
+
+        #region Turret Crew System
 
         // Turret crew announcement modes
         public const int TURRET_ANNOUNCE_OFF = 0;
@@ -1359,8 +1424,8 @@ namespace GrandTheftAccessibility
         public const int TURRET_COMBAT_RANGE_FAR = 2;           // SET_PED_COMBAT_RANGE level
 
         // Turret tick intervals
-        public const long TICK_INTERVAL_TURRET_UPDATE = 500_000;          // 0.05s - turret AI update
-        public const long TICK_INTERVAL_TURRET_ANNOUNCE = 50_000_000;     // 5s - announcement cooldown
+        public const long TICK_INTERVAL_TURRET_UPDATE = 50;          // 0.05s - turret AI update
+        public const long TICK_INTERVAL_TURRET_ANNOUNCE = 5_000;     // 5s - announcement cooldown
 
         // Turret crew states
         public const int TURRET_STATE_IDLE = 0;
@@ -1383,7 +1448,9 @@ namespace GrandTheftAccessibility
 
         // ===== END TURRET CREW SYSTEM =====
 
-        // ===== GTA ONLINE FEATURES IN SINGLE PLAYER =====
+        #endregion
+
+        #region GTA Online Features
 
         // Native to enable MP maps in single player (ON_ENTER_MP)
         // This activates multiplayer map content (interiors, DLC locations) in single player
@@ -1431,6 +1498,6 @@ namespace GrandTheftAccessibility
 
         // ===== END GTA ONLINE FEATURES =====
 
-        // ===== END CONSTANTS =====
+        #endregion
     }
 }

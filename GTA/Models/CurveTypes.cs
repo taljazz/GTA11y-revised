@@ -1,5 +1,7 @@
 namespace GrandTheftAccessibility
 {
+    #region Curve Enums
+
     /// <summary>
     /// Curve severity classification
     /// </summary>
@@ -20,6 +22,10 @@ namespace GrandTheftAccessibility
         Left = 0,
         Right = 1
     }
+
+    #endregion
+
+    #region Curve Info Struct
 
     /// <summary>
     /// Comprehensive curve information including physics-based safe speed calculation
@@ -60,4 +66,6 @@ namespace GrandTheftAccessibility
             SafeSpeed = safeSpeed;
         }
     }
+
+    #endregion
 }

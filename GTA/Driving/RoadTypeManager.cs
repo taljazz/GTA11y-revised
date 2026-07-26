@@ -8,22 +8,29 @@ namespace GrandTheftAccessibility
     /// <summary>
     /// Manages road type detection, dead-ends, and restricted areas.
     /// Extracted from AutoDriveManager for separation of concerns.
+    /// Road classification is tracked with the RoadType enum.
     /// </summary>
     public class RoadTypeManager
     {
+        #region Constants
+
         // PERFORMANCE: Pre-cached Hash values to avoid repeated casting
         private static readonly Hash _getVehicleNodePropsHash = (Hash)Constants.NATIVE_GET_VEHICLE_NODE_PROPERTIES;
         private static readonly Hash _clearPedTasksHash = (Hash)Constants.NATIVE_CLEAR_PED_TASKS;
         private static readonly Hash _taskVehicleDriveWanderHash = (Hash)Constants.NATIVE_TASK_VEHICLE_DRIVE_WANDER;
 
+        #endregion
+
+        #region Fields
+
         private readonly AudioManager _audio;
         private readonly AnnouncementQueue _announcementQueue;
 
-        // Road type state
+        // Road type state (null = no previous value yet)
         private float _roadTypeSpeedMultiplier = 1.0f;
-        private int _lastSpeedAdjustedRoadType = -1;
-        private int _currentRoadType;
-        private int _lastAnnouncedRoadType;
+        private RoadType? _lastSpeedAdjustedRoadType;
+        private RoadType _currentRoadType;
+        private RoadType? _lastAnnouncedRoadType;
         private long _lastRoadTypeAnnounceTick;
         private long _lastRoadTypeCheckTick;
 
@@ -36,6 +43,10 @@ namespace GrandTheftAccessibility
         private readonly OutputArgument _density = new OutputArgument();
         private readonly OutputArgument _flags = new OutputArgument();
 
+        #endregion
+
+        #region Properties
+
         /// <summary>
         /// Current road type speed multiplier
         /// </summary>
@@ -44,12 +55,16 @@ namespace GrandTheftAccessibility
         /// <summary>
         /// Current road type
         /// </summary>
-        public int CurrentRoadType => _currentRoadType;
+        public RoadType CurrentRoadType => _currentRoadType;
 
         /// <summary>
         /// Whether currently in a dead-end
         /// </summary>
         public bool IsInDeadEnd => _inDeadEnd;
+
+        #endregion
+
+        #region Construction
 
         public RoadTypeManager(AudioManager audio, AnnouncementQueue announcementQueue)
         {
@@ -64,9 +79,9 @@ namespace GrandTheftAccessibility
         public void Reset()
         {
             _roadTypeSpeedMultiplier = 1.0f;
-            _lastSpeedAdjustedRoadType = -1;
-            _currentRoadType = Constants.ROAD_TYPE_UNKNOWN;
-            _lastAnnouncedRoadType = -1;
+            _lastSpeedAdjustedRoadType = null;
+            _currentRoadType = RoadType.Unknown;
+            _lastAnnouncedRoadType = null;
             _lastRoadTypeAnnounceTick = 0;
             _lastRoadTypeCheckTick = 0;
 
@@ -75,10 +90,14 @@ namespace GrandTheftAccessibility
             _deadEndEntryPosition = Vector3.Zero;
         }
 
+        #endregion
+
+        #region Road Classification
+
         /// <summary>
         /// Classify road type based on node flags and density (no lane count available)
         /// </summary>
-        public int ClassifyRoadType(int flags, int density)
+        public RoadType ClassifyRoadType(int flags, int density)
         {
             return ClassifyRoadType(flags, density, -1);
         }
@@ -91,23 +110,23 @@ namespace GrandTheftAccessibility
         /// <param name="flags">eVehicleNodeProperties flags from GET_VEHICLE_NODE_PROPERTIES</param>
         /// <param name="density">Traffic density 0-15 from GET_VEHICLE_NODE_PROPERTIES</param>
         /// <param name="laneCount">Total lanes from GET_NTH_CLOSEST_VEHICLE_NODE_WITH_HEADING, or -1 if unavailable</param>
-        public int ClassifyRoadType(int flags, int density, int laneCount)
+        public RoadType ClassifyRoadType(int flags, int density, int laneCount)
         {
             // Skip water route nodes
             if ((flags & Constants.ROAD_FLAG_WATER) != 0)
-                return Constants.ROAD_TYPE_UNKNOWN;
+                return RoadType.Unknown;
 
             // Skip switched-off nodes (parking lots, disabled paths)
             if ((flags & Constants.ROAD_FLAG_SWITCHED_OFF) != 0)
-                return Constants.ROAD_TYPE_UNKNOWN;
+                return RoadType.Unknown;
 
             // Priority 1: Explicit road type flags (most reliable)
             if ((flags & Constants.ROAD_FLAG_TUNNEL) != 0)
-                return Constants.ROAD_TYPE_TUNNEL;
+                return RoadType.Tunnel;
 
             // Highway detection: flag + optional lane count confirmation
             if ((flags & Constants.ROAD_FLAG_HIGHWAY) != 0)
-                return Constants.ROAD_TYPE_HIGHWAY;
+                return RoadType.Highway;
 
             // Lane-count highway detection: no highway flag but 3+ lanes and no traffic lights
             // This catches unmarked highway segments that GTA doesn't flag
@@ -115,7 +134,7 @@ namespace GrandTheftAccessibility
                 (flags & Constants.ROAD_FLAG_TRAFFIC_LIGHT) == 0 &&
                 density <= Constants.ROAD_DENSITY_SUBURBAN_MAX)
             {
-                return Constants.ROAD_TYPE_HIGHWAY;
+                return RoadType.Highway;
             }
 
             // Priority 2: Off-road detection with density confirmation
@@ -123,9 +142,9 @@ namespace GrandTheftAccessibility
             {
                 // Very low density + off-road = true dirt trail
                 if (density <= 2)
-                    return Constants.ROAD_TYPE_DIRT_TRAIL;
+                    return RoadType.DirtTrail;
                 // Off-road flag but higher density could be alley or parking lot
-                return Constants.ROAD_TYPE_SUBURBAN;
+                return RoadType.Suburban;
             }
 
             // Priority 3: Traffic infrastructure signals
@@ -133,9 +152,9 @@ namespace GrandTheftAccessibility
             {
                 // Traffic light + high density = city street
                 if (density > Constants.ROAD_DENSITY_SUBURBAN_MAX)
-                    return Constants.ROAD_TYPE_CITY_STREET;
+                    return RoadType.CityStreet;
                 // Traffic light + lower density = main suburban road
-                return Constants.ROAD_TYPE_SUBURBAN;
+                return RoadType.Suburban;
             }
 
             // Priority 4: Junction/intersection analysis
@@ -143,25 +162,23 @@ namespace GrandTheftAccessibility
             {
                 // Large junction + high density = city intersection
                 if (density > Constants.ROAD_DENSITY_SUBURBAN_MAX)
-                    return Constants.ROAD_TYPE_CITY_STREET;
+                    return RoadType.CityStreet;
             }
 
             // Priority 5: Density-based classification for unmarked roads
-            if (density <= 1)
-                return Constants.ROAD_TYPE_RURAL;
-            else if (density <= Constants.ROAD_DENSITY_RURAL_MAX)
-                return Constants.ROAD_TYPE_RURAL;
-            else if (density <= Constants.ROAD_DENSITY_SUBURBAN_MAX)
-                return Constants.ROAD_TYPE_SUBURBAN;
+            if (density <= Constants.ROAD_DENSITY_RURAL_MAX)
+                return RoadType.Rural;
+            if (density <= Constants.ROAD_DENSITY_SUBURBAN_MAX)
+                return RoadType.Suburban;
 
             // High density = city street (default for urban areas)
-            return Constants.ROAD_TYPE_CITY_STREET;
+            return RoadType.CityStreet;
         }
 
         /// <summary>
         /// Get road type at a given position
         /// </summary>
-        public int GetRoadTypeAtPosition(Vector3 position)
+        public RoadType GetRoadTypeAtPosition(Vector3 position)
         {
             try
             {
@@ -178,7 +195,7 @@ namespace GrandTheftAccessibility
             }
             catch
             {
-                return Constants.ROAD_TYPE_UNKNOWN;
+                return RoadType.Unknown;
             }
         }
 
@@ -186,10 +203,10 @@ namespace GrandTheftAccessibility
         /// Update cached speed multiplier for the new road type.
         /// Actual speed application is handled by SpeedArbiter via RoadTypeSpeedMultiplier property.
         /// </summary>
-        private bool UpdateRoadTypeMultiplier(int roadType)
+        private bool UpdateRoadTypeMultiplier(RoadType roadType)
         {
             if (roadType == _lastSpeedAdjustedRoadType) return false;
-            if (roadType < 0 || roadType >= Constants.ROAD_TYPE_SPEED_MULTIPLIERS.Length) return false;
+            if (!Constants.IsValidRoadType(roadType)) return false;
 
             float newMultiplier = Constants.GetRoadTypeSpeedMultiplier(roadType);
 
@@ -229,12 +246,12 @@ namespace GrandTheftAccessibility
             if (float.IsNaN(position.X) || float.IsNaN(position.Y) || float.IsNaN(position.Z))
                 return false;
 
-            int roadType = GetRoadTypeAtPosition(position);
-            if (roadType == Constants.ROAD_TYPE_UNKNOWN)
+            RoadType roadType = GetRoadTypeAtPosition(position);
+            if (roadType == RoadType.Unknown)
                 return false;
 
             // Defensive: Validate road type is in valid range before array access
-            if (roadType < 0 || roadType >= Constants.ROAD_TYPE_NAMES.Length)
+            if (!Constants.IsValidRoadType(roadType))
             {
                 Logger.Warning($"CheckRoadTypeChange: invalid road type {roadType}");
                 return false;
@@ -243,7 +260,6 @@ namespace GrandTheftAccessibility
             // Check if road type changed
             if (roadType != _currentRoadType)
             {
-                int previousRoadType = _currentRoadType;
                 _currentRoadType = roadType;
 
                 // Update speed multiplier for new road type
@@ -282,13 +298,9 @@ namespace GrandTheftAccessibility
                 }
 
                 Vector3 position = player.Position;
-                int roadType = GetRoadTypeAtPosition(position);
+                RoadType roadType = GetRoadTypeAtPosition(position);
 
-                if (roadType == Constants.ROAD_TYPE_UNKNOWN)
-                {
-                    _audio.Speak("Unable to determine road type");
-                }
-                else if (roadType >= 0 && roadType < Constants.ROAD_TYPE_NAMES.Length)
+                if (roadType != RoadType.Unknown && Constants.IsValidRoadType(roadType))
                 {
                     string roadName = Constants.GetRoadTypeName(roadType);
                     _audio.Speak($"Currently on {roadName}");
@@ -304,6 +316,10 @@ namespace GrandTheftAccessibility
                 _audio.Speak("Unable to determine road type");
             }
         }
+
+        #endregion
+
+        #region Dead-End and Restricted Areas
 
         /// <summary>
         /// Check if current position is at a dead-end road and handle escape
@@ -392,11 +408,11 @@ namespace GrandTheftAccessibility
         /// <param name="targetSpeed">Current target speed</param>
         /// <returns>True if restricted area detected</returns>
         public bool CheckRestrictedArea(Vehicle vehicle, Vector3 position, long currentTick,
-            int drivingStyleMode, bool wanderMode, float targetSpeed)
+            DrivingStyleMode drivingStyleMode, bool wanderMode, float targetSpeed)
         {
             // Only check in cautious/normal modes where AvoidRestrictedAreas is active
-            if (drivingStyleMode == Constants.DRIVING_STYLE_MODE_AGGRESSIVE ||
-                drivingStyleMode == Constants.DRIVING_STYLE_MODE_RECKLESS)
+            if (drivingStyleMode == DrivingStyleMode.Aggressive ||
+                drivingStyleMode == DrivingStyleMode.Reckless)
                 return false;
 
             try
@@ -491,5 +507,7 @@ namespace GrandTheftAccessibility
 
             return false;
         }
+
+        #endregion
     }
 }

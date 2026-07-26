@@ -9,6 +9,8 @@ namespace GrandTheftAccessibility
     /// </summary>
     public class AnnouncementQueue
     {
+        #region Fields
+
         private readonly AudioManager _audio;
         private readonly SettingsManager _settings;
 
@@ -21,6 +23,10 @@ namespace GrandTheftAccessibility
         // Global cooldown tracking
         private long _lastAnyAnnounceTick;
 
+        #endregion
+
+        #region Construction
+
         /// <summary>
         /// Create a new announcement queue.
         /// </summary>
@@ -32,6 +38,10 @@ namespace GrandTheftAccessibility
             _settings = settings;
         }
 
+        #endregion
+
+        #region Public API
+
         /// <summary>
         /// Try to announce a message with priority-based throttling.
         /// </summary>
@@ -40,6 +50,15 @@ namespace GrandTheftAccessibility
         /// <param name="currentTick">Current game tick</param>
         /// <param name="settingName">Optional setting name to check before announcing (e.g. "announceNavigation")</param>
         /// <returns>True if the message was announced, false if throttled or setting disabled</returns>
+        public bool TryAnnounce(string message, AnnouncementPriority priority, long currentTick, string settingName = null)
+        {
+            return TryAnnounce(message, (int)priority, currentTick, settingName);
+        }
+
+        /// <summary>
+        /// Try to announce a message with priority-based throttling (int overload,
+        /// used by call sites that still pass Constants.ANNOUNCE_PRIORITY_* values).
+        /// </summary>
         public bool TryAnnounce(string message, int priority, long currentTick, string settingName = null)
         {
             // Defensive: Validate message
@@ -122,6 +141,10 @@ namespace GrandTheftAccessibility
 
             return true;
         }
+
+        #endregion
+
+        #region Cooldown Helpers
 
         /// <summary>
         /// Get cooldown duration for a priority level.
@@ -222,5 +245,7 @@ namespace GrandTheftAccessibility
             _lastLowAnnounceTick = 0;
             _lastAnyAnnounceTick = 0;
         }
+
+        #endregion
     }
 }

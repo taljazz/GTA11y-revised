@@ -34,6 +34,8 @@ internal struct OvertakeTrackingInfo
     /// </summary>
     public class AutoDriveManager
     {
+        #region Fields
+
         private readonly AudioManager _audio;
         private readonly SettingsManager _settings;
 
@@ -98,7 +100,7 @@ internal struct OvertakeTrackingInfo
         private bool _wasCurveSlowdownActive;  // Track curve transition for announcements
 
         // Pause/Resume capability
-        private int _pauseState;
+        private PauseState _pauseState;
         private long _pauseStartTick;
         private float _prePauseSpeed;
         private bool _wasPausedWander;  // Track mode before pause
@@ -107,10 +109,10 @@ internal struct OvertakeTrackingInfo
         // are now handled by TrafficAwarenessManager and StructureDetector
 
         // Road type tracking
-        private int _currentRoadType;
+        private RoadType _currentRoadType;
 
         // Road seeking state
-        private int _seekMode;
+        private RoadSeekMode _seekMode;
         private bool _seekingRoad;
         private Vector3 _seekTargetPosition;
         private long _lastSeekScanTick;
@@ -123,7 +125,7 @@ internal struct OvertakeTrackingInfo
         private bool _lastIssuedTaskWasWander;  // True if last task was wander, false if drive-to-coord
 
         // Driving style
-        private int _currentDrivingStyleMode = Constants.DRIVING_STYLE_MODE_NORMAL;
+        private DrivingStyleMode _currentDrivingStyleMode = DrivingStyleMode.Normal;
 
 
         // ===== RECOVERY SYSTEM STATE =====
@@ -185,14 +187,22 @@ internal struct OvertakeTrackingInfo
         private readonly OutputArgument _seekDensity = new OutputArgument();
         private readonly OutputArgument _seekFlags = new OutputArgument();
 
+        #endregion
+
+        #region Properties
+
         public bool IsActive => _autoDriveActive;
         public bool IsSeeking => _seekingRoad;
-        public int CurrentRoadType => _currentRoadType;
-        public int SeekMode => _seekMode;
-        public int CurrentDrivingStyleMode => _currentDrivingStyleMode;
+        public RoadType CurrentRoadType => _currentRoadType;
+        public RoadSeekMode SeekMode => _seekMode;
+        public DrivingStyleMode CurrentDrivingStyleMode => _currentDrivingStyleMode;
         public bool IsStuck => _isStuck;
-        public bool IsPaused => _pauseState == Constants.PAUSE_STATE_PAUSED;
+        public bool IsPaused => _pauseState == PauseState.Paused;
         public bool IsYieldingToEmergency => _emergencyVehicleHandler?.IsYieldingToEmergency ?? _yieldingToEmergency;
+
+        #endregion
+
+        #region Construction
 
         public AutoDriveManager(AudioManager audio, SettingsManager settings)
         {
@@ -250,6 +260,10 @@ internal struct OvertakeTrackingInfo
             _recoveryWasWanderMode = false;
             _recoveryOriginalTarget = Vector3.Zero;
         }
+
+        #endregion
+
+        #region Start, Stop, and Speed Control
 
         /// <summary>
         /// Start aimless wandering driving
@@ -700,7 +714,7 @@ internal struct OvertakeTrackingInfo
 
             // Clear seeking state
             _seekingRoad = false;
-            _seekMode = Constants.ROAD_SEEK_MODE_ANY;
+            _seekMode = RoadSeekMode.Any;
             _onDesiredRoadType = false;
             _seekTargetPosition = Vector3.Zero;
 
@@ -794,7 +808,7 @@ internal struct OvertakeTrackingInfo
 
             // Include seeking info if active
             string seekInfo = "";
-            if (_seekingRoad && _seekMode != Constants.ROAD_SEEK_MODE_ANY)
+            if (_seekingRoad && _seekMode != RoadSeekMode.Any)
             {
                 string seekRoadName = Constants.GetRoadSeekModeName(_seekMode);
                 if (_onDesiredRoadType)
@@ -829,6 +843,10 @@ internal struct OvertakeTrackingInfo
                 }
             }
         }
+
+        #endregion
+
+        #region Update Loop
 
         /// <summary>
         /// Update autodrive state - called from OnTick
@@ -879,7 +897,7 @@ internal struct OvertakeTrackingInfo
                 return;
 
             // Skip updates while paused (except emergency check for resume)
-            if (_pauseState == Constants.PAUSE_STATE_PAUSED)
+            if (_pauseState == PauseState.Paused)
             {
                 // Still check emergency vehicles even while paused (to resume when they pass)
                 if (_emergencyVehicleHandler.IsYieldingToEmergency)
@@ -958,7 +976,7 @@ internal struct OvertakeTrackingInfo
 
                 // Reckless mode: no speed reductions — AI handles everything at full cruise speed.
                 // Other styles: weather affects speed (rain, snow, fog reduce traction).
-                bool isReckless = _currentDrivingStyleMode == Constants.DRIVING_STYLE_MODE_RECKLESS;
+                bool isReckless = _currentDrivingStyleMode == DrivingStyleMode.Reckless;
                 _speedArbiter.SetWeatherMultiplier(isReckless ? 1.0f : _weatherManager.SpeedMultiplier);
             }
 
@@ -966,7 +984,7 @@ internal struct OvertakeTrackingInfo
             _environmentalManager.CheckTimeOfDay(vehicle, currentTick);
             // Reckless mode: no night-time speed reduction
             {
-                bool isReckless = _currentDrivingStyleMode == Constants.DRIVING_STYLE_MODE_RECKLESS;
+                bool isReckless = _currentDrivingStyleMode == DrivingStyleMode.Reckless;
                 _speedArbiter.SetTimeMultiplier(isReckless ? 1.0f : _environmentalManager.TimeSpeedMultiplier);
             }
 
@@ -979,7 +997,7 @@ internal struct OvertakeTrackingInfo
                 {
                     if (warningMessage != null)
                     {
-                        _announcementQueue.TryAnnounce(warningMessage, warningPriority, currentTick, "announceCollision");
+                        _announcementQueue.TryAnnounce(warningMessage, warningPriority, currentTick, "announceCollisionWarnings");
                     }
                 }
 
@@ -1051,7 +1069,7 @@ internal struct OvertakeTrackingInfo
             // but city/dirt roads don't slow down.
             _roadTypeSpeedMultiplier = _roadTypeManager.RoadTypeSpeedMultiplier;
             {
-                bool isReckless = _currentDrivingStyleMode == Constants.DRIVING_STYLE_MODE_RECKLESS;
+                bool isReckless = _currentDrivingStyleMode == DrivingStyleMode.Reckless;
                 float effectiveRoadMult = isReckless ? Math.Max(1.0f, _roadTypeSpeedMultiplier) : _roadTypeSpeedMultiplier;
                 _speedArbiter.SetRoadTypeMultiplier(effectiveRoadMult);
             }
@@ -1142,6 +1160,8 @@ internal struct OvertakeTrackingInfo
             _roadFeatureDetector.Update(vehicle, position, currentTick, _targetSpeed,
                 _currentDrivingStyleMode, _autoDriveActive);
         }
+
+        #endregion
 
         #region Advanced Driving Features
 
@@ -1239,7 +1259,7 @@ internal struct OvertakeTrackingInfo
             _yieldingToEmergency = false;
 
             // Reset pause state
-            _pauseState = Constants.PAUSE_STATE_NONE;
+            _pauseState = PauseState.None;
             _pauseStartTick = 0;
         }
 
@@ -1252,7 +1272,7 @@ internal struct OvertakeTrackingInfo
         /// </summary>
         public void Pause()
         {
-            if (!_autoDriveActive || _pauseState != Constants.PAUSE_STATE_NONE) return;
+            if (!_autoDriveActive || _pauseState != PauseState.None) return;
 
             try
             {
@@ -1261,8 +1281,8 @@ internal struct OvertakeTrackingInfo
 
                 if (vehicle == null) return;
 
-                _pauseState = Constants.PAUSE_STATE_PAUSED;
-                _pauseStartTick = DateTime.Now.Ticks;
+                _pauseState = PauseState.Paused;
+                _pauseStartTick = Game.GameTime;
                 _prePauseSpeed = _targetSpeed;
                 _wasPausedWander = _wanderMode;
 
@@ -1285,7 +1305,7 @@ internal struct OvertakeTrackingInfo
         /// </summary>
         public void Resume()
         {
-            if (_pauseState != Constants.PAUSE_STATE_PAUSED) return;
+            if (_pauseState != PauseState.Paused) return;
 
             try
             {
@@ -1295,18 +1315,18 @@ internal struct OvertakeTrackingInfo
                 if (vehicle == null || !player.IsInVehicle())
                 {
                     _audio.Speak("Cannot resume, not in vehicle");
-                    _pauseState = Constants.PAUSE_STATE_NONE;
+                    _pauseState = PauseState.None;
                     return;
                 }
 
                 if (player.SeatIndex != VehicleSeat.Driver)
                 {
                     _audio.Speak("Cannot resume, not in driver seat");
-                    _pauseState = Constants.PAUSE_STATE_NONE;
+                    _pauseState = PauseState.None;
                     return;
                 }
 
-                _pauseState = Constants.PAUSE_STATE_RESUMING;
+                _pauseState = PauseState.Resuming;
 
                 // Release brakes
                 // Must use .Handle for native calls - SHVDN wrapper objects don't work directly
@@ -1344,7 +1364,7 @@ internal struct OvertakeTrackingInfo
                 }
 
                 _taskIssued = true;
-                _pauseState = Constants.PAUSE_STATE_NONE;
+                _pauseState = PauseState.None;
 
                 _audio.Speak("AutoDrive resumed");
                 Logger.Info("AutoDrive resumed");
@@ -1352,7 +1372,7 @@ internal struct OvertakeTrackingInfo
             catch (Exception ex)
             {
                 Logger.Exception(ex, "Resume");
-                _pauseState = Constants.PAUSE_STATE_NONE;
+                _pauseState = PauseState.None;
             }
         }
 
@@ -1361,11 +1381,11 @@ internal struct OvertakeTrackingInfo
         /// </summary>
         public void TogglePause()
         {
-            if (_pauseState == Constants.PAUSE_STATE_PAUSED)
+            if (_pauseState == PauseState.Paused)
             {
                 Resume();
             }
-            else if (_pauseState == Constants.PAUSE_STATE_NONE && _autoDriveActive)
+            else if (_pauseState == PauseState.None && _autoDriveActive)
             {
                 Pause();
             }
@@ -1383,10 +1403,10 @@ internal struct OvertakeTrackingInfo
         /// Get road type at a given position - delegates to RoadTypeManager
         /// to ensure single source of truth and prevent state corruption
         /// </summary>
-        public int GetRoadTypeAtPosition(Vector3 position)
+        public RoadType GetRoadTypeAtPosition(Vector3 position)
         {
             // Delegate to RoadTypeManager to avoid duplicate OutputArgument state
-            return _roadTypeManager?.GetRoadTypeAtPosition(position) ?? Constants.ROAD_TYPE_UNKNOWN;
+            return _roadTypeManager?.GetRoadTypeAtPosition(position) ?? RoadType.Unknown;
         }
 
         /// <summary>
@@ -1418,7 +1438,7 @@ internal struct OvertakeTrackingInfo
         /// <summary>
         /// Start seeking a specific road type
         /// </summary>
-        public void StartSeeking(int seekMode)
+        public void StartSeeking(RoadSeekMode seekMode)
         {
             // Critical null check - player can be null during death/respawn
             Ped player = Game.Player.Character;
@@ -1444,14 +1464,14 @@ internal struct OvertakeTrackingInfo
             }
 
             // Bounds check seek mode
-            if (seekMode < 0 || seekMode >= Constants.ROAD_SEEK_MODE_NAMES.Length)
+            if (!Constants.IsValidRoadSeekMode(seekMode))
             {
                 _audio.Speak("Invalid seek mode.");
                 return;
             }
 
             _seekMode = seekMode;
-            _seekStartTick = DateTime.Now.Ticks; // Track when seeking started for timeout
+            _seekStartTick = Game.GameTime; // Track when seeking started for timeout
 
             // FIX: Initialize seek state variables to prevent stale state from previous seeks
             _seekAttempts = 0;
@@ -1460,7 +1480,7 @@ internal struct OvertakeTrackingInfo
             _lastIssuedTaskWasWander = false;
 
             // If seeking "Any Road", just start wander
-            if (seekMode == Constants.ROAD_SEEK_MODE_ANY)
+            if (seekMode == RoadSeekMode.Any)
             {
                 _seekingRoad = false;
                 StartWander();
@@ -1471,11 +1491,11 @@ internal struct OvertakeTrackingInfo
             Vector3 position = player.Position;
             Logger.Info($"StartSeeking: mode={seekMode}, position=({position.X:F1}, {position.Y:F1}, {position.Z:F1})");
 
-            int currentRoadType = GetRoadTypeAtPosition(position);
-            int desiredRoadType = SeekModeToRoadType(seekMode);
+            RoadType currentRoadType = GetRoadTypeAtPosition(position);
+            RoadType desiredRoadType = SeekModeToRoadType(seekMode);
 
             // Bounds check for road type array access
-            if (desiredRoadType < 0 || desiredRoadType >= Constants.ROAD_TYPE_NAMES.Length)
+            if (!Constants.IsValidRoadType(desiredRoadType))
             {
                 _audio.Speak("Unknown road type.");
                 return;
@@ -1541,24 +1561,24 @@ internal struct OvertakeTrackingInfo
         }
 
         /// <summary>
-        /// Convert seek mode to road type constant
+        /// Convert seek mode to the road type it targets
         /// </summary>
-        private int SeekModeToRoadType(int seekMode)
+        private RoadType SeekModeToRoadType(RoadSeekMode seekMode)
         {
             switch (seekMode)
             {
-                case Constants.ROAD_SEEK_MODE_HIGHWAY:
-                    return Constants.ROAD_TYPE_HIGHWAY;
-                case Constants.ROAD_SEEK_MODE_CITY:
-                    return Constants.ROAD_TYPE_CITY_STREET;
-                case Constants.ROAD_SEEK_MODE_SUBURBAN:
-                    return Constants.ROAD_TYPE_SUBURBAN;
-                case Constants.ROAD_SEEK_MODE_RURAL:
-                    return Constants.ROAD_TYPE_RURAL;
-                case Constants.ROAD_SEEK_MODE_DIRT:
-                    return Constants.ROAD_TYPE_DIRT_TRAIL;
+                case RoadSeekMode.Highway:
+                    return RoadType.Highway;
+                case RoadSeekMode.City:
+                    return RoadType.CityStreet;
+                case RoadSeekMode.Suburban:
+                    return RoadType.Suburban;
+                case RoadSeekMode.Rural:
+                    return RoadType.Rural;
+                case RoadSeekMode.Dirt:
+                    return RoadType.DirtTrail;
                 default:
-                    return Constants.ROAD_TYPE_UNKNOWN;
+                    return RoadType.Unknown;
             }
         }
 
@@ -1568,7 +1588,7 @@ internal struct OvertakeTrackingInfo
         /// + GET_VEHICLE_NODE_PROPERTIES (returns flags, density) for classification.
         /// Much more efficient than radial sampling — every call hits an actual road node.
         /// </summary>
-        private Vector3 ScanForRoadType(Vector3 origin, int desiredRoadType)
+        private Vector3 ScanForRoadType(Vector3 origin, RoadType desiredRoadType)
         {
             // Defensive: Validate origin position
             if (float.IsNaN(origin.X) || float.IsNaN(origin.Y) || float.IsNaN(origin.Z) ||
@@ -1579,7 +1599,7 @@ internal struct OvertakeTrackingInfo
             }
 
             // Defensive: Validate desired road type is in valid range
-            if (desiredRoadType < 0 || desiredRoadType >= Constants.ROAD_TYPE_NAMES.Length)
+            if (!Constants.IsValidRoadType(desiredRoadType))
             {
                 Logger.Warning($"ScanForRoadType: invalid desiredRoadType {desiredRoadType}");
                 return Vector3.Zero;
@@ -1632,7 +1652,7 @@ internal struct OvertakeTrackingInfo
                             continue;
 
                         // Delegate to RoadTypeManager for single source of truth
-                        int roadType = _roadTypeManager.ClassifyRoadType(nodeFlags, nodeDensity, laneCount);
+                        RoadType roadType = _roadTypeManager.ClassifyRoadType(nodeFlags, nodeDensity, laneCount);
 
                         if (roadType == desiredRoadType)
                         {
@@ -1687,14 +1707,14 @@ internal struct OvertakeTrackingInfo
             }
 
             // Defensive: Validate driving style mode is in range
-            if (_currentDrivingStyleMode < 0 || _currentDrivingStyleMode >= Constants.DRIVING_STYLE_VALUES.Length)
+            if (!Constants.IsValidDrivingStyleMode(_currentDrivingStyleMode))
             {
                 Logger.Warning($"NavigateToSeekTarget: invalid driving style mode {_currentDrivingStyleMode}");
                 return;
             }
 
             // Defensive: Validate seek mode for announcement
-            if (_seekMode < 0 || _seekMode >= Constants.ROAD_SEEK_MODE_NAMES.Length)
+            if (!Constants.IsValidRoadSeekMode(_seekMode))
             {
                 Logger.Warning($"NavigateToSeekTarget: invalid seek mode {_seekMode}");
                 return;
@@ -1775,15 +1795,15 @@ internal struct OvertakeTrackingInfo
         /// <summary>
         /// Update seeking state when road type changes
         /// </summary>
-        private void UpdateSeekingState(int currentRoadType)
+        private void UpdateSeekingState(RoadType currentRoadType)
         {
-            if (!_seekingRoad || _seekMode == Constants.ROAD_SEEK_MODE_ANY)
+            if (!_seekingRoad || _seekMode == RoadSeekMode.Any)
                 return;
 
-            int desiredRoadType = SeekModeToRoadType(_seekMode);
+            RoadType desiredRoadType = SeekModeToRoadType(_seekMode);
 
             // Bounds check before array access
-            if (desiredRoadType < 0 || desiredRoadType >= Constants.ROAD_TYPE_NAMES.Length)
+            if (!Constants.IsValidRoadType(desiredRoadType))
             {
                 Logger.Warning($"UpdateSeekingState: invalid desiredRoadType {desiredRoadType}");
                 return;
@@ -1820,11 +1840,11 @@ internal struct OvertakeTrackingInfo
         /// </summary>
         public void UpdateRoadSeeking(Vehicle vehicle, Vector3 position, long currentTick)
         {
-            if (!_seekingRoad || _seekMode == Constants.ROAD_SEEK_MODE_ANY)
+            if (!_seekingRoad || _seekMode == RoadSeekMode.Any)
                 return;
 
             // Defensive: Validate seek mode is in valid range
-            if (_seekMode < 0 || _seekMode >= Constants.ROAD_SEEK_MODE_NAMES.Length)
+            if (!Constants.IsValidRoadSeekMode(_seekMode))
             {
                 Logger.Warning($"UpdateRoadSeeking: invalid seek mode {_seekMode}, stopping seek");
                 StopSeeking();
@@ -1858,7 +1878,7 @@ internal struct OvertakeTrackingInfo
             _seekAttempts++;
 
             // Timeout check - stop seeking after 10 minutes (600 seconds)
-            const long SEEK_TIMEOUT_TICKS = 600L * 10_000_000L; // 10 minutes in ticks
+            const long SEEK_TIMEOUT_TICKS = 600_000L; // 10 minutes in game-time ms
             if (_seekStartTick > 0 && currentTick - _seekStartTick > SEEK_TIMEOUT_TICKS)
             {
                 _audio.Speak("Road seeking timed out. Stopping search.");
@@ -1889,11 +1909,11 @@ internal struct OvertakeTrackingInfo
                     if (!float.IsNaN(distanceToTarget) && distanceToTarget < Constants.ROAD_SEEK_ARRIVAL_THRESHOLD)
                     {
                         // Arrived at target - switch to wander mode to continue driving
-                        int currentRoadType = GetRoadTypeAtPosition(position);
-                        int desiredRoadType = SeekModeToRoadType(_seekMode);
+                        RoadType currentRoadType = GetRoadTypeAtPosition(position);
+                        RoadType desiredRoadType = SeekModeToRoadType(_seekMode);
 
                         // Validate road types before array access
-                        if (desiredRoadType >= 0 && desiredRoadType < Constants.ROAD_TYPE_NAMES.Length)
+                        if (Constants.IsValidRoadType(desiredRoadType))
                         {
                             if (currentRoadType == desiredRoadType)
                             {
@@ -1913,10 +1933,10 @@ internal struct OvertakeTrackingInfo
                 }
 
                 // Not on desired road - try to find and navigate to it
-                int targetRoadType = SeekModeToRoadType(_seekMode);
+                RoadType targetRoadType = SeekModeToRoadType(_seekMode);
 
                 // Validate target road type
-                if (targetRoadType < 0 || targetRoadType >= Constants.ROAD_TYPE_NAMES.Length)
+                if (!Constants.IsValidRoadType(targetRoadType))
                 {
                     Logger.Warning($"UpdateRoadSeeking: invalid target road type {targetRoadType}");
                     return;
@@ -1979,7 +1999,7 @@ internal struct OvertakeTrackingInfo
         public void StopSeeking()
         {
             _seekingRoad = false;
-            _seekMode = Constants.ROAD_SEEK_MODE_ANY;
+            _seekMode = RoadSeekMode.Any;
             _onDesiredRoadType = false;
             _seekTargetPosition = Vector3.Zero;
             _seekStartTick = 0;
@@ -1999,7 +2019,7 @@ internal struct OvertakeTrackingInfo
         /// </summary>
         public void CycleDrivingStyle()
         {
-            _currentDrivingStyleMode = (_currentDrivingStyleMode + 1) % 4;
+            _currentDrivingStyleMode = (DrivingStyleMode)(((int)_currentDrivingStyleMode + 1) % 4);
 
             // Re-issue driving task with new style if currently driving
             // Research shows SET_DRIVE_TASK_DRIVING_STYLE alone may not update all flags

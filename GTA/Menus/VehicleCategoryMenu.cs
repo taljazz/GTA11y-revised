@@ -4,25 +4,18 @@ using GTA;
 namespace GrandTheftAccessibility.Menus
 {
     /// <summary>
-    /// Menu for selecting vehicle categories, with submenus for each category
-    /// Categories are based on GTA V VehicleClass enum, plus special categories like Weaponized
+    /// Menu for selecting vehicle categories, with a full VehicleSpawnMenu as the
+    /// submenu for each category. Unlike the other hierarchical menus, the submenu
+    /// here is a complete child menu object, so this class derives from MenuBase
+    /// and overrides the navigation methods to delegate to the active child.
     /// </summary>
-    public class VehicleCategoryMenu : IMenuState
+    public class VehicleCategoryMenu : MenuBase
     {
-        private readonly SettingsManager _settings;
-        private readonly List<VehicleCategory> _categories;
-        private int _currentCategoryIndex;
-
-        // Submenu state
-        private bool _inSubmenu;
-        private VehicleSpawnMenu _currentSubmenu;
-
-        // Cache constructed VehicleSpawnMenu instances to avoid reconstructing on every submenu entry
-        private readonly Dictionary<string, VehicleSpawnMenu> _submenuCache = new Dictionary<string, VehicleSpawnMenu>();
+        #region Types
 
         /// <summary>
-        /// Represents a vehicle category with display name
-        /// Supports both VehicleClass-based and special name-set-based categories
+        /// Represents a vehicle category with display name.
+        /// Supports both VehicleClass-based and special name-set-based categories.
         /// </summary>
         private class VehicleCategory
         {
@@ -47,9 +40,29 @@ namespace GrandTheftAccessibility.Menus
             }
         }
 
-        public VehicleCategoryMenu(SettingsManager settings)
+        #endregion
+
+        #region Fields
+
+        private readonly SettingsManager _settings;
+        private readonly AudioManager _audio;
+        private readonly List<VehicleCategory> _categories;
+
+        // Submenu state - a full child menu per category
+        private bool _inSubmenu;
+        private VehicleSpawnMenu _currentSubmenu;
+
+        // Cache constructed VehicleSpawnMenu instances to avoid reconstructing on every submenu entry
+        private readonly Dictionary<string, VehicleSpawnMenu> _submenuCache = new Dictionary<string, VehicleSpawnMenu>();
+
+        #endregion
+
+        #region Construction
+
+        public VehicleCategoryMenu(SettingsManager settings, AudioManager audio) : base(audio)
         {
             _settings = settings;
+            _audio = audio;
             _inSubmenu = false;
             _currentSubmenu = null;
 
@@ -85,109 +98,51 @@ namespace GrandTheftAccessibility.Menus
                 new VehicleCategory("Open Wheel", VehicleClass.OpenWheel),
                 new VehicleCategory("Trains", VehicleClass.Trains)
             };
-
-            _currentCategoryIndex = 0;
         }
 
-        public void NavigatePrevious(bool fastScroll = false)
+        #endregion
+
+        #region MenuBase Overrides - category level
+
+        protected override int ItemCount => _categories.Count;
+
+        protected override string EmptyMenuText => "(no categories)";
+
+        protected override string GetItemText(int index)
         {
-            if (_inSubmenu && _currentSubmenu != null)
-            {
-                // Navigate within submenu
-                _currentSubmenu.NavigatePrevious(fastScroll);
-            }
-            else
-            {
-                // Navigate categories
-                if (_currentCategoryIndex > 0)
-                    _currentCategoryIndex--;
-                else
-                    _currentCategoryIndex = _categories.Count - 1;
-            }
+            return _categories[index].Name;
         }
 
-        public void NavigateNext(bool fastScroll = false)
+        protected override void OnItemActivated(int index)
         {
-            if (_inSubmenu && _currentSubmenu != null)
+            // Enter submenu for current category, building it on first use
+            VehicleCategory category = _categories[index];
+
+            if (!_submenuCache.TryGetValue(category.Name, out _currentSubmenu))
             {
-                // Navigate within submenu
-                _currentSubmenu.NavigateNext(fastScroll);
-            }
-            else
-            {
-                // Navigate categories
-                if (_currentCategoryIndex < _categories.Count - 1)
-                    _currentCategoryIndex++;
-                else
-                    _currentCategoryIndex = 0;
-            }
-        }
-
-        public string GetCurrentItemText()
-        {
-            if (_inSubmenu && _currentSubmenu != null)
-            {
-                return _currentSubmenu.GetCurrentItemText();
-            }
-            else
-            {
-                // Defensive: Validate category index
-                if (_categories == null || _categories.Count == 0)
-                    return "(no categories)";
-
-                if (_currentCategoryIndex < 0 || _currentCategoryIndex >= _categories.Count)
-                    _currentCategoryIndex = 0;
-
-                VehicleCategory category = _categories[_currentCategoryIndex];
-                return category.Name;
-            }
-        }
-
-        public void ExecuteSelection()
-        {
-            if (_inSubmenu && _currentSubmenu != null)
-            {
-                // Spawn the selected vehicle
-                _currentSubmenu.ExecuteSelection();
-            }
-            else
-            {
-                // Defensive: Validate category index
-                if (_categories == null || _categories.Count == 0)
-                    return;
-
-                if (_currentCategoryIndex < 0 || _currentCategoryIndex >= _categories.Count)
-                    _currentCategoryIndex = 0;
-
-                // Enter submenu for current category
-                VehicleCategory category = _categories[_currentCategoryIndex];
-
-                if (!_submenuCache.TryGetValue(category.Name, out _currentSubmenu))
+                if (category.IsSpecial)
                 {
-                    if (category.IsSpecial)
+                    // Special category - use name-based filtering
+                    if (category.Name == "Weaponized")
                     {
-                        // Special category - use name-based filtering
-                        if (category.Name == "Weaponized")
-                        {
-                            _currentSubmenu = new VehicleSpawnMenu(_settings, Constants.WEAPONIZED_VEHICLE_NAMES, category.Name);
-                        }
-                        // Add more special categories here as needed
+                        _currentSubmenu = new VehicleSpawnMenu(_settings, Constants.WEAPONIZED_VEHICLE_NAMES, category.Name, _audio);
                     }
-                    else
-                    {
-                        // Standard category - use VehicleClass filtering
-                        _currentSubmenu = new VehicleSpawnMenu(_settings, category.Class, category.Name);
-                    }
-
-                    if (_currentSubmenu != null)
-                        _submenuCache[category.Name] = _currentSubmenu;
+                    // Add more special categories here as needed
+                }
+                else
+                {
+                    // Standard category - use VehicleClass filtering
+                    _currentSubmenu = new VehicleSpawnMenu(_settings, category.Class, category.Name, _audio);
                 }
 
-                _inSubmenu = true;
+                if (_currentSubmenu != null)
+                    _submenuCache[category.Name] = _currentSubmenu;
             }
+
+            _inSubmenu = true;
         }
 
-        public string GetMenuName()
+        public override string GetMenuName()
         {
             if (_inSubmenu && _currentSubmenu != null)
             {
@@ -196,9 +151,53 @@ namespace GrandTheftAccessibility.Menus
             return "Spawn Vehicle";
         }
 
-        public bool HasActiveSubmenu => _inSubmenu;
+        #endregion
 
-        public void ExitSubmenu()
+        #region Child Menu Delegation
+
+        public override void NavigatePrevious(bool fastScroll = false)
+        {
+            if (_inSubmenu && _currentSubmenu != null)
+            {
+                _currentSubmenu.NavigatePrevious(fastScroll);
+                return;
+            }
+            base.NavigatePrevious(fastScroll);
+        }
+
+        public override void NavigateNext(bool fastScroll = false)
+        {
+            if (_inSubmenu && _currentSubmenu != null)
+            {
+                _currentSubmenu.NavigateNext(fastScroll);
+                return;
+            }
+            base.NavigateNext(fastScroll);
+        }
+
+        public override string GetCurrentItemText()
+        {
+            if (_inSubmenu && _currentSubmenu != null)
+            {
+                return _currentSubmenu.GetCurrentItemText();
+            }
+            return base.GetCurrentItemText();
+        }
+
+        public override void ExecuteSelection()
+        {
+            if (_inSubmenu && _currentSubmenu != null)
+            {
+                // Spawn the selected vehicle
+                _currentSubmenu.ExecuteSelection();
+                return;
+            }
+            base.ExecuteSelection();
+        }
+
+        public override bool HasActiveSubmenu => _inSubmenu;
+
+        public override void ExitSubmenu()
         {
             if (_inSubmenu)
             {
@@ -206,5 +205,7 @@ namespace GrandTheftAccessibility.Menus
                 _currentSubmenu = null;
             }
         }
+
+        #endregion
     }
 }

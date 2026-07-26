@@ -23,6 +23,8 @@ namespace GrandTheftAccessibility
     /// </summary>
     public class CollisionDetector
     {
+        #region Fields
+
         private float _lastVehicleAheadDistance = float.MaxValue;
         private int _lastCollisionWarningLevel;
         private long _lastCollisionCheckTick;
@@ -30,6 +32,10 @@ namespace GrandTheftAccessibility
         // PERFORMANCE: Pre-allocated vectors to avoid per-frame allocations
         private Vector3 _forwardVector;
         private Vector3 _theirForwardVector;
+
+        #endregion
+
+        #region Properties
 
         /// <summary>
         /// Distance to the closest vehicle ahead
@@ -45,6 +51,10 @@ namespace GrandTheftAccessibility
         /// Whether a collision is imminent (requires immediate action)
         /// </summary>
         public bool IsCollisionImminent => _lastCollisionWarningLevel >= 4;
+
+        #endregion
+
+        #region Collision Detection
 
         /// <summary>
         /// Check for vehicles ahead and calculate collision warning level.
@@ -232,5 +242,7 @@ namespace GrandTheftAccessibility
             _lastCollisionCheckTick = 0;
             _lastCollisionAnnounceTick = 0;
         }
+
+        #endregion
     }
 }

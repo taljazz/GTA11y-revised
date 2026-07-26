@@ -7,6 +7,8 @@ namespace GrandTheftAccessibility.Menus
     /// </summary>
     public interface IMenuState
     {
+        #region Menu Contract
+
         /// <summary>
         /// Navigate to previous item
         /// </summary>
@@ -41,5 +43,7 @@ namespace GrandTheftAccessibility.Menus
         /// Exit current submenu and return to parent level
         /// </summary>
         void ExitSubmenu();
+
+        #endregion
     }
 }

@@ -3,33 +3,19 @@ using System.Collections.Generic;
 using GTA;
 using GTA.Math;
 using GTA.Native;
-using DavyKager;
 
 namespace GrandTheftAccessibility.Menus
 {
     /// <summary>
     /// Menu for aircraft landing destinations with in-flight navigation guidance.
     /// Provides airports, helipads, and other landing locations with approach info.
-    /// Sets waypoints and provides voice navigation to landing destinations.
+    /// Top level = destinations; submenu per destination = actions:
+    /// beacon/voice navigation toggle, autopilot landing (TASK_PLANE_LAND for
+    /// planes on runways, heli land mission for helicopters), and cancel.
     /// </summary>
-    public class AircraftLandingMenu : IMenuState
+    public class AircraftLandingMenu : HierarchicalMenuBase
     {
-        private readonly SettingsManager _settings;
-        private readonly AudioManager _audio;
-        private readonly List<LandingDestination> _destinations;
-        private int _currentIndex;
-
-        // Navigation state
-        private bool _navigationActive;
-        private LandingDestination _activeDestination;
-        private long _lastNavAnnounceTick;
-        private float _lastAnnouncedDistance;
-
-        // Landing beacon state
-        private bool _beaconActive;
-        private int _beaconDestinationIndex;
-        private long _lastBeaconPulseTick;
-        private long _nextBeaconPulseInterval;
+        #region Types
 
         /// <summary>
         /// Represents a landing destination with approach information.
@@ -53,14 +39,12 @@ namespace GrandTheftAccessibility.Menus
                 Elevation = z * Constants.METERS_TO_FEET;
 
                 // Calculate runway end position for fixed-wing landing (TASK_PLANE_LAND)
-                // GTA V coordinate system: heading 0° = North (+Y), 90° = East (+X), 180° = South (-Y), 270° = West (-X)
+                // GTA V coordinate system: heading 0° = North (+Y), 90° = East (+X)
                 // X = sin(heading), Y = cos(heading)
                 if (runwayHeading >= 0 && !isHelipad)
                 {
-                    // PERFORMANCE: Use pre-calculated DEG_TO_RAD constant
                     float radians = runwayHeading * Constants.DEG_TO_RAD;
                     // Runway end is in the direction of the runway heading (aircraft lands INTO the heading)
-                    // Position is the touchdown point (threshold), RunwayEndPosition is where the rollout ends
                     RunwayEndPosition = Position + new Vector3(
                         (float)Math.Sin(radians) * Constants.DEFAULT_RUNWAY_LENGTH,
                         (float)Math.Cos(radians) * Constants.DEFAULT_RUNWAY_LENGTH,
@@ -72,27 +56,33 @@ namespace GrandTheftAccessibility.Menus
                     RunwayEndPosition = Position;
                 }
             }
-
-            /// <summary>
-            /// Constructor with explicit runway endpoint (for precision landings)
-            /// </summary>
-            public LandingDestination(string name, float x, float y, float z, float runwayHeading,
-                float endX, float endY, float endZ)
-            {
-                Name = name;
-                Position = new Vector3(x, y, z);
-                RunwayHeading = runwayHeading;
-                IsHelipad = false;
-                Elevation = z * Constants.METERS_TO_FEET;
-                RunwayEndPosition = new Vector3(endX, endY, endZ);
-            }
         }
 
-        /// <summary>
-        /// Create AircraftLandingMenu with navigation-only mode
-        /// </summary>
-        /// <param name="settings">Settings manager</param>
-        public AircraftLandingMenu(SettingsManager settings, AudioManager audio)
+        #endregion
+
+        #region Fields
+
+        private readonly SettingsManager _settings;
+        private readonly AudioManager _audio;
+        private readonly List<LandingDestination> _destinations;
+
+        // Navigation state
+        private bool _navigationActive;
+        private LandingDestination _activeDestination;
+        private long _lastNavAnnounceTick;
+        private float _lastAnnouncedDistance;
+
+        // Landing beacon state
+        private bool _beaconActive;
+        private int _beaconDestinationIndex;
+        private long _lastBeaconPulseTick;
+        private long _nextBeaconPulseInterval;
+
+        #endregion
+
+        #region Construction
+
+        public AircraftLandingMenu(SettingsManager settings, AudioManager audio) : base(audio)
         {
             _settings = settings;
             _audio = audio;
@@ -192,32 +182,22 @@ namespace GrandTheftAccessibility.Menus
                 new LandingDestination("Route 68 (Flat stretch)", 1211f, 2908f, 38.7f, 90f),
                 new LandingDestination("Senora Freeway (Desert)", 2417f, 3132f, 48.2f, 0f),
             };
-
-            _currentIndex = 0;
         }
 
-        public void NavigatePrevious(bool fastScroll = false)
-        {
-            int step = fastScroll ? 10 : 1;
-            _currentIndex -= step;
-            if (_currentIndex < 0)
-                _currentIndex = ((_currentIndex % _destinations.Count) + _destinations.Count) % _destinations.Count;
-        }
+        #endregion
 
-        public void NavigateNext(bool fastScroll = false)
-        {
-            int step = fastScroll ? 10 : 1;
-            _currentIndex += step;
-            if (_currentIndex >= _destinations.Count)
-                _currentIndex = _currentIndex % _destinations.Count;
-        }
+        #region MenuBase Overrides
 
-        public string GetCurrentItemText()
+        protected override int ItemCount => _destinations.Count;
+
+        protected override int FastScrollStep => 10;
+
+        protected override string GetItemText(int index)
         {
             Ped player = Game.Player?.Character;
             if (player == null || !player.Exists()) return "Unavailable";
 
-            LandingDestination dest = _destinations[_currentIndex];
+            LandingDestination dest = _destinations[index];
             Vector3 playerPos = player.Position;
             float distance = (dest.Position - playerPos).Length();
             float distanceMiles = distance * Constants.METERS_TO_MILES;
@@ -234,16 +214,84 @@ namespace GrandTheftAccessibility.Menus
             }
 
             string typeText = dest.IsHelipad ? "Helipad" : "Runway";
-            string beaconText = (_beaconActive && _beaconDestinationIndex == _currentIndex) ? ", beacon active" : "";
-            return $"{_currentIndex + 1} of {_destinations.Count}: {dest.Name}, {typeText}, {distanceText}{beaconText}";
+            string beaconText = (_beaconActive && _beaconDestinationIndex == index) ? ", beacon active" : "";
+            return $"{index + 1} of {_destinations.Count}: {dest.Name}, {typeText}, {distanceText}{beaconText}";
         }
 
-        public void ExecuteSelection()
+        protected override void OnItemActivated(int index)
         {
-            LandingDestination dest = _destinations[_currentIndex];
+            // Open the actions submenu for this destination
+            EnterSubmenu();
+        }
 
-            // Toggle beacon: if clicking the same active destination, turn off
-            if (_beaconActive && _beaconDestinationIndex == _currentIndex)
+        public override string GetMenuName()
+        {
+            if (InSubmenu && SelectedIndex >= 0 && SelectedIndex < _destinations.Count)
+            {
+                return _destinations[SelectedIndex].Name;
+            }
+            return "Aircraft Landing";
+        }
+
+        #endregion
+
+        #region Actions Submenu
+
+        private const int ACTION_TOGGLE_BEACON = 0;
+        private const int ACTION_AUTO_LAND = 1;
+        private const int ACTION_TAXI = 2;
+        private const int ACTION_CANCEL_ALL = 3;
+
+        protected override int SubmenuItemCount => 4;
+
+        protected override string GetSubmenuItemText(int index)
+        {
+            switch (index)
+            {
+                case ACTION_TOGGLE_BEACON:
+                    bool beaconOnHere = _beaconActive && _beaconDestinationIndex == SelectedIndex;
+                    return beaconOnHere
+                        ? "Turn off beacon and voice navigation"
+                        : "Set beacon and voice navigation";
+                case ACTION_AUTO_LAND:
+                    return "Auto-land here (autopilot)";
+                case ACTION_TAXI:
+                    return "Taxi here (planes on the ground)";
+                case ACTION_CANCEL_ALL:
+                    return "Cancel navigation and autopilot";
+                default:
+                    return "Unknown";
+            }
+        }
+
+        protected override void OnSubmenuItemActivated(int index)
+        {
+            switch (index)
+            {
+                case ACTION_TOGGLE_BEACON:
+                    ToggleBeacon(SelectedIndex);
+                    break;
+                case ACTION_AUTO_LAND:
+                    EngageAutoLand(SelectedIndex);
+                    break;
+                case ACTION_TAXI:
+                    EngageTaxi(SelectedIndex);
+                    break;
+                case ACTION_CANCEL_ALL:
+                    CancelAllGuidance();
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// Toggle the audio beacon and voice navigation for a destination.
+        /// </summary>
+        private void ToggleBeacon(int index)
+        {
+            LandingDestination dest = _destinations[index];
+
+            // Turn off if already active for this destination
+            if (_beaconActive && _beaconDestinationIndex == index)
             {
                 _beaconActive = false;
                 _beaconDestinationIndex = -1;
@@ -253,29 +301,13 @@ namespace GrandTheftAccessibility.Menus
                 _navigationActive = false;
                 _activeDestination = null;
 
-                Tolk.Speak($"Beacon off, {dest.Name}");
+                Speak($"Beacon off, {dest.Name}");
                 return;
             }
 
-            // Activate beacon for this destination
-            _beaconActive = true;
-            _beaconDestinationIndex = _currentIndex;
-            _lastBeaconPulseTick = 0;
-            _nextBeaconPulseInterval = 0;
+            EnableBeaconAndNavigation(index);
 
-            // Set GPS waypoint
-            Function.Call(Hash.SET_NEW_WAYPOINT, dest.Position.X, dest.Position.Y);
-            int soundId = Function.Call<int>(Hash.GET_SOUND_ID);
-            Function.Call(Hash.PLAY_SOUND_FRONTEND, soundId, "WAYPOINT_SET", "HUD_FRONTEND_DEFAULT_SOUNDSET", false);
-            Function.Call(Hash.RELEASE_SOUND_ID, soundId);
-
-            // Activate voice navigation too
-            _navigationActive = true;
-            _activeDestination = dest;
-            _lastAnnouncedDistance = float.MaxValue;
-            _lastNavAnnounceTick = 0;
-
-            // Announce
+            // Announce with bearing and distance
             Ped player = Game.Player.Character;
             Vector3 playerPos = player.Position;
             float distance = (dest.Position - playerPos).Length();
@@ -289,8 +321,217 @@ namespace GrandTheftAccessibility.Menus
                 announcement += $", runway heading {(int)dest.RunwayHeading} degrees";
             }
 
-            Tolk.Speak(announcement);
+            Speak(announcement);
         }
+
+        /// <summary>
+        /// Turn on the beacon, GPS waypoint, and voice navigation for a destination
+        /// without announcing (callers announce their own context).
+        /// </summary>
+        private void EnableBeaconAndNavigation(int index)
+        {
+            LandingDestination dest = _destinations[index];
+
+            _beaconActive = true;
+            _beaconDestinationIndex = index;
+            _lastBeaconPulseTick = 0;
+            _nextBeaconPulseInterval = 0;
+
+            // Set GPS waypoint
+            Function.Call(Hash.SET_NEW_WAYPOINT, dest.Position.X, dest.Position.Y);
+            int soundId = Function.Call<int>(Hash.GET_SOUND_ID);
+            Function.Call(Hash.PLAY_SOUND_FRONTEND, soundId, "WAYPOINT_SET", "HUD_FRONTEND_DEFAULT_SOUNDSET", false);
+            Function.Call(Hash.RELEASE_SOUND_ID, soundId);
+
+            // Activate voice navigation
+            _navigationActive = true;
+            _activeDestination = dest;
+            _lastAnnouncedDistance = float.MaxValue;
+            _lastNavAnnounceTick = 0;
+        }
+
+        /// <summary>
+        /// Engage autopilot landing at the destination.
+        /// Planes use TASK_PLANE_LAND with the stored runway start/end points;
+        /// helicopters fly a heli land-and-wait mission that touches down on arrival.
+        /// The beacon and voice navigation stay on for audio progress feedback.
+        /// </summary>
+        private void EngageAutoLand(int index)
+        {
+            LandingDestination dest = _destinations[index];
+
+            Ped player = Game.Player?.Character;
+            if (player == null || !player.Exists() || !player.IsInVehicle())
+            {
+                Speak("You must be flying an aircraft to auto-land.");
+                return;
+            }
+
+            Vehicle aircraft = player.CurrentVehicle;
+            if (aircraft == null || !aircraft.Exists())
+            {
+                Speak("You must be flying an aircraft to auto-land.");
+                return;
+            }
+
+            if (player.SeatIndex != VehicleSeat.Driver)
+            {
+                Speak("You must be the pilot to auto-land.");
+                return;
+            }
+
+            VehicleClass aircraftClass = aircraft.ClassType;
+
+            try
+            {
+                if (aircraftClass == VehicleClass.Helicopters)
+                {
+                    // Helicopter: land-and-wait mission that touches down on arrival.
+                    // Runway heading doubles as the requested landing orientation when set.
+                    float orientation = dest.RunwayHeading >= 0 ? dest.RunwayHeading : -1f;
+
+                    player.Task.StartHeliMission(
+                        aircraft,
+                        dest.Position,
+                        VehicleMissionType.LandAndWait,
+                        30f,     // cruise speed (m/s)
+                        5f,      // target reached distance
+                        30,      // flight height above route
+                        20,      // minimum height above terrain
+                        orientation,
+                        100f,    // slow-down distance
+                        HeliMissionFlags.LandOnArrival);
+
+                    EnableBeaconAndNavigation(index);
+                    Speak($"Helicopter autopilot engaged, landing at {dest.Name}. Beacon and voice guidance active.");
+                    Logger.Info($"AircraftLandingMenu: Heli auto-land engaged to {dest.Name}");
+                }
+                else if (aircraftClass == VehicleClass.Planes)
+                {
+                    if (dest.IsHelipad)
+                    {
+                        // VTOL-capable planes (Hydra, Avenger, Tula...) can hover
+                        // to the pad with the precision VTOL task; the pilot does
+                        // the final few meters of descent guided by the beacon.
+                        if (Constants.VTOL_VEHICLE_HASHES.Contains(aircraft.Model.Hash))
+                        {
+                            float? orientation = dest.RunwayHeading >= 0 ? (float?)dest.RunwayHeading : null;
+
+                            player.Task.GoToPlanePreciseVtol(
+                                aircraft,
+                                dest.Position + new Vector3(0f, 0f, 3f),
+                                (int)(dest.Position.Z + 3f),   // hold altitude just above the pad
+                                2,                             // minimum height above terrain
+                                orientation);
+
+                            EnableBeaconAndNavigation(index);
+                            Speak($"VTOL approach engaged, hovering to {dest.Name}. When the beacon pitch levels out, ease down to touch down.");
+                            Logger.Info($"AircraftLandingMenu: VTOL precise approach engaged to {dest.Name}");
+                        }
+                        else
+                        {
+                            Speak("Planes need a runway. Choose a runway destination, or fly a helicopter or VTOL aircraft for helipads.");
+                        }
+                        return;
+                    }
+
+                    // Plane: engine-level landing task using the stored runway
+                    // threshold and rollout endpoint.
+                    player.Task.LandPlane(dest.Position, dest.RunwayEndPosition, aircraft);
+
+                    EnableBeaconAndNavigation(index);
+                    Speak($"Plane autopilot engaged, landing on {dest.Name}. Beacon and voice guidance active.");
+                    Logger.Info($"AircraftLandingMenu: Plane auto-land engaged to {dest.Name}");
+                }
+                else
+                {
+                    Speak("You must be flying a plane or helicopter to auto-land.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Exception(ex, "AircraftLandingMenu.EngageAutoLand");
+                Speak("Failed to engage autopilot.");
+            }
+        }
+
+        /// <summary>
+        /// Taxi a plane along the ground to the destination using the engine's
+        /// taxi task, which follows taxiways instead of cutting across grass.
+        /// </summary>
+        private void EngageTaxi(int index)
+        {
+            LandingDestination dest = _destinations[index];
+
+            Ped player = Game.Player?.Character;
+            if (player == null || !player.Exists() || !player.IsInVehicle())
+            {
+                Speak("You must be in a plane on the ground to taxi.");
+                return;
+            }
+
+            Vehicle aircraft = player.CurrentVehicle;
+            if (aircraft == null || !aircraft.Exists() || aircraft.ClassType != VehicleClass.Planes)
+            {
+                Speak("Taxiing is for planes. Helicopters can auto-land directly.");
+                return;
+            }
+
+            if (player.SeatIndex != VehicleSeat.Driver)
+            {
+                Speak("You must be the pilot to taxi.");
+                return;
+            }
+
+            if (aircraft.IsInAir)
+            {
+                Speak("You are airborne. Use auto-land instead, then taxi after touchdown.");
+                return;
+            }
+
+            try
+            {
+                player.Task.PlaneTaxi(aircraft, dest.Position, 12f, 10f);
+
+                EnableBeaconAndNavigation(index);
+                Speak($"Taxiing to {dest.Name}. Beacon and voice guidance active.");
+                Logger.Info($"AircraftLandingMenu: Taxi engaged to {dest.Name}");
+            }
+            catch (Exception ex)
+            {
+                Logger.Exception(ex, "AircraftLandingMenu.EngageTaxi");
+                Speak("Failed to start taxiing.");
+            }
+        }
+
+        /// <summary>
+        /// Cancel the autopilot task, beacon, and voice navigation.
+        /// </summary>
+        private void CancelAllGuidance()
+        {
+            try
+            {
+                // Clear the landing task so the player regains manual control
+                Ped player = Game.Player?.Character;
+                if (player != null && player.Exists())
+                {
+                    player.Task.ClearAll();
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Exception(ex, "AircraftLandingMenu.CancelAllGuidance");
+            }
+
+            _navigationActive = false;
+            _activeDestination = null;
+            StopBeacon();
+            Speak("Navigation and autopilot cancelled. You have manual control.");
+        }
+
+        #endregion
+
+        #region Navigation Updates
 
         /// <summary>
         /// Called each tick to provide in-flight navigation updates.
@@ -302,7 +543,7 @@ namespace GrandTheftAccessibility.Menus
                 return;
 
             // Throttle announcements to every 5 seconds minimum
-            if (currentTick - _lastNavAnnounceTick < 50_000_000) // 5 seconds
+            if (currentTick - _lastNavAnnounceTick < 5_000) // 5 seconds
                 return;
 
             float distance = (_activeDestination.Position - position).Length();
@@ -311,7 +552,7 @@ namespace GrandTheftAccessibility.Menus
             // Check if arrived (within 100 meters)
             if (distance < 100f)
             {
-                Tolk.Speak("Arriving at destination");
+                Speak("Arriving at destination");
                 _navigationActive = false;
                 _activeDestination = null;
                 return;
@@ -396,12 +637,10 @@ namespace GrandTheftAccessibility.Menus
             // Add runway heading info when very close
             if (distanceMiles < 0.5f && !_activeDestination.IsHelipad && _activeDestination.RunwayHeading >= 0)
             {
-                int runwayNumber = (int)Math.Round(_activeDestination.RunwayHeading / 10f);
-                if (runwayNumber == 0) runwayNumber = 36;
                 announcement += $", align runway {(int)_activeDestination.RunwayHeading}";
             }
 
-            Tolk.Speak(announcement);
+            Speak(announcement);
         }
 
         /// <summary>
@@ -418,10 +657,14 @@ namespace GrandTheftAccessibility.Menus
             {
                 _navigationActive = false;
                 _activeDestination = null;
-                Tolk.Speak("Navigation cancelled");
+                Speak("Navigation cancelled");
             }
             StopBeacon();
         }
+
+        #endregion
+
+        #region Beacon
 
         /// <summary>
         /// Check if the landing beacon is currently active
@@ -475,8 +718,6 @@ namespace GrandTheftAccessibility.Menus
             if (relativeBearing < -180f) relativeBearing += 360f;
 
             // 4. Calculate stereo pan from relative bearing
-            // In GTA counterclockwise convention: positive relative bearing = destination is RIGHT
-            // NAudio pan: positive = right speaker, negative = left speaker (matches directly)
             float absRelBearing = Math.Abs(relativeBearing);
             float pan;
 
@@ -519,16 +760,6 @@ namespace GrandTheftAccessibility.Menus
             _nextBeaconPulseInterval = pulseIntervalTicks;
         }
 
-        public string GetMenuName()
-        {
-            return "Aircraft Landing";
-        }
-
-        public bool HasActiveSubmenu => false;
-
-        public void ExitSubmenu()
-        {
-            // No submenu - do nothing
-        }
+        #endregion
     }
 }

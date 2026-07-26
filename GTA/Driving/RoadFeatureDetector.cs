@@ -12,6 +12,8 @@ namespace GrandTheftAccessibility
     /// </summary>
     public class RoadFeatureDetector
     {
+        #region Fields
+
         private readonly AudioManager _audio;
         private readonly AnnouncementQueue _announcementQueue;
         private readonly WeatherManager _weatherManager;
@@ -45,6 +47,10 @@ namespace GrandTheftAccessibility
         private readonly OutputArgument _chainNodePos = new OutputArgument();
         private readonly OutputArgument _chainNodeHeading = new OutputArgument();
 
+        #endregion
+
+        #region Properties
+
         /// <summary>
         /// Whether curve slowdown is currently active
         /// </summary>
@@ -59,6 +65,10 @@ namespace GrandTheftAccessibility
         /// Whether currently in an intersection
         /// </summary>
         public bool IsInIntersection => _inIntersection;
+
+        #endregion
+
+        #region Construction
 
         public RoadFeatureDetector(AudioManager audio, AnnouncementQueue announcementQueue, WeatherManager weatherManager)
         {
@@ -84,11 +94,15 @@ namespace GrandTheftAccessibility
             _intersectionPosition = Vector3.Zero;
         }
 
+        #endregion
+
+        #region Road Feature Scanning
+
         /// <summary>
         /// Check and announce road features
         /// </summary>
         public void Update(Vehicle vehicle, Vector3 position, long currentTick,
-            float targetSpeed, int drivingStyleMode, bool autoDriveActive)
+            float targetSpeed, DrivingStyleMode drivingStyleMode, bool autoDriveActive)
         {
             if (vehicle == null || !vehicle.Exists())
                 return;
@@ -305,6 +319,10 @@ namespace GrandTheftAccessibility
                 Math.Min(Constants.CURVE_SLOWDOWN_DISTANCE_MAX, calculatedDistance));
         }
 
+        #endregion
+
+        #region Curve Slowdown
+
         private void StartCurveSlowdown(float slowdownFactor, float targetSpeed, long currentTick)
         {
             _curveSlowdownSpeed = targetSpeed * slowdownFactor;
@@ -370,7 +388,7 @@ namespace GrandTheftAccessibility
         }
 
         private CurveInfo AnalyzeCurveCharacteristics(float vehicleHeading, float roadHeading,
-            float distance, float currentSpeed, int drivingStyleMode)
+            float distance, float currentSpeed, DrivingStyleMode drivingStyleMode)
         {
             float headingDiff = NormalizeAngleDiff(roadHeading - vehicleHeading);
             float absAngle = Math.Abs(headingDiff);
@@ -403,17 +421,17 @@ namespace GrandTheftAccessibility
             return new CurveInfo(severity, direction, absAngle, curveRadius, safeSpeed);
         }
 
-        private float GetCurveSpeedModifier(int drivingStyleMode)
+        private float GetCurveSpeedModifier(DrivingStyleMode drivingStyleMode)
         {
             switch (drivingStyleMode)
             {
-                case Constants.DRIVING_STYLE_MODE_CAUTIOUS:
+                case DrivingStyleMode.Cautious:
                     return 0.8f;
-                case Constants.DRIVING_STYLE_MODE_NORMAL:
+                case DrivingStyleMode.Normal:
                     return 0.9f;
-                case Constants.DRIVING_STYLE_MODE_AGGRESSIVE:
+                case DrivingStyleMode.Aggressive:
                     return 1.0f;
-                case Constants.DRIVING_STYLE_MODE_RECKLESS:
+                case DrivingStyleMode.Reckless:
                     return 1.1f;
                 default:
                     return 0.9f;
@@ -451,6 +469,10 @@ namespace GrandTheftAccessibility
             StartCurveSlowdown(slowdownFactor, targetSpeed, currentTick);
         }
 
+        #endregion
+
+        #region Formatting Helpers
+
         /// <summary>
         /// Format distance for speech in imperial units
         /// </summary>
@@ -487,5 +509,7 @@ namespace GrandTheftAccessibility
             while (angle < -180f) angle += 360f;
             return angle;
         }
+
+        #endregion
     }
 }

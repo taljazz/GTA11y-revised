@@ -13,6 +13,8 @@ namespace GrandTheftAccessibility
     /// </summary>
     public class EntityScanner
     {
+        #region Fields
+
         private readonly StringBuilder _resultBuilder;
 
         // Object pool for Result objects to reduce allocations
@@ -21,6 +23,10 @@ namespace GrandTheftAccessibility
 
         // Reusable results list to avoid allocation on each scan
         private readonly List<Result> _scanResults;
+
+        #endregion
+
+        #region Construction and Object Pool
 
         public EntityScanner()
         {
@@ -64,6 +70,10 @@ namespace GrandTheftAccessibility
         {
             _poolIndex = 0;
         }
+
+        #endregion
+
+        #region Scans
 
         /// <summary>
         /// Scan for nearby vehicles
@@ -309,6 +319,10 @@ namespace GrandTheftAccessibility
             return FormatResults(_scanResults, "Nearest Objects: ");
         }
 
+        #endregion
+
+        #region Result Formatting
+
         /// <summary>
         /// Format results list into spoken string using StringBuilder
         /// OPTIMIZED: Pre-estimate capacity, fewer Append calls
@@ -374,5 +388,7 @@ namespace GrandTheftAccessibility
                 return header + "Error formatting results.";
             }
         }
+
+        #endregion
     }
 }

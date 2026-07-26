@@ -93,6 +93,8 @@
     <Compile Include="Logger.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <!-- Core -->
+    <Compile Include="Core\MonitorBase.cs" />
+    <Compile Include="Core\HotkeyMapper.cs" />
     <Compile Include="Core\AudioManager.cs" />
     <Compile Include="Core\SettingsManager.cs" />
     <Compile Include="Core\HashManager.cs" />
@@ -124,6 +126,8 @@
     <Compile Include="Models\Result.cs" />
     <Compile Include="Models\SavedVehicle.cs" />
     <Compile Include="Models\CurveTypes.cs" />
+    <Compile Include="Models\Enums.cs" />
+    <Compile Include="Models\AircraftProfile.cs" />
     <!-- Utilities -->
     <Compile Include="Utilities\SpatialCalculator.cs" />
     <!-- Data -->
@@ -132,6 +136,7 @@
     <Compile Include="Data\AirportData.cs" />
     <!-- Menus -->
     <Compile Include="Menus\IMenuState.cs" />
+    <Compile Include="Menus\MenuBase.cs" />
     <Compile Include="Menus\MenuManager.cs" />
     <Compile Include="Menus\LocationMenu.cs" />
     <Compile Include="Menus\WaypointMenu.cs" />
@@ -140,6 +145,8 @@
     <Compile Include="Menus\VehicleCategoryMenu.cs" />
     <Compile Include="Menus\VehicleModMenu.cs" />
     <Compile Include="Menus\VehicleModMenuProxy.cs" />
+    <Compile Include="Menus\WeaponSelectMenu.cs" />
+    <Compile Include="Menus\WeaponModMenu.cs" />
     <Compile Include="Menus\VehicleSaveLoadMenu.cs" />
     <Compile Include="Menus\FunctionsMenu.cs" />
     <Compile Include="Menus\SettingsMenu.cs" />

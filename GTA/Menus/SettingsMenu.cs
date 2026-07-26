@@ -3,80 +3,63 @@ using System.Collections.Generic;
 namespace GrandTheftAccessibility.Menus
 {
     /// <summary>
-    /// Menu for toggling mod settings
-    /// Supports both boolean (toggle) and int (cycle) settings
+    /// Menu for toggling mod settings.
+    /// Supports both boolean (toggle) and int (cycle) settings.
     /// </summary>
-    public class SettingsMenu : IMenuState
+    public class SettingsMenu : MenuBase
     {
+        #region Fields
+
         private readonly SettingsManager _settings;
         private readonly List<string> _settingIds;
-        private int _currentIndex;
 
-        public SettingsMenu(SettingsManager settings)
+        #endregion
+
+        #region Construction
+
+        public SettingsMenu(SettingsManager settings, AudioManager audio) : base(audio)
         {
             _settings = settings;
             _settingIds = _settings.GetAllSettingIds();
-            _currentIndex = 0;
         }
 
-        public void NavigatePrevious(bool fastScroll = false)
+        #endregion
+
+        #region MenuBase Overrides
+
+        protected override int ItemCount => _settingIds?.Count ?? 0;
+
+        protected override string EmptyMenuText => "(no settings)";
+
+        protected override string GetItemText(int index)
         {
-            int step = fastScroll ? 5 : 1;
-            _currentIndex -= step;
-            if (_currentIndex < 0)
-                _currentIndex = (((_currentIndex % _settingIds.Count) + _settingIds.Count) % _settingIds.Count);
-        }
-
-        public void NavigateNext(bool fastScroll = false)
-        {
-            int step = fastScroll ? 5 : 1;
-            _currentIndex += step;
-            if (_currentIndex >= _settingIds.Count)
-                _currentIndex = _currentIndex % _settingIds.Count;
-        }
-
-        public string GetCurrentItemText()
-        {
-            // Defensive: Validate settings and indices
-            if (_settingIds == null || _settingIds.Count == 0)
-                return "(no settings)";
-
-            if (_currentIndex < 0 || _currentIndex >= _settingIds.Count)
-                _currentIndex = 0;
-
             if (_settings == null)
                 return "(settings unavailable)";
 
-            string settingId = _settingIds[_currentIndex];
+            string settingId = _settingIds[index];
             string displayName = _settings.GetDisplayName(settingId);
 
-            // Handle int settings differently
+            // Int settings show their current value name; bool settings show On/Off
             if (_settings.IsIntSetting(settingId))
             {
                 string valueName = _settings.GetIntSettingValueName(settingId);
                 return $"{displayName}: {valueName}";
             }
-            else
-            {
-                string toggleState = _settings.GetSetting(settingId) ? "On" : "Off";
-                return $"{displayName} {toggleState}";
-            }
+
+            string toggleState = _settings.GetSetting(settingId) ? "On" : "Off";
+            return $"{displayName} {toggleState}";
         }
 
-        public void ExecuteSelection()
+        protected override void OnItemActivated(int index)
         {
-            // Defensive: Validate settings and indices
-            if (_settingIds == null || _settingIds.Count == 0 || _settings == null)
+            if (_settings == null)
                 return;
 
-            if (_currentIndex < 0 || _currentIndex >= _settingIds.Count)
-                _currentIndex = 0;
-
-            string settingId = _settingIds[_currentIndex];
+            string settingId = _settingIds[index];
             string displayName = _settings.GetDisplayName(settingId);
             string message;
 
-            // Handle int settings (cycle) vs boolean settings (toggle)
+            // Int settings cycle through values; bool settings toggle
             if (_settings.IsIntSetting(settingId))
             {
                 _settings.CycleIntSetting(settingId);
@@ -93,19 +76,14 @@ namespace GrandTheftAccessibility.Menus
                 message = newValue ? $"{displayName} On!" : $"{displayName} Off!";
             }
 
-            DavyKager.Tolk.Speak(message);
+            Speak(message);
         }
 
-        public string GetMenuName()
+        public override string GetMenuName()
         {
             return "Settings";
         }
 
-        public bool HasActiveSubmenu => false;
-
-        public void ExitSubmenu()
-        {
-            // No submenu - do nothing
-        }
+        #endregion
     }
 }

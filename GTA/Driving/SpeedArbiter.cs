@@ -26,6 +26,8 @@ namespace GrandTheftAccessibility
     /// </summary>
     internal class SpeedArbiter
     {
+        #region Fields
+
         // Pre-cached hashes for native calls
         private static readonly Hash _setCruiseSpeedHash = (Hash)Constants.NATIVE_SET_DRIVE_TASK_CRUISE_SPEED;
         private static readonly Hash _setMaxCruiseSpeedHash = (Hash)Constants.NATIVE_SET_DRIVE_TASK_MAX_CRUISE_SPEED;
@@ -52,6 +54,10 @@ namespace GrandTheftAccessibility
         // Track whether any value changed since last apply
         private bool _dirty = true;
 
+        #endregion
+
+        #region Properties
+
         /// <summary>
         /// The final computed speed from the last ApplySpeed() call
         /// </summary>
@@ -62,11 +68,19 @@ namespace GrandTheftAccessibility
         /// </summary>
         public float BaseTargetSpeed => _baseTargetSpeed;
 
+        #endregion
+
+        #region Construction
+
         public SpeedArbiter(float initialSpeed)
         {
             _baseTargetSpeed = initialSpeed;
             CurrentEffectiveSpeed = initialSpeed;
         }
+
+        #endregion
+
+        #region Modifier Inputs
 
         /// <summary>
         /// Set the base target speed (from user's speed setting)
@@ -147,6 +161,10 @@ namespace GrandTheftAccessibility
         {
             SetArrivalCap(float.MaxValue);
         }
+
+        #endregion
+
+        #region Speed Calculation and Application
 
         /// <summary>
         /// Calculate the effective speed without applying it.
@@ -232,5 +250,7 @@ namespace GrandTheftAccessibility
             _lastAppliedSpeed = 0f;
             _dirty = true;
         }
+
+        #endregion
     }
 }

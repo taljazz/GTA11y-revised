@@ -11,6 +11,8 @@ namespace GrandTheftAccessibility
     /// </summary>
     public class ETACalculator
     {
+        #region Fields
+
         // PERFORMANCE: Pre-cached Hash value to avoid repeated casting
         private static readonly Hash _generateDirectionsHash = (Hash)Constants.NATIVE_GENERATE_DIRECTIONS_TO_COORD;
 
@@ -31,6 +33,10 @@ namespace GrandTheftAccessibility
         private readonly OutputArgument _roadDirectionArg1 = new OutputArgument();
         private readonly OutputArgument _roadDirectionArg2 = new OutputArgument();
 
+        #endregion
+
+        #region Properties
+
         /// <summary>
         /// Current average speed used for ETA calculation
         /// </summary>
@@ -40,6 +46,10 @@ namespace GrandTheftAccessibility
         /// Last announced ETA in seconds
         /// </summary>
         public float LastAnnouncedETA => _lastAnnouncedETA;
+
+        #endregion
+
+        #region Construction
 
         public ETACalculator(AudioManager audio, AnnouncementQueue announcementQueue)
         {
@@ -65,6 +75,10 @@ namespace GrandTheftAccessibility
                 Array.Clear(_speedSamples, 0, _speedSamples.Length);
             }
         }
+
+        #endregion
+
+        #region ETA Calculation
 
         /// <summary>
         /// Update and announce ETA to waypoint
@@ -193,5 +207,6 @@ namespace GrandTheftAccessibility
             }
         }
 
+        #endregion
     }
 }

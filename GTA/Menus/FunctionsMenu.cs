@@ -2,16 +2,17 @@ using System;
 using System.Collections.Generic;
 using GTA;
 using GTA.Native;
-using DavyKager;
 
 namespace GrandTheftAccessibility.Menus
 {
     /// <summary>
-    /// Menu for fun functions like chaos modes
-    /// Uses HashManager for shared hash lookups (loaded once, shared across classes)
+    /// Menu for fun functions like chaos modes.
+    /// Uses HashManager for shared hash lookups (loaded once, shared across classes).
     /// </summary>
-    public class FunctionsMenu : IMenuState
+    public class FunctionsMenu : MenuBase
     {
+        #region Constants
+
         // Cached mission blip sprite IDs to avoid allocation on each call
         private static readonly int[] MissionBlipSprites = new int[]
         {
@@ -33,13 +34,30 @@ namespace GrandTheftAccessibility.Menus
             480,  // Mission pickup
         };
 
+        // Item indices for ExecuteSelection dispatch
+        private const int ITEM_MARK_MISSION_WAYPOINT = 0;
+        private const int ITEM_TOGGLE_TURRET_CREW = 1;
+        private const int ITEM_EXPLODE_VEHICLES = 2;
+        private const int ITEM_PEDS_ATTACK = 3;
+        private const int ITEM_KILL_PEDS = 4;
+        private const int ITEM_RAISE_WANTED = 5;
+        private const int ITEM_CLEAR_WANTED = 6;
+
+        #endregion
+
+        #region Fields
+
         private readonly List<string> _functions;
         private readonly SettingsManager _settings;
         private readonly Random _random;
         private readonly TurretCrewManager _turretCrewManager;
-        private int _currentIndex;
 
-        public FunctionsMenu(SettingsManager settings, TurretCrewManager turretCrewManager)
+        #endregion
+
+        #region Construction
+
+        public FunctionsMenu(SettingsManager settings, TurretCrewManager turretCrewManager, AudioManager audio)
+            : base(audio)
         {
             _settings = settings;
             _turretCrewManager = turretCrewManager;
@@ -55,63 +73,60 @@ namespace GrandTheftAccessibility.Menus
                 "Raise Wanted Level",
                 "Clear Wanted Level"
             };
-
-            _currentIndex = 0;
         }
 
-        public void NavigatePrevious(bool fastScroll = false)
-        {
-            int step = fastScroll ? 5 : 1;
-            _currentIndex -= step;
-            if (_currentIndex < 0)
-                _currentIndex = (((_currentIndex % _functions.Count) + _functions.Count) % _functions.Count);
-        }
+        #endregion
 
-        public void NavigateNext(bool fastScroll = false)
-        {
-            int step = fastScroll ? 5 : 1;
-            _currentIndex += step;
-            if (_currentIndex >= _functions.Count)
-                _currentIndex = _currentIndex % _functions.Count;
-        }
+        #region MenuBase Overrides
 
-        public string GetCurrentItemText()
+        protected override int ItemCount => _functions.Count;
+
+        protected override string GetItemText(int index)
         {
             // For turret crew, show current status
-            if (_currentIndex == 1 && _turretCrewManager != null)
+            if (index == ITEM_TOGGLE_TURRET_CREW && _turretCrewManager != null)
             {
                 return _turretCrewManager.GetStatusText();
             }
-            return _functions[_currentIndex];
+            return _functions[index];
         }
 
-        public void ExecuteSelection()
+        protected override void OnItemActivated(int index)
         {
-            switch (_currentIndex)
+            switch (index)
             {
-                case 0:
+                case ITEM_MARK_MISSION_WAYPOINT:
                     MarkWaypointToMissionObjective();
                     break;
-                case 1:
+                case ITEM_TOGGLE_TURRET_CREW:
                     ToggleTurretCrew();
                     break;
-                case 2:
+                case ITEM_EXPLODE_VEHICLES:
                     ExplodeNearbyVehicles();
                     break;
-                case 3:
+                case ITEM_PEDS_ATTACK:
                     MakePedsAttackEachOther();
                     break;
-                case 4:
+                case ITEM_KILL_PEDS:
                     KillAllNearbyPeds();
                     break;
-                case 5:
+                case ITEM_RAISE_WANTED:
                     RaiseWantedLevel();
                     break;
-                case 6:
+                case ITEM_CLEAR_WANTED:
                     ClearWantedLevel();
                     break;
             }
         }
+
+        public override string GetMenuName()
+        {
+            return "Functions";
+        }
+
+        #endregion
+
+        #region Function Implementations
 
         private void ToggleTurretCrew()
         {
@@ -121,7 +136,7 @@ namespace GrandTheftAccessibility.Menus
             }
             else
             {
-                Tolk.Speak("Turret crew system unavailable");
+                Speak("Turret crew system unavailable");
             }
         }
 
@@ -164,7 +179,7 @@ namespace GrandTheftAccessibility.Menus
                 explodedCount++;
             }
 
-            Tolk.Speak($"Exploded {explodedCount} vehicles");
+            Speak($"Exploded {explodedCount} vehicles");
         }
 
         private void MakePedsAttackEachOther()
@@ -173,7 +188,7 @@ namespace GrandTheftAccessibility.Menus
 
             if (eligiblePeds.Count < 4)
             {
-                Tolk.Speak("More nearby people are needed.");
+                Speak("More nearby people are needed.");
                 return;
             }
 
@@ -184,15 +199,15 @@ namespace GrandTheftAccessibility.Menus
 
                 Ped ped = eligiblePeds[i];
                 ped.Task.ClearAllImmediately();
-                ped.AlwaysKeepTask = false;
+                ped.KeepTaskWhenMarkedAsNoLongerNeeded = false;
                 ped.BlockPermanentEvents = false;
                 ped.Weapons.Give(WeaponHash.APPistol, 1000, true, true);
-                ped.Task.FightAgainst(eligiblePeds[targetIndex]);
-                ped.AlwaysKeepTask = true;
+                ped.Task.Combat(eligiblePeds[targetIndex]);
+                ped.KeepTaskWhenMarkedAsNoLongerNeeded = true;
                 ped.BlockPermanentEvents = true;
             }
 
-            Tolk.Speak($"{eligiblePeds.Count} peds attacking each other");
+            Speak($"{eligiblePeds.Count} peds attacking each other");
         }
 
         private void KillAllNearbyPeds()
@@ -204,26 +219,32 @@ namespace GrandTheftAccessibility.Menus
                 ped.Kill();
             }
 
-            Tolk.Speak($"Killed {eligiblePeds.Count} peds");
+            Speak($"Killed {eligiblePeds.Count} peds");
         }
 
         private void RaiseWantedLevel()
         {
-            if (Game.Player.WantedLevel < 5)
+            Wanted wanted = Game.Player.Wanted;
+            int currentLevel = wanted.WantedLevel;
+
+            if (currentLevel < 5)
             {
-                Game.Player.WantedLevel++;
-                Tolk.Speak($"Wanted level {Game.Player.WantedLevel}");
+                wanted.SetWantedLevel(currentLevel + 1, false);
+                wanted.ApplyWantedLevelChangeNow(false);
+                Speak($"Wanted level {currentLevel + 1}");
             }
             else
             {
-                Tolk.Speak("Already at maximum wanted level");
+                Speak("Already at maximum wanted level");
             }
         }
 
         private void ClearWantedLevel()
         {
-            Game.Player.WantedLevel = 0;
-            Tolk.Speak("Wanted level cleared");
+            Wanted wanted = Game.Player.Wanted;
+            wanted.SetWantedLevel(0, false);
+            wanted.ApplyWantedLevelChangeNow(false);
+            Speak("Wanted level cleared");
         }
 
         private void MarkWaypointToMissionObjective()
@@ -232,7 +253,7 @@ namespace GrandTheftAccessibility.Menus
             Ped player = Game.Player?.Character;
             if (player == null || !player.Exists())
             {
-                Tolk.Speak("Player unavailable");
+                Speak("Player unavailable");
                 return;
             }
 
@@ -296,16 +317,16 @@ namespace GrandTheftAccessibility.Menus
                 if (distanceMiles < 0.1f)
                 {
                     int feet = (int)(closestDistance * Constants.METERS_TO_FEET);
-                    Tolk.Speak($"Waypoint set, {feet} feet away");
+                    Speak($"Waypoint set, {feet} feet away");
                 }
                 else
                 {
-                    Tolk.Speak($"Waypoint set, {distanceMiles:F1} miles away");
+                    Speak($"Waypoint set, {distanceMiles:F1} miles away");
                 }
             }
             else
             {
-                Tolk.Speak("No mission objective found");
+                Speak("No mission objective found");
             }
         }
 
@@ -335,16 +356,6 @@ namespace GrandTheftAccessibility.Menus
             return eligible;
         }
 
-        public string GetMenuName()
-        {
-            return "Functions";
-        }
-
-        public bool HasActiveSubmenu => false;
-
-        public void ExitSubmenu()
-        {
-            // No submenu - do nothing
-        }
+        #endregion
     }
 }

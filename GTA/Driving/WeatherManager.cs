@@ -9,6 +9,8 @@ namespace GrandTheftAccessibility
     /// </summary>
     public class WeatherManager
     {
+        #region Fields
+
         // PERFORMANCE: Pre-cached Hash value to avoid repeated casting
         private static readonly Hash _getPrevWeatherHash = (Hash)Constants.NATIVE_GET_PREV_WEATHER_TYPE_HASH_NAME;
 
@@ -16,6 +18,10 @@ namespace GrandTheftAccessibility
         private float _weatherSpeedMultiplier = 1.0f;
         private long _lastWeatherCheckTick;
         private bool _weatherAnnounced;
+
+        #endregion
+
+        #region Properties
 
         /// <summary>
         /// Current weather hash value
@@ -31,6 +37,10 @@ namespace GrandTheftAccessibility
         /// Whether a weather change has been announced
         /// </summary>
         public bool WeatherAnnounced => _weatherAnnounced;
+
+        #endregion
+
+        #region Update Loop
 
         /// <summary>
         /// Check weather conditions and update speed multiplier.
@@ -92,6 +102,10 @@ namespace GrandTheftAccessibility
 
             return false;
         }
+
+        #endregion
+
+        #region Weather Lookup
 
         /// <summary>
         /// Get speed multiplier for weather type
@@ -206,5 +220,7 @@ namespace GrandTheftAccessibility
             _lastWeatherCheckTick = 0;
             _weatherAnnounced = false;
         }
+
+        #endregion
     }
 }

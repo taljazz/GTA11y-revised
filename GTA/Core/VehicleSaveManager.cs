@@ -14,8 +14,14 @@ namespace GrandTheftAccessibility
     /// </summary>
     public class VehicleSaveManager
     {
+        #region Fields
+
         private readonly string _savePath;
         private SavedVehicle[] _slots;
+
+        #endregion
+
+        #region Construction
 
         public VehicleSaveManager()
         {
@@ -33,6 +39,10 @@ namespace GrandTheftAccessibility
 
             LoadSlots();
         }
+
+        #endregion
+
+        #region Persistence
 
         /// <summary>
         /// Load slots from file
@@ -101,6 +111,10 @@ namespace GrandTheftAccessibility
             }
         }
 
+        #endregion
+
+        #region Slot Queries
+
         /// <summary>
         /// Get saved vehicle at slot (0-9)
         /// Returns null if slot is empty
@@ -136,6 +150,10 @@ namespace GrandTheftAccessibility
                 return false;
             return _slots[slotIndex] != null && !string.IsNullOrEmpty(_slots[slotIndex].DisplayName);
         }
+
+        #endregion
+
+        #region Save, Spawn, and Clear
 
         /// <summary>
         /// Save current vehicle to slot
@@ -270,7 +288,7 @@ namespace GrandTheftAccessibility
                 }
 
                 // Spawn vehicle
-                Vehicle vehicle = World.CreateVehicle(
+                Vehicle vehicle = Vehicle.Create(
                     (VehicleHash)saved.ModelHash,
                     player.Position + player.ForwardVector * 2.0f,
                     player.Heading + 90
@@ -376,5 +394,7 @@ namespace GrandTheftAccessibility
             _slots[slotIndex] = null;
             SaveSlots();
         }
+
+        #endregion
     }
 }

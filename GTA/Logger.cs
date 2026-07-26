@@ -12,6 +12,8 @@ namespace GrandTheftAccessibility
     /// </summary>
     public static class Logger
     {
+        #region Fields
+
         private static readonly object _lock = new object();
         private static readonly Queue<string> _logQueue = new Queue<string>();
         private static string _logFilePath;
@@ -27,6 +29,10 @@ namespace GrandTheftAccessibility
         private const long ERROR_THROTTLE_TICKS = 50_000_000; // 5 seconds in ticks
         private const int MAX_ERROR_TRACKING_ENTRIES = 100; // Limit dictionary size to prevent memory leak
         private static long _lastErrorCleanupTick;
+
+        #endregion
+
+        #region Configuration
 
         /// <summary>
         /// Log levels for filtering
@@ -59,6 +65,10 @@ namespace GrandTheftAccessibility
             get => _enabled;
             set => _enabled = value;
         }
+
+        #endregion
+
+        #region Initialization and Writer Thread
 
         /// <summary>
         /// Initialize the logger with the log file path
@@ -239,6 +249,10 @@ namespace GrandTheftAccessibility
         /// Log a debug message (verbose, for development).
         /// Note: callers should guard with Logger.IsDebugEnabled before building expensive strings.
         /// </summary>
+        #endregion
+
+        #region Logging API
+
         public static void Debug(string message)
         {
             if (MinLevel > LogLevel.Debug) return;  // Fast exit before method call overhead
@@ -382,6 +396,10 @@ namespace GrandTheftAccessibility
         /// Log session information that a blind user cannot see visually
         /// Provides critical troubleshooting information for accessibility
         /// </summary>
+        #endregion
+
+        #region Session Diagnostics
+
         public static void LogSessionInfo(string modVersion, string shvdnVersion)
         {
             if (!_enabled || !_initialized) return;
@@ -464,6 +482,10 @@ namespace GrandTheftAccessibility
         /// <summary>
         /// Flush pending logs and shutdown the logger
         /// </summary>
+        #endregion
+
+        #region Shutdown
+
         public static void Shutdown()
         {
             if (!_initialized) return;
@@ -514,5 +536,7 @@ namespace GrandTheftAccessibility
                 _initialized = false;
             }
         }
+
+        #endregion
     }
 }

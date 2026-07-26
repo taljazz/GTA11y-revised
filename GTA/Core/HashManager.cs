@@ -10,10 +10,16 @@ namespace GrandTheftAccessibility
     /// </summary>
     public static class HashManager
     {
+        #region Fields
+
         private static Dictionary<int, string> _hashes;
         private static bool _initialized;
         private static bool _loadFailed;
         private static readonly object _lock = new object();
+
+        #endregion
+
+        #region Public API
 
         /// <summary>
         /// Gets the loaded hashes dictionary.
@@ -100,6 +106,10 @@ namespace GrandTheftAccessibility
                 return false;
             }
         }
+
+        #endregion
+
+        #region Loading
 
         /// <summary>
         /// Ensures hashes are loaded. Thread-safe.
@@ -208,5 +218,7 @@ namespace GrandTheftAccessibility
                 Logger.Exception(ex, "HashManager.LoadHashes");
             }
         }
+
+        #endregion
     }
 }

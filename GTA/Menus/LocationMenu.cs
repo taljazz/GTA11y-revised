@@ -1,111 +1,83 @@
 using GTA;
 using GTA.Math;
 using GTA.Native;
-using DavyKager;
 using GrandTheftAccessibility.Data;
 
 namespace GrandTheftAccessibility.Menus
 {
     /// <summary>
-    /// Menu for teleporting to predefined locations, organized by category
-    /// Supports hierarchical submenus with back navigation
-    /// Uses LocationDataLoader to load from JSON or fallback to hardcoded defaults
+    /// Menu for teleporting to predefined locations, organized by category.
+    /// Top level = categories, submenu = locations within the chosen category.
+    /// Uses LocationDataLoader to load from JSON or fallback to hardcoded defaults.
     /// </summary>
-    public class LocationMenu : IMenuState
+    public class LocationMenu : HierarchicalMenuBase
     {
-        private int _currentCategoryIndex;
-        private int _currentLocationIndex;
-        private bool _inSubmenu;
+        #region Construction
 
-        public LocationMenu()
+        public LocationMenu(AudioManager audio) : base(audio)
         {
-            _currentCategoryIndex = 0;
-            _currentLocationIndex = 0;
-            _inSubmenu = false;
-
             // Pre-load location data at construction (will use cache on subsequent calls)
             LocationDataLoader.LoadTeleportLocations();
         }
 
-        public void NavigatePrevious(bool fastScroll = false)
+        #endregion
+
+        #region Top Level - categories
+
+        protected override int ItemCount => LocationDataLoader.GetTeleportCategoryCount();
+
+        protected override int FastScrollStep => 10;
+
+        protected override string GetItemText(int index)
         {
-            if (_inSubmenu)
-            {
-                // Navigate within location list
-                int step = fastScroll ? 10 : 1;
-                var locations = LocationDataLoader.GetTeleportLocationsByCategory(_currentCategoryIndex);
-                _currentLocationIndex -= step;
-                if (_currentLocationIndex < 0)
-                    _currentLocationIndex = locations.Length - 1;
-            }
-            else
-            {
-                // Navigate between categories
-                int categoryCount = LocationDataLoader.GetTeleportCategoryCount();
-                if (_currentCategoryIndex > 0)
-                    _currentCategoryIndex--;
-                else
-                    _currentCategoryIndex = categoryCount - 1;
-            }
+            var categoryNames = LocationDataLoader.GetTeleportCategoryNames();
+            var locations = LocationDataLoader.GetTeleportLocationsByCategory(index);
+            return $"{categoryNames[index]} ({locations.Length} locations)";
         }
 
-        public void NavigateNext(bool fastScroll = false)
+        protected override void OnItemActivated(int index)
         {
-            if (_inSubmenu)
-            {
-                // Navigate within location list
-                int step = fastScroll ? 10 : 1;
-                var locations = LocationDataLoader.GetTeleportLocationsByCategory(_currentCategoryIndex);
-                _currentLocationIndex += step;
-                if (_currentLocationIndex >= locations.Length)
-                    _currentLocationIndex = 0;
-            }
-            else
-            {
-                // Navigate between categories
-                int categoryCount = LocationDataLoader.GetTeleportCategoryCount();
-                if (_currentCategoryIndex < categoryCount - 1)
-                    _currentCategoryIndex++;
-                else
-                    _currentCategoryIndex = 0;
-            }
+            // Enter the location list for this category
+            EnterSubmenu();
+            var categoryNames = LocationDataLoader.GetTeleportCategoryNames();
+            var locations = LocationDataLoader.GetTeleportLocationsByCategory(index);
+            Speak($"{categoryNames[index]}, {locations.Length} locations");
         }
 
-        public string GetCurrentItemText()
+        public override string GetMenuName()
         {
-            if (_inSubmenu)
-            {
-                var locations = LocationDataLoader.GetTeleportLocationsByCategory(_currentCategoryIndex);
-                return $"{_currentLocationIndex + 1} of {locations.Length}: {locations[_currentLocationIndex].Name}";
-            }
-            else
+            if (InSubmenu)
             {
                 var categoryNames = LocationDataLoader.GetTeleportCategoryNames();
-                var categoryName = categoryNames[_currentCategoryIndex];
-                var locations = LocationDataLoader.GetTeleportLocationsByCategory(_currentCategoryIndex);
-                return $"{categoryName} ({locations.Length} locations)";
+                return categoryNames[SelectedIndex];
             }
+            return "Teleport to location";
         }
 
-        public void ExecuteSelection()
-        {
-            if (!_inSubmenu)
-            {
-                // Enter submenu
-                _inSubmenu = true;
-                _currentLocationIndex = 0;
-                var categoryNames = LocationDataLoader.GetTeleportCategoryNames();
-                var locations = LocationDataLoader.GetTeleportLocationsByCategory(_currentCategoryIndex);
-                Tolk.Speak($"{categoryNames[_currentCategoryIndex]}, {locations.Length} locations");
-                return;
-            }
+        #endregion
 
-            // Teleport to selected location
-            var locs = LocationDataLoader.GetTeleportLocationsByCategory(_currentCategoryIndex);
-            var location = locs[_currentLocationIndex];
+        #region Submenu - locations
+
+        protected override int SubmenuItemCount =>
+            LocationDataLoader.GetTeleportLocationsByCategory(SelectedIndex).Length;
+
+        protected override string GetSubmenuItemText(int index)
+        {
+            var locations = LocationDataLoader.GetTeleportLocationsByCategory(SelectedIndex);
+            return $"{index + 1} of {locations.Length}: {locations[index].Name}";
+        }
+
+        protected override void OnSubmenuItemActivated(int index)
+        {
+            var locations = LocationDataLoader.GetTeleportLocationsByCategory(SelectedIndex);
+            var location = locations[index];
 
             TeleportToLocation(location.Coords, location.Name);
         }
+
+        #endregion
+
+        #region Teleport
 
         /// <summary>
         /// Simple, reliable teleportation using SET_ENTITY_COORDS_NO_OFFSET.
@@ -121,7 +93,6 @@ namespace GrandTheftAccessibility.Menus
             {
                 // Get the entity to teleport (vehicle if in one, otherwise player)
                 Ped player = Game.Player.Character;
-                Logger.Debug($"Game.Player.Character retrieved: {(player != null ? "not null" : "NULL")}");
 
                 // Check if player entity exists and is valid
                 if (player == null)
@@ -131,11 +102,9 @@ namespace GrandTheftAccessibility.Menus
                 }
 
                 bool entityExists = Function.Call<bool>(Hash.DOES_ENTITY_EXIST, player.Handle);
-                Logger.Debug($"Player handle: {player.Handle}, DOES_ENTITY_EXIST: {entityExists}");
-
                 if (!entityExists)
                 {
-                    Logger.Warning("Teleport failed: Player entity does not exist (DOES_ENTITY_EXIST returned false)");
+                    Logger.Warning("Teleport failed: Player entity does not exist");
                     return;
                 }
 
@@ -149,14 +118,12 @@ namespace GrandTheftAccessibility.Menus
                 // CurrentVehicle can return stale references to vehicles the player has exited
                 bool inVehicle = player.IsInVehicle();
                 Vehicle vehicle = inVehicle ? player.CurrentVehicle : null;
-                Logger.Debug($"player.IsInVehicle(): {inVehicle}");
 
                 if (inVehicle && vehicle != null)
                 {
                     // Double-check: verify player and vehicle are actually near each other
                     Vector3 vehiclePos = vehicle.Position;
                     float playerToVehicleDistance = prePosition.DistanceTo(vehiclePos);
-                    Logger.Debug($"Player-to-vehicle distance: {playerToVehicleDistance:F2}m");
 
                     if (playerToVehicleDistance > 10f)
                     {
@@ -168,20 +135,16 @@ namespace GrandTheftAccessibility.Menus
                     else
                     {
                         entityToTeleport = vehicle;
-                        Logger.Debug($"Teleporting vehicle - Handle: {vehicle.Handle}, Model: {vehicle.Model.Hash}");
                         Logger.Info($"Pre-teleport vehicle position: X={vehiclePos.X:F2}, Y={vehiclePos.Y:F2}, Z={vehiclePos.Z:F2}");
                     }
                 }
                 else
                 {
                     entityToTeleport = player;
-                    Logger.Debug($"Teleporting player on foot - Handle: {player.Handle}");
                 }
 
                 // Use SET_ENTITY_COORDS_NO_OFFSET - the most reliable teleport method
                 // Parameters: entity, x, y, z, keepTasks, keepIK, doWarp
-                // keepTasks=false, keepIK=false, doWarp=true (clears contacts, warps instantly)
-                Logger.Debug($"Calling SET_ENTITY_COORDS_NO_OFFSET with handle {entityToTeleport.Handle}");
                 Function.Call(Hash.SET_ENTITY_COORDS_NO_OFFSET,
                     entityToTeleport.Handle,
                     destination.X,
@@ -190,16 +153,13 @@ namespace GrandTheftAccessibility.Menus
                     false,  // keepTasks - clear tasks
                     false,  // keepIK - reset IK
                     true);  // doWarp - instant warp, clear contacts
-                Logger.Debug("SET_ENTITY_COORDS_NO_OFFSET call completed");
 
                 // Clear velocity to prevent continued movement
-                Logger.Debug("Calling SET_ENTITY_VELOCITY to clear momentum");
                 Function.Call(Hash.SET_ENTITY_VELOCITY, entityToTeleport.Handle, 0f, 0f, 0f);
 
                 // If in vehicle, also place it properly on ground
                 if (inVehicle)
                 {
-                    Logger.Debug("Calling SET_VEHICLE_ON_GROUND_PROPERLY");
                     Function.Call(Hash.SET_VEHICLE_ON_GROUND_PROPERLY, entityToTeleport.Handle, 5f);
                 }
 
@@ -209,20 +169,17 @@ namespace GrandTheftAccessibility.Menus
 
                 // Calculate distance from intended destination
                 float distanceFromTarget = destination.DistanceTo(postPosition);
-                Logger.Info($"Distance from target: {distanceFromTarget:F2} meters");
-
                 if (distanceFromTarget > 10f)
                 {
                     Logger.Warning($"Teleport may have failed - entity is {distanceFromTarget:F2}m from destination");
                 }
 
-                Tolk.Speak($"Teleported to {locationName}");
+                Speak($"Teleported to {locationName}");
                 Logger.Info($"=== TELEPORT COMPLETE: {locationName} ===");
             }
             catch (System.Exception ex)
             {
                 Logger.Exception(ex, "Teleport");
-                Logger.Error($"Exception during teleport to {locationName}: {ex.Message}");
 
                 // Fallback: direct position property set
                 try
@@ -235,9 +192,6 @@ namespace GrandTheftAccessibility.Menus
                         Entity entity = player.IsInVehicle() ? (Entity)player.CurrentVehicle : (Entity)player;
                         entity.Position = destination;
                         Logger.Info("Fallback teleport completed via Position property");
-
-                        Vector3 fallbackPos = entity.Position;
-                        Logger.Info($"Fallback post-position: X={fallbackPos.X:F2}, Y={fallbackPos.Y:F2}, Z={fallbackPos.Z:F2}");
                     }
                     else
                     {
@@ -251,24 +205,6 @@ namespace GrandTheftAccessibility.Menus
             }
         }
 
-        public string GetMenuName()
-        {
-            if (_inSubmenu)
-            {
-                var categoryNames = LocationDataLoader.GetTeleportCategoryNames();
-                return categoryNames[_currentCategoryIndex];
-            }
-            return "Teleport to location";
-        }
-
-        public bool HasActiveSubmenu => _inSubmenu;
-
-        public void ExitSubmenu()
-        {
-            if (_inSubmenu)
-            {
-                _inSubmenu = false;
-            }
-        }
+        #endregion
     }
 }

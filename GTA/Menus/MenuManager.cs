@@ -10,24 +10,31 @@ namespace GrandTheftAccessibility.Menus
     /// </summary>
     public class MenuManager : IDisposable
     {
+        #region Fields
+
         private readonly List<IMenuState> _menus;
         private readonly SettingsManager _settings;
         private readonly VehicleSaveManager _saveManager;
         private readonly AircraftLandingMenu _aircraftLandingMenu;
+        private readonly WeaponSelectMenu _weaponSelectMenu;
         private readonly AutoDriveMenu _autoDriveMenu;
         private readonly AutoDriveManager _autoDriveManager;
         private readonly TurretCrewManager _turretCrewManager;
         private readonly PedestrianNavigationManager _pedNav;
         private int _currentMenuIndex;
 
-        public MenuManager(SettingsManager settings, AudioManager audio)
+        #endregion
+
+        #region Construction
+
+        public MenuManager(SettingsManager settings, AudioManager audio, HotkeyMapper hotkeys)
         {
             _settings = settings;
             _saveManager = new VehicleSaveManager();
 
             // Create AutoDrive manager and menu
             _autoDriveManager = new AutoDriveManager(audio, settings);
-            _autoDriveMenu = new AutoDriveMenu(_autoDriveManager);
+            _autoDriveMenu = new AutoDriveMenu(_autoDriveManager, audio);
 
             // Create TurretCrewManager
             _turretCrewManager = new TurretCrewManager(settings, audio);
@@ -38,6 +45,10 @@ namespace GrandTheftAccessibility.Menus
             // Create PedestrianNavigationManager for on-foot waypoint guidance
             _pedNav = new PedestrianNavigationManager(audio, settings);
 
+            // Create WeaponSelectMenu (kept as a field so the main script can
+            // suppress its duplicate weapon-change announcement)
+            _weaponSelectMenu = new WeaponSelectMenu(audio);
+
             // Initialize menus in order:
             // 1. Location (teleport)
             // 2. GPS Waypoint (driving destinations)
@@ -45,25 +56,36 @@ namespace GrandTheftAccessibility.Menus
             // 4. Aircraft Landing (flying destinations with voice navigation)
             // 5. Vehicle Spawn (by category)
             // 6. Vehicle Mods (when in vehicle)
-            // 7. Vehicle Save/Load
-            // 8. Functions (chaos)
-            // 9. Settings
+            // 7. Weapons (add, equip, and discard weapons by category)
+            // 8. Weapon Mods (attachments and tints for the equipped weapon)
+            // 9. Vehicle Save/Load
+            // 10. Functions (chaos)
+            // 11. Settings
+            // 12. Help
+            // Every menu receives the shared AudioManager so speech goes through
+            // the Tolk health/reconnect logic and Ctrl+NumPad5 repeat-last works.
             _menus = new List<IMenuState>
             {
-                new LocationMenu(),
-                new WaypointMenu(),
+                new LocationMenu(audio),
+                new WaypointMenu(audio),
                 _autoDriveMenu,
                 _aircraftLandingMenu,
-                new VehicleCategoryMenu(settings),
-                new VehicleModMenuProxy(settings),
-                new VehicleSaveLoadMenu(_saveManager, settings),
-                new FunctionsMenu(settings, _turretCrewManager),
-                new SettingsMenu(settings),
-                new HelpMenu()
+                new VehicleCategoryMenu(settings, audio),
+                new VehicleModMenuProxy(settings, audio),
+                _weaponSelectMenu,
+                new WeaponModMenu(audio),
+                new VehicleSaveLoadMenu(_saveManager, settings, audio),
+                new FunctionsMenu(settings, _turretCrewManager, audio),
+                new SettingsMenu(settings, audio),
+                new HelpMenu(hotkeys, audio)
             };
 
             _currentMenuIndex = 0;
         }
+
+        #endregion
+
+        #region Menu Navigation
 
         /// <summary>
         /// Navigate to previous main menu
@@ -149,6 +171,10 @@ namespace GrandTheftAccessibility.Menus
             }
             return false;
         }
+
+        #endregion
+
+        #region Subsystem Pass-Through
 
         /// <summary>
         /// Update aircraft landing navigation (called from OnTick when in aircraft)
@@ -258,6 +284,16 @@ namespace GrandTheftAccessibility.Menus
             }
         }
 
+        /// <summary>
+        /// Whether the automatic weapon-change announcement should stay quiet
+        /// because the weapon menu just spoke its own confirmation for this swap.
+        /// One-shot - calling this consumes the suppression.
+        /// </summary>
+        public bool ConsumeWeaponChangeSuppression(long currentTick)
+        {
+            return _weaponSelectMenu.ConsumeWeaponChangeSuppression(currentTick);
+        }
+
         // Pedestrian Navigation pass-through
         public bool IsPedestrianNavigationActive => _pedNav.IsActive;
 
@@ -301,5 +337,6 @@ namespace GrandTheftAccessibility.Menus
             }
         }
 
+        #endregion
     }
 }
