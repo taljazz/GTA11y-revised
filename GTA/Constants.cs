@@ -1080,9 +1080,49 @@ namespace GrandTheftAccessibility
         public const float APPROACH_FIX_ALTITUDE = 200f;         // meters above field elevation at the fix
         public const float APPROACH_CRUISE_SPEED = 60f;          // m/s (~117 knots)
         public const float APPROACH_CAPTURE_RADIUS = 400f;       // meters from the fix that counts as reached
-        public const float APPROACH_HANDOFF_DISTANCE = 3200f;    // meters from threshold an aligned plane may go final
+        // Handing off to the landing task needs runway-relative geometry, not a
+        // straight-line range: an aircraft kilometers PAST the threshold and well
+        // off to the side can still be "3 km from the runway" while pointing
+        // roughly runway-ward, which is not remotely a final approach.
+        public const float APPROACH_HANDOFF_DISTANCE = 3200f;    // meters before the threshold, outer limit
+        public const float APPROACH_MIN_FINAL_DISTANCE = 400f;   // meters before the threshold, inner limit
+        public const float APPROACH_MAX_CROSSTRACK = 350f;       // meters off the centerline still counted as lined up
         public const float APPROACH_ALIGN_TOLERANCE = 35f;       // degrees off runway heading still counted as lined up
+        public const long APPROACH_FINAL_TIMEOUT = 120_000;      // ms on final before giving up and going around
+
+        // Which engine task flies the final approach.
+        //   false = TASK_PLANE_LAND via Task.LandPlane, given the runway line
+        //   true  = TASK_VEHICLE_MISSION_COORS_TARGET with mission type Land (19),
+        //           via Task.StartVehicleMission
+        //
+        // Rockstar calls TASK_PLANE_LAND exactly once across all their decompiled
+        // scripts (fm_mission_controller.ysc) and degenerately - the "runway end"
+        // is the start point plus 100m of ALTITUDE, not a runway line at all. The
+        // other branch of that same function lands with mission type 19 through
+        // TASK_VEHICLE_MISSION_COORS_TARGET, which is why the parameters below
+        // mirror that call exactly rather than being tuned by guesswork.
+        //
+        // static readonly, not const, so flipping it does not make the other branch
+        // unreachable code and trip the zero-warning build.
+        public static readonly bool USE_PLANE_LAND_MISSION = false;
+
+        // Rockstar's own values from fm_mission_controller.ysc:
+        //   TASK_VEHICLE_MISSION_COORS_TARGET(ped, veh, coords, 19, 20f, 786468, -1f, -1f, 1)
+        public const float LAND_MISSION_SPEED = 20f;             // m/s - R* uses 20 for the landing mission
+        public const int LAND_MISSION_DRIVING_FLAGS = 786468;    // R* literal, no named VehicleDrivingFlags combo
+        public const float LAND_MISSION_REACHED_DIST = -1f;      // R* passes -1 (engine default)
+        public const float LAND_MISSION_STRAIGHT_LINE_DIST = -1f;// R* passes -1 (engine default)
+        public const float LAND_MISSION_AIM_DISTANCE = 250f;     // meters down the runway to aim at (touchdown zone)
         public const int APPROACH_MIN_TERRAIN_CLEARANCE = 60;    // meters the positioning leg holds above terrain
+
+        // Reaching the fix is not the same as pointing down the runway. After the
+        // fix the aircraft flies a second leg along the centerline toward the
+        // threshold, which forces it onto the runway heading before the landing
+        // task takes over.
+        public const float APPROACH_INTERCEPT_ALTITUDE = 80f;    // meters above field for the intercept target
+        public const int APPROACH_INTERCEPT_CLEARANCE = 30;      // meters above terrain on the intercept leg
+        public const float APPROACH_GO_AROUND_OVERSHOOT = 250f;  // meters past the threshold before re-positioning
+        public const int APPROACH_MAX_GO_AROUNDS = 2;            // attempts before handing back control
 
         // Helicopter landing mission. flightHeight is an ABSOLUTE Z in meters above
         // sea level (not a height above the route), so it is computed per flight.
@@ -1109,11 +1149,22 @@ namespace GrandTheftAccessibility
         public const float TAXI_MAX_DISTANCE = 2500f;            // meters - refuse cross-map taxi requests
         public const float TAXI_ARRIVAL_RADIUS = 20f;            // meters
 
+        // Lining up for departure
+        public const float LINEUP_OFFSET = 40f;                  // meters down the runway from the threshold
+        public const float LINEUP_MAX_DISTANCE = 2500f;          // meters - beyond this it would be a cross-map jump
+
         // Autopilot monitoring
         public const long AUTOPILOT_UPDATE_INTERVAL = 500;       // ms between autopilot state checks
         public const long AUTOPILOT_TIMEOUT = 360_000;           // 6 minutes, then give the controls back
         public const long AUTOPILOT_STALL_WARNING = 45_000;      // ms without progress before warning once
         public const float AUTOPILOT_STALL_PROGRESS = 50f;       // meters of closure that counts as progress
+        public const long AUTOPILOT_TELEMETRY_INTERVAL = 1_000;  // ms between "AP|TICK" trace records in the log
+
+        // Vehicle-mission verification. The engine takes a moment to register a
+        // freshly issued mission, so the type is not checked inside this grace
+        // window - checking immediately reads the previous (or no) mission and
+        // looks like a rejection.
+        public const long MISSION_CHECK_GRACE = 2_000;           // ms after issuing before the type is trusted
 
         // ===== END AIRCRAFT DATA =====
 
