@@ -1072,6 +1072,49 @@ namespace GrandTheftAccessibility
         // Default runway length for landing destination calculations (used by AircraftLandingMenu)
         public const float DEFAULT_RUNWAY_LENGTH = 800f;         // meters (~2625 feet)
 
+        // ===== AUTOPILOT (AircraftLandingMenu) =====
+        // TASK_PLANE_LAND only flies the last part of an approach - it expects the
+        // plane to already be near the runway centerline. These drive the extra
+        // positioning leg the menu flies first, using TASK_PLANE_MISSION GoTo.
+        public const float APPROACH_FIX_DISTANCE = 2500f;        // meters before the threshold to aim for
+        public const float APPROACH_FIX_ALTITUDE = 200f;         // meters above field elevation at the fix
+        public const float APPROACH_CRUISE_SPEED = 60f;          // m/s (~117 knots)
+        public const float APPROACH_CAPTURE_RADIUS = 400f;       // meters from the fix that counts as reached
+        public const float APPROACH_HANDOFF_DISTANCE = 3200f;    // meters from threshold an aligned plane may go final
+        public const float APPROACH_ALIGN_TOLERANCE = 35f;       // degrees off runway heading still counted as lined up
+        public const int APPROACH_MIN_TERRAIN_CLEARANCE = 60;    // meters the positioning leg holds above terrain
+
+        // Helicopter landing mission. flightHeight is an ABSOLUTE Z in meters above
+        // sea level (not a height above the route), so it is computed per flight.
+        public const float HELI_CRUISE_SPEED = 30f;              // m/s
+        public const float HELI_TARGET_REACHED_DIST = 5f;        // meters
+        public const float HELI_SLOWDOWN_DISTANCE = 100f;        // meters out to start slowing
+        public const float HELI_CRUISE_CLEARANCE = 50f;          // meters above the higher of aircraft/destination
+        public const int HELI_MIN_TERRAIN_CLEARANCE = 20;        // meters
+
+        // VTOL precision approach to a helipad
+        public const float VTOL_HOVER_HEIGHT = 3f;               // meters above the pad to hold
+        public const int VTOL_MIN_TERRAIN_CLEARANCE = 2;         // meters
+        public const float VTOL_PAD_ARRIVAL_RADIUS = 15f;        // meters from the pad that counts as overhead
+
+        // Touchdown detection and rollout
+        public const float ROLLOUT_STOP_DISTANCE = 150f;         // meters to bring the plane to a halt over
+        public const int ROLLOUT_STOP_TIME_MS = 10_000;          // how long the halt request is held
+        public const float AUTOPILOT_STOPPED_SPEED = 3f;         // m/s at or below counts as stopped
+        public const float SHORT_FINAL_HEIGHT = 60f;             // meters above ground for the short final callout
+
+        // Ground taxi
+        public const float TAXI_CRUISE_SPEED = 12f;              // m/s (~23 knots)
+        public const float TAXI_TARGET_REACHED_DIST = 10f;       // meters
+        public const float TAXI_MAX_DISTANCE = 2500f;            // meters - refuse cross-map taxi requests
+        public const float TAXI_ARRIVAL_RADIUS = 20f;            // meters
+
+        // Autopilot monitoring
+        public const long AUTOPILOT_UPDATE_INTERVAL = 500;       // ms between autopilot state checks
+        public const long AUTOPILOT_TIMEOUT = 360_000;           // 6 minutes, then give the controls back
+        public const long AUTOPILOT_STALL_WARNING = 45_000;      // ms without progress before warning once
+        public const float AUTOPILOT_STALL_PROGRESS = 50f;       // meters of closure that counts as progress
+
         // ===== END AIRCRAFT DATA =====
 
         // Vehicle class names (indexed by VehicleClass enum value)

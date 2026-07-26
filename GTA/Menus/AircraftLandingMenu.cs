@@ -30,6 +30,12 @@ namespace GrandTheftAccessibility.Menus
             public float Elevation { get; }  // Ground elevation in feet
             public Vector3 RunwayEndPosition { get; }  // Calculated runway endpoint for TASK_PLANE_LAND
 
+            /// <summary>
+            /// Unit vector pointing down the runway in the landing direction.
+            /// Zero for helipads. Used to place the approach fix behind the threshold.
+            /// </summary>
+            public Vector3 RunwayDirection { get; }
+
             public LandingDestination(string name, float x, float y, float z, float runwayHeading = -1f, bool isHelipad = false)
             {
                 Name = name;
@@ -45,17 +51,26 @@ namespace GrandTheftAccessibility.Menus
                 {
                     float radians = runwayHeading * Constants.DEG_TO_RAD;
                     // Runway end is in the direction of the runway heading (aircraft lands INTO the heading)
-                    RunwayEndPosition = Position + new Vector3(
-                        (float)Math.Sin(radians) * Constants.DEFAULT_RUNWAY_LENGTH,
-                        (float)Math.Cos(radians) * Constants.DEFAULT_RUNWAY_LENGTH,
-                        0f);
+                    RunwayDirection = new Vector3((float)Math.Sin(radians), (float)Math.Cos(radians), 0f);
+                    RunwayEndPosition = Position + RunwayDirection * Constants.DEFAULT_RUNWAY_LENGTH;
                 }
                 else
                 {
                     // Helipad - endpoint is same as position
+                    RunwayDirection = Vector3.Zero;
                     RunwayEndPosition = Position;
                 }
             }
+
+            /// <summary>
+            /// The point a plane should be flown to before the engine landing task
+            /// takes over: out along the extended centerline behind the threshold,
+            /// at pattern altitude above the field.
+            /// </summary>
+            public Vector3 ApproachFix =>
+                Position
+                - RunwayDirection * Constants.APPROACH_FIX_DISTANCE
+                + new Vector3(0f, 0f, Constants.APPROACH_FIX_ALTITUDE);
         }
 
         #endregion
@@ -78,6 +93,19 @@ namespace GrandTheftAccessibility.Menus
         private long _lastBeaconPulseTick;
         private long _nextBeaconPulseInterval;
 
+        // Autopilot state machine - the engine tasks only fly part of an approach,
+        // so the menu sequences them and narrates each stage for the pilot
+        private AutopilotPhase _autopilotPhase;
+        private LandingDestination _autopilotDestination;
+        private Vehicle _autopilotVehicle;
+        private long _autopilotStartTick;
+        private long _lastAutopilotCheckTick;
+        private long _lastProgressTick;
+        private float _lastProgressDistance;
+        private bool _stallWarned;
+        private bool _wasAirborne;
+        private bool _shortFinalCalled;
+
         #endregion
 
         #region Construction
@@ -92,6 +120,9 @@ namespace GrandTheftAccessibility.Menus
             _lastAnnouncedDistance = float.MaxValue;
             _beaconActive = false;
             _beaconDestinationIndex = -1;
+            _autopilotPhase = AutopilotPhase.Off;
+            _autopilotDestination = null;
+            _autopilotVehicle = null;
 
             // Initialize landing destinations
             _destinations = new List<LandingDestination>
@@ -254,7 +285,9 @@ namespace GrandTheftAccessibility.Menus
                         ? "Turn off beacon and voice navigation"
                         : "Set beacon and voice navigation";
                 case ACTION_AUTO_LAND:
-                    return "Auto-land here (autopilot)";
+                    return IsAutopilotActive && _autopilotDestination == _destinations[SelectedIndex]
+                        ? $"Auto-land here (autopilot), currently {DescribePhase()}"
+                        : "Auto-land here (autopilot)";
                 case ACTION_TAXI:
                     return "Taxi here (planes on the ground)";
                 case ACTION_CANCEL_ALL:
@@ -386,25 +419,7 @@ namespace GrandTheftAccessibility.Menus
             {
                 if (aircraftClass == VehicleClass.Helicopters)
                 {
-                    // Helicopter: land-and-wait mission that touches down on arrival.
-                    // Runway heading doubles as the requested landing orientation when set.
-                    float orientation = dest.RunwayHeading >= 0 ? dest.RunwayHeading : -1f;
-
-                    player.Task.StartHeliMission(
-                        aircraft,
-                        dest.Position,
-                        VehicleMissionType.LandAndWait,
-                        30f,     // cruise speed (m/s)
-                        5f,      // target reached distance
-                        30,      // flight height above route
-                        20,      // minimum height above terrain
-                        orientation,
-                        100f,    // slow-down distance
-                        HeliMissionFlags.LandOnArrival);
-
-                    EnableBeaconAndNavigation(index);
-                    Speak($"Helicopter autopilot engaged, landing at {dest.Name}. Beacon and voice guidance active.");
-                    Logger.Info($"AircraftLandingMenu: Heli auto-land engaged to {dest.Name}");
+                    StartHelicopterLanding(player, aircraft, dest, index);
                 }
                 else if (aircraftClass == VehicleClass.Planes)
                 {
@@ -414,34 +429,19 @@ namespace GrandTheftAccessibility.Menus
                         // to the pad with the precision VTOL task; the pilot does
                         // the final few meters of descent guided by the beacon.
                         if (Constants.VTOL_VEHICLE_HASHES.Contains(aircraft.Model.Hash))
-                        {
-                            float? orientation = dest.RunwayHeading >= 0 ? (float?)dest.RunwayHeading : null;
-
-                            player.Task.GoToPlanePreciseVtol(
-                                aircraft,
-                                dest.Position + new Vector3(0f, 0f, 3f),
-                                (int)(dest.Position.Z + 3f),   // hold altitude just above the pad
-                                2,                             // minimum height above terrain
-                                orientation);
-
-                            EnableBeaconAndNavigation(index);
-                            Speak($"VTOL approach engaged, hovering to {dest.Name}. When the beacon pitch levels out, ease down to touch down.");
-                            Logger.Info($"AircraftLandingMenu: VTOL precise approach engaged to {dest.Name}");
-                        }
+                            StartVtolApproach(player, aircraft, dest, index);
                         else
-                        {
                             Speak("Planes need a runway. Choose a runway destination, or fly a helicopter or VTOL aircraft for helipads.");
-                        }
                         return;
                     }
 
-                    // Plane: engine-level landing task using the stored runway
-                    // threshold and rollout endpoint.
-                    player.Task.LandPlane(dest.Position, dest.RunwayEndPosition, aircraft);
+                    if (!aircraft.IsInAir)
+                    {
+                        Speak("You are on the ground. Take off first, or use taxi to move along the airfield.");
+                        return;
+                    }
 
-                    EnableBeaconAndNavigation(index);
-                    Speak($"Plane autopilot engaged, landing on {dest.Name}. Beacon and voice guidance active.");
-                    Logger.Info($"AircraftLandingMenu: Plane auto-land engaged to {dest.Name}");
+                    StartPlaneApproach(player, aircraft, dest, index);
                 }
                 else
                 {
@@ -452,7 +452,188 @@ namespace GrandTheftAccessibility.Menus
             {
                 Logger.Exception(ex, "AircraftLandingMenu.EngageAutoLand");
                 Speak("Failed to engage autopilot.");
+                ResetAutopilot();
             }
+        }
+
+        /// <summary>
+        /// Fly a helicopter to the destination and set it down.
+        /// flightHeight is an absolute Z in meters above sea level, so it has to
+        /// clear both the aircraft and a rooftop pad - a fixed value would order
+        /// the heli down to near sea level on the way to somewhere like Maze Bank.
+        /// The requested touchdown orientation is only honored when
+        /// AttainRequestedOrientation is set alongside LandOnArrival.
+        /// </summary>
+        private void StartHelicopterLanding(Ped player, Vehicle aircraft, LandingDestination dest, int index)
+        {
+            bool wantsOrientation = dest.RunwayHeading >= 0;
+            float orientation = wantsOrientation ? dest.RunwayHeading : -1f;
+
+            HeliMissionFlags flags = HeliMissionFlags.LandOnArrival;
+            if (wantsOrientation)
+                flags |= HeliMissionFlags.AttainRequestedOrientation;
+
+            int cruiseZ = (int)(Math.Max(aircraft.Position.Z, dest.Position.Z) + Constants.HELI_CRUISE_CLEARANCE);
+
+            player.Task.StartHeliMission(
+                aircraft,
+                dest.Position,
+                VehicleMissionType.LandAndWait,
+                Constants.HELI_CRUISE_SPEED,
+                Constants.HELI_TARGET_REACHED_DIST,
+                cruiseZ,                                 // absolute altitude to hold en route
+                Constants.HELI_MIN_TERRAIN_CLEARANCE,
+                orientation,
+                Constants.HELI_SLOWDOWN_DISTANCE,
+                flags);
+
+            BeginAutopilot(AutopilotPhase.Final, dest, aircraft, index);
+            Speak($"Helicopter autopilot engaged, landing at {dest.Name}. {DescribeApproach(aircraft, dest)}");
+            Logger.Info($"AircraftLandingMenu: Heli auto-land to {dest.Name}, cruise altitude {cruiseZ}m");
+        }
+
+        /// <summary>
+        /// Hold a VTOL plane over a helipad. The engine task flies it there and
+        /// hovers; the pilot eases it down the last few meters on the beacon.
+        /// autoPilot stays false - that flag is for running the task with no
+        /// driver aboard, which is not what we want with the player flying.
+        /// </summary>
+        private void StartVtolApproach(Ped player, Vehicle aircraft, LandingDestination dest, int index)
+        {
+            float? orientation = dest.RunwayHeading >= 0 ? (float?)dest.RunwayHeading : null;
+
+            player.Task.GoToPlanePreciseVtol(
+                aircraft,
+                dest.Position + new Vector3(0f, 0f, Constants.VTOL_HOVER_HEIGHT),
+                (int)(dest.Position.Z + Constants.VTOL_HOVER_HEIGHT),  // absolute hold altitude
+                Constants.VTOL_MIN_TERRAIN_CLEARANCE,
+                orientation);
+
+            BeginAutopilot(AutopilotPhase.Hovering, dest, aircraft, index);
+            Speak($"VTOL approach engaged to {dest.Name}. {DescribeApproach(aircraft, dest)} I will tell you when you are over the pad.");
+            Logger.Info($"AircraftLandingMenu: VTOL precise approach to {dest.Name}");
+        }
+
+        /// <summary>
+        /// Begin a plane landing. TASK_PLANE_LAND only flies the last part of an
+        /// approach - handed the runway from far out and off-axis it wanders or
+        /// gives up - so unless the plane is already close and lined up, fly a
+        /// positioning leg to the approach fix first and hand over from there.
+        /// precise is false so a VTOL keeps its nozzles in horizontal flight.
+        /// </summary>
+        private void StartPlaneApproach(Ped player, Vehicle aircraft, LandingDestination dest, int index)
+        {
+            Vector3 position = aircraft.Position;
+            float distanceToThreshold = (dest.Position - position).Length();
+
+            // Without a runway heading there is no centerline to position along,
+            // so hand straight to the landing task and let it sort the approach out
+            if (dest.RunwayHeading < 0f || dest.RunwayDirection == Vector3.Zero)
+            {
+                BeginAutopilot(AutopilotPhase.Final, dest, aircraft, index);
+                EngageFinalApproach(player, aircraft, dest, true);
+                return;
+            }
+
+            if (IsReadyForFinal(aircraft, dest, distanceToThreshold))
+            {
+                BeginAutopilot(AutopilotPhase.Final, dest, aircraft, index);
+                EngageFinalApproach(player, aircraft, dest, true);
+                return;
+            }
+
+            Vector3 fix = dest.ApproachFix;
+
+            player.Task.StartPlaneMission(
+                aircraft,
+                fix,
+                VehicleMissionType.GoTo,
+                Constants.APPROACH_CRUISE_SPEED,
+                Constants.APPROACH_CAPTURE_RADIUS,
+                (int)fix.Z,                                    // absolute altitude to hold
+                Constants.APPROACH_MIN_TERRAIN_CLEARANCE,
+                -1f,                                           // orientation: let the AI fly it
+                false);                                        // no VTOL nozzles on the cruise leg
+
+            BeginAutopilot(AutopilotPhase.Positioning, dest, aircraft, index);
+
+            float fixMiles = (fix - position).Length() * Constants.METERS_TO_MILES;
+            Speak($"Autopilot engaged for {dest.Name}. Positioning for the approach, {fixMiles:F1} miles to the turn, runway heading {(int)dest.RunwayHeading} degrees.");
+            Logger.Info($"AircraftLandingMenu: Plane positioning leg to {dest.Name}, fix {fixMiles:F1} miles out");
+        }
+
+        /// <summary>
+        /// Hand the plane to the engine landing task along the runway line,
+        /// dropping the gear on the way in.
+        /// </summary>
+        private void EngageFinalApproach(Ped player, Vehicle aircraft, LandingDestination dest, bool immediate)
+        {
+            player.Task.LandPlane(dest.Position, dest.RunwayEndPosition, aircraft);
+            _autopilotPhase = AutopilotPhase.Final;
+            _shortFinalCalled = false;
+
+            // New leg, new yardstick for the stall check
+            ResetProgress((dest.Position - aircraft.Position).Length());
+
+            string gear = DeployLandingGear(aircraft) ? " Gear down." : "";
+            Speak(immediate
+                ? $"On final approach to {dest.Name}.{gear}"
+                : $"Lined up. On final approach to {dest.Name}.{gear}");
+            Logger.Info($"AircraftLandingMenu: Final approach engaged to {dest.Name}");
+        }
+
+        /// <summary>
+        /// Whether the plane is close enough and pointed near enough down the
+        /// runway that the landing task can take it from here.
+        /// </summary>
+        private static bool IsReadyForFinal(Vehicle aircraft, LandingDestination dest, float distanceToThreshold)
+        {
+            if (distanceToThreshold > Constants.APPROACH_HANDOFF_DISTANCE)
+                return false;
+
+            return HeadingErrorTo(aircraft.Heading, dest.RunwayHeading) <= Constants.APPROACH_ALIGN_TOLERANCE;
+        }
+
+        /// <summary>Smallest absolute angle in degrees between two headings.</summary>
+        private static float HeadingErrorTo(float heading, float target)
+        {
+            float diff = Math.Abs(heading - target) % 360f;
+            return diff > 180f ? 360f - diff : diff;
+        }
+
+        /// <summary>
+        /// Lower the landing gear if it is not already down.
+        /// Returns true when this call actually commanded it, so the caller only
+        /// says "gear down" when something changed.
+        /// </summary>
+        private static bool DeployLandingGear(Vehicle aircraft)
+        {
+            try
+            {
+                VehicleLandingGearState state = aircraft.LandingGearState;
+                if (state == VehicleLandingGearState.Deployed ||
+                    state == VehicleLandingGearState.Deploying ||
+                    state == VehicleLandingGearState.Broken)
+                    return false;
+
+                aircraft.LandingGearState = VehicleLandingGearState.Deploying;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                // Not every aircraft has retractable gear - not an error
+                Logger.Debug($"AircraftLandingMenu: landing gear unavailable ({ex.Message})");
+                return false;
+            }
+        }
+
+        /// <summary>Bearing and distance phrase used when engaging the autopilot.</summary>
+        private static string DescribeApproach(Vehicle aircraft, LandingDestination dest)
+        {
+            Vector3 position = aircraft.Position;
+            float miles = (dest.Position - position).Length() * Constants.METERS_TO_MILES;
+            string direction = SpatialCalculator.GetDirectionTo(position, dest.Position);
+            return $"{direction}, {miles:F1} miles.";
         }
 
         /// <summary>
@@ -489,18 +670,36 @@ namespace GrandTheftAccessibility.Menus
                 return;
             }
 
+            if (dest.IsHelipad)
+            {
+                Speak("That is a helipad, not somewhere a plane can taxi to. Pick a runway.");
+                return;
+            }
+
+            // Taxiing follows the ground - a destination on the far side of the map
+            // means grinding cross-country for many minutes, which is never what
+            // was meant. Fly there instead.
+            float distance = (dest.Position - aircraft.Position).Length();
+            if (distance > Constants.TAXI_MAX_DISTANCE)
+            {
+                float miles = distance * Constants.METERS_TO_MILES;
+                Speak($"{dest.Name} is {miles:F1} miles away, too far to taxi. Take off and use auto-land instead.");
+                return;
+            }
+
             try
             {
-                player.Task.PlaneTaxi(aircraft, dest.Position, 12f, 10f);
+                player.Task.PlaneTaxi(aircraft, dest.Position, Constants.TAXI_CRUISE_SPEED, Constants.TAXI_TARGET_REACHED_DIST);
 
-                EnableBeaconAndNavigation(index);
-                Speak($"Taxiing to {dest.Name}. Beacon and voice guidance active.");
-                Logger.Info($"AircraftLandingMenu: Taxi engaged to {dest.Name}");
+                BeginAutopilot(AutopilotPhase.Taxiing, dest, aircraft, index);
+                Speak($"Taxiing to {dest.Name}, {(int)distance} meters. I will tell you when you arrive.");
+                Logger.Info($"AircraftLandingMenu: Taxi engaged to {dest.Name}, {(int)distance}m");
             }
             catch (Exception ex)
             {
                 Logger.Exception(ex, "AircraftLandingMenu.EngageTaxi");
                 Speak("Failed to start taxiing.");
+                ResetAutopilot();
             }
         }
 
@@ -509,24 +708,343 @@ namespace GrandTheftAccessibility.Menus
         /// </summary>
         private void CancelAllGuidance()
         {
+            ClearFlightTasks();
+
+            _navigationActive = false;
+            _activeDestination = null;
+            ResetAutopilot();
+            StopBeacon();
+            Speak("Navigation and autopilot cancelled. You have manual control.");
+        }
+
+        /// <summary>
+        /// Drop the engine flight task and any pending halt request so the pilot
+        /// gets the controls back cleanly.
+        /// </summary>
+        private void ClearFlightTasks()
+        {
             try
             {
-                // Clear the landing task so the player regains manual control
                 Ped player = Game.Player?.Character;
                 if (player != null && player.Exists())
-                {
                     player.Task.ClearAll();
+
+                Vehicle aircraft = player?.CurrentVehicle;
+                if (aircraft != null && aircraft.Exists())
+                    aircraft.StopBringingToHalt();
+            }
+            catch (Exception ex)
+            {
+                Logger.Exception(ex, "AircraftLandingMenu.ClearFlightTasks");
+            }
+        }
+
+        #endregion
+
+        #region Autopilot State Machine
+
+        /// <summary>Whether an autopilot phase is currently running.</summary>
+        public bool IsAutopilotActive => _autopilotPhase != AutopilotPhase.Off;
+
+        /// <summary>Spoken name of the current phase, for the menu item text.</summary>
+        private string DescribePhase()
+        {
+            switch (_autopilotPhase)
+            {
+                case AutopilotPhase.Positioning: return "positioning for the approach";
+                case AutopilotPhase.Final: return "on final approach";
+                case AutopilotPhase.Hovering: return "holding over the pad";
+                case AutopilotPhase.Rollout: return "braking on the ground";
+                case AutopilotPhase.Taxiing: return "taxiing";
+                default: return "off";
+            }
+        }
+
+        /// <summary>
+        /// Arm the state machine for a newly issued task and turn on the beacon
+        /// so the pilot gets continuous audio position feedback alongside it.
+        /// </summary>
+        private void BeginAutopilot(AutopilotPhase phase, LandingDestination dest, Vehicle aircraft, int index)
+        {
+            _autopilotPhase = phase;
+            _autopilotDestination = dest;
+            _autopilotVehicle = aircraft;
+            _autopilotStartTick = Game.GameTime;
+            _lastAutopilotCheckTick = 0;
+            _lastProgressTick = Game.GameTime;
+            _lastProgressDistance = (dest.Position - aircraft.Position).Length();
+            _stallWarned = false;
+            _shortFinalCalled = false;
+            _wasAirborne = aircraft.IsInAir;
+
+            EnableBeaconAndNavigation(index);
+        }
+
+        /// <summary>Clear all autopilot state without touching tasks or speech.</summary>
+        private void ResetAutopilot()
+        {
+            _autopilotPhase = AutopilotPhase.Off;
+            _autopilotDestination = null;
+            _autopilotVehicle = null;
+            _autopilotStartTick = 0;
+            _stallWarned = false;
+            _shortFinalCalled = false;
+            _wasAirborne = false;
+        }
+
+        /// <summary>
+        /// Finish cleanly: stop the beacon and voice nav, drop the tasks, and say
+        /// what happened. The pilot has the controls again afterwards.
+        /// </summary>
+        private void FinishAutopilot(string message, bool clearTasks)
+        {
+            if (clearTasks)
+                ClearFlightTasks();
+
+            ResetAutopilot();
+            _navigationActive = false;
+            _activeDestination = null;
+            StopBeacon();
+
+            if (!string.IsNullOrEmpty(message))
+                Speak(message, true);
+        }
+
+        /// <summary>
+        /// Drive the autopilot forward one step. Called every tick from
+        /// UpdateNavigation, then throttled internally.
+        /// </summary>
+        private void UpdateAutopilot(Vehicle aircraft, Vector3 position, long currentTick)
+        {
+            if (_autopilotPhase == AutopilotPhase.Off || _autopilotDestination == null)
+                return;
+
+            // A different aircraft than the one under autopilot. Announce it only
+            // when the original still exists, so a deliberate swap is explained
+            // but a stale approach left behind by a crash or death dies quietly.
+            if (aircraft == null || !aircraft.Exists() ||
+                _autopilotVehicle == null || aircraft.Handle != _autopilotVehicle.Handle)
+            {
+                bool originalStillFlyable = _autopilotVehicle != null && _autopilotVehicle.Exists();
+                FinishAutopilot(originalStillFlyable ? "Autopilot disengaged." : null, false);
+                return;
+            }
+
+            if (currentTick - _lastAutopilotCheckTick < Constants.AUTOPILOT_UPDATE_INTERVAL)
+                return;
+            _lastAutopilotCheckTick = currentTick;
+
+            try
+            {
+                // Only a flying phase needs a running engine - a rough landing can
+                // kill it during the rollout, and that still ends as an arrival
+                bool airbornePhase = _autopilotPhase != AutopilotPhase.Rollout &&
+                                     _autopilotPhase != AutopilotPhase.Taxiing;
+                if (aircraft.IsDead || (airbornePhase && !aircraft.IsEngineRunning))
+                {
+                    FinishAutopilot("Autopilot lost, the aircraft is not flyable.", false);
+                    return;
+                }
+
+                if (currentTick - _autopilotStartTick > Constants.AUTOPILOT_TIMEOUT)
+                {
+                    FinishAutopilot("Autopilot timed out. You have manual control.", true);
+                    return;
+                }
+
+                LandingDestination dest = _autopilotDestination;
+                float distance = (dest.Position - position).Length();
+
+                // Progress is measured against the leg being flown, not the field.
+                // While positioning, the approach fix can lie further from the
+                // runway than the aircraft is, so closing on it looks like losing
+                // ground if the destination is used as the yardstick.
+                float legDistance = _autopilotPhase == AutopilotPhase.Positioning
+                    ? (dest.ApproachFix - position).Length()
+                    : distance;
+                CheckProgress(legDistance, currentTick);
+
+                switch (_autopilotPhase)
+                {
+                    case AutopilotPhase.Positioning:
+                        UpdatePositioning(aircraft, position, dest, distance);
+                        break;
+                    case AutopilotPhase.Final:
+                        UpdateFinal(aircraft, dest, distance);
+                        break;
+                    case AutopilotPhase.Hovering:
+                        UpdateHovering(aircraft, dest, distance);
+                        break;
+                    case AutopilotPhase.Rollout:
+                        UpdateRollout(aircraft, dest);
+                        break;
+                    case AutopilotPhase.Taxiing:
+                        UpdateTaxiing(aircraft, dest, distance);
+                        break;
                 }
             }
             catch (Exception ex)
             {
-                Logger.Exception(ex, "AircraftLandingMenu.CancelAllGuidance");
+                Logger.Exception(ex, "AircraftLandingMenu.UpdateAutopilot");
+                FinishAutopilot("Autopilot error. You have manual control.", true);
+            }
+        }
+
+        /// <summary>
+        /// Positioning leg: fly to the approach fix, then hand over to the engine
+        /// landing task once the runway can be captured from here.
+        /// </summary>
+        private void UpdatePositioning(Vehicle aircraft, Vector3 position, LandingDestination dest, float distance)
+        {
+            float toFix = (dest.ApproachFix - position).Length();
+
+            if (toFix <= Constants.APPROACH_CAPTURE_RADIUS || IsReadyForFinal(aircraft, dest, distance))
+            {
+                Ped player = Game.Player?.Character;
+                if (player == null || !player.Exists())
+                    return;
+
+                EngageFinalApproach(player, aircraft, dest, false);
+            }
+        }
+
+        /// <summary>
+        /// Final approach: call short final once, then watch for the wheels to
+        /// touch and switch to the rollout.
+        /// </summary>
+        private void UpdateFinal(Vehicle aircraft, LandingDestination dest, float distance)
+        {
+            if (DetectTouchdown(aircraft, dest))
+                return;
+
+            if (!_shortFinalCalled && aircraft.IsInAir &&
+                aircraft.HeightAboveGround <= Constants.SHORT_FINAL_HEIGHT)
+            {
+                _shortFinalCalled = true;
+                Speak("Short final, about to touch down.");
+            }
+        }
+
+        /// <summary>
+        /// VTOL hold: tell the pilot once they are over the pad, then wait for
+        /// them to set it down.
+        /// </summary>
+        private void UpdateHovering(Vehicle aircraft, LandingDestination dest, float distance)
+        {
+            if (DetectTouchdown(aircraft, dest))
+                return;
+
+            if (!_shortFinalCalled && distance <= Constants.VTOL_PAD_ARRIVAL_RADIUS)
+            {
+                _shortFinalCalled = true;
+                Speak("Holding over the pad. Ease off the throttle to set down.");
+            }
+        }
+
+        /// <summary>
+        /// Wheels are down and the plane is braking - finish when it stops.
+        /// </summary>
+        private void UpdateRollout(Vehicle aircraft, LandingDestination dest)
+        {
+            if (aircraft.Speed > Constants.AUTOPILOT_STOPPED_SPEED)
+                return;
+
+            FinishAutopilot($"Stopped at {dest.Name}. You have manual control.", true);
+        }
+
+        /// <summary>
+        /// Ground taxi: PlaneTaxi stops steering once it is within its arrival
+        /// distance but leaves the plane rolling, so stop it here and say so.
+        /// </summary>
+        private void UpdateTaxiing(Vehicle aircraft, LandingDestination dest, float distance)
+        {
+            if (distance > Constants.TAXI_ARRIVAL_RADIUS)
+                return;
+
+            ClearFlightTasks();
+            BringToStop(aircraft);
+            _autopilotPhase = AutopilotPhase.Rollout;
+            Speak($"Arrived at {dest.Name}, braking.");
+        }
+
+        /// <summary>
+        /// Watch for the transition from airborne to wheels-on-ground. On the
+        /// first touchdown, stop the aircraft (planes) or finish (helicopters).
+        /// Returns true when the phase changed.
+        /// </summary>
+        private bool DetectTouchdown(Vehicle aircraft, LandingDestination dest)
+        {
+            bool inAir = aircraft.IsInAir;
+
+            if (inAir)
+            {
+                _wasAirborne = true;
+                return false;
             }
 
-            _navigationActive = false;
-            _activeDestination = null;
-            StopBeacon();
-            Speak("Navigation and autopilot cancelled. You have manual control.");
+            if (!_wasAirborne)
+                return false;  // Never left the ground - nothing to announce yet
+
+            // Helicopters and VTOLs are down as soon as they are on the ground
+            if (aircraft.ClassType == VehicleClass.Helicopters || _autopilotPhase == AutopilotPhase.Hovering)
+            {
+                FinishAutopilot($"Touchdown at {dest.Name}. You have manual control.", true);
+                return true;
+            }
+
+            // A plane still has its landing roll to fly
+            ClearFlightTasks();
+            BringToStop(aircraft);
+            _autopilotPhase = AutopilotPhase.Rollout;
+            Speak("Touchdown. Braking.", true);
+            Logger.Info($"AircraftLandingMenu: Touchdown at {dest.Name}");
+            return true;
+        }
+
+        /// <summary>Request a controlled stop over the rollout distance.</summary>
+        private static void BringToStop(Vehicle aircraft)
+        {
+            try
+            {
+                aircraft.BringToHalt(Constants.ROLLOUT_STOP_DISTANCE, Constants.ROLLOUT_STOP_TIME_MS, false);
+            }
+            catch (Exception ex)
+            {
+                Logger.Exception(ex, "AircraftLandingMenu.BringToStop");
+            }
+        }
+
+        /// <summary>Restart stall tracking against a new leg target.</summary>
+        private void ResetProgress(float distance)
+        {
+            _lastProgressDistance = distance;
+            _lastProgressTick = Game.GameTime;
+            _stallWarned = false;
+        }
+
+        /// <summary>
+        /// Warn once if the aircraft has stopped closing on the leg target -
+        /// a stalled engine task is otherwise silent and invisible to the pilot.
+        /// </summary>
+        private void CheckProgress(float distance, long currentTick)
+        {
+            if (_autopilotPhase == AutopilotPhase.Rollout)
+                return;
+
+            if (_lastProgressDistance - distance >= Constants.AUTOPILOT_STALL_PROGRESS)
+            {
+                _lastProgressDistance = distance;
+                _lastProgressTick = currentTick;
+                _stallWarned = false;
+                return;
+            }
+
+            if (_stallWarned || currentTick - _lastProgressTick < Constants.AUTOPILOT_STALL_WARNING)
+                return;
+
+            _stallWarned = true;
+            Speak("Autopilot is not making progress. Cancel and fly manually if this continues.");
+            Logger.Warning($"AircraftLandingMenu: autopilot stalled in {_autopilotPhase} at {(int)distance}m");
         }
 
         #endregion
@@ -539,6 +1057,10 @@ namespace GrandTheftAccessibility.Menus
         /// </summary>
         public void UpdateNavigation(Vehicle aircraft, Vector3 position, long currentTick)
         {
+            // The autopilot runs on its own schedule and must keep going even
+            // after voice navigation has announced arrival and switched itself off
+            UpdateAutopilot(aircraft, position, currentTick);
+
             if (!_navigationActive || _activeDestination == null || aircraft == null)
                 return;
 
@@ -659,6 +1181,16 @@ namespace GrandTheftAccessibility.Menus
                 _activeDestination = null;
                 Speak("Navigation cancelled");
             }
+
+            // Hand the controls back too - an engine flight task outlives a script
+            // reload, so leaving one running would strand the pilot in an aircraft
+            // flying itself with no menu left to cancel it
+            if (IsAutopilotActive)
+            {
+                ClearFlightTasks();
+                ResetAutopilot();
+            }
+
             StopBeacon();
         }
 

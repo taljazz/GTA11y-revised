@@ -325,7 +325,8 @@ namespace GrandTheftAccessibility.Menus
                 if (_turretCrewManager != null && _turretCrewManager.IsSpawned)
                     _turretCrewManager.DestroyTurretCrew();
 
-                if (_aircraftLandingMenu != null && _aircraftLandingMenu.IsNavigationActive)
+                if (_aircraftLandingMenu != null &&
+                    (_aircraftLandingMenu.IsNavigationActive || _aircraftLandingMenu.IsAutopilotActive))
                     _aircraftLandingMenu.CancelNavigation();
 
                 if (_pedNav != null && _pedNav.IsActive)

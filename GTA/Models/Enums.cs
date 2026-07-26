@@ -168,5 +168,20 @@ namespace GrandTheftAccessibility
         Fighting = 2
     }
 
+    /// <summary>
+    /// Stage of the aircraft autopilot in AircraftLandingMenu. The engine's
+    /// landing tasks only fly the last part of an approach, so the menu drives
+    /// them through these stages itself and narrates each transition.
+    /// </summary>
+    public enum AutopilotPhase
+    {
+        Off = 0,
+        Positioning = 1,   // Flying to an approach fix lined up with the runway
+        Final = 2,         // Engine landing task is flying the approach
+        Hovering = 3,      // VTOL holding over a helipad for the pilot to ease down
+        Rollout = 4,       // On the ground after touchdown, braking to a stop
+        Taxiing = 5        // Taxiing along the ground to the destination
+    }
+
     #endregion
 }
