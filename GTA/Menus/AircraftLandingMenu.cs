@@ -76,6 +76,15 @@ namespace GrandTheftAccessibility.Menus
                 Position
                 - RunwayDirection * Constants.APPROACH_FIX_DISTANCE
                 + new Vector3(0f, 0f, Constants.APPROACH_FIX_ALTITUDE);
+
+            /// <summary>
+            /// Start of the line handed to TASK_PLANE_LAND: short of the threshold
+            /// at field level, so the aircraft has runway-aligned ground to descend
+            /// onto instead of having to arrive exactly over the threshold. This is
+            /// how Rockstar's own landing test lays the line out.
+            /// </summary>
+            public Vector3 LandingLineStart =>
+                Position - (RunwayDirection * Constants.RUNWAY_LINE_LEAD_IN);
         }
 
         #endregion
@@ -85,6 +94,7 @@ namespace GrandTheftAccessibility.Menus
         private readonly SettingsManager _settings;
         private readonly AudioManager _audio;
         private readonly List<LandingDestination> _destinations;
+        private readonly HelipadHeadingStore _headings = new HelipadHeadingStore();
 
         // Navigation state
         private bool _navigationActive;
@@ -111,6 +121,9 @@ namespace GrandTheftAccessibility.Menus
         private bool _wasAirborne;
         private bool _shortFinalCalled;
         private long _finalStartTick;
+        private long _orientStartTick;
+        private HeliMissionFlags _heliLandingFlags;
+        private int _heliCruiseZ;
         private long _lastTelemetryTick;
         private Vector3 _autopilotFix;      // Approach fix, resolved once at engage
         private int _goAroundCount;
@@ -123,6 +136,11 @@ namespace GrandTheftAccessibility.Menus
         private VehicleMissionType? _expectedMission;
         private long _missionIssuedTick;
         private bool _missionReissued;
+
+        // The ped-side task. TASK_PLANE_LAND registers no VEHICLE mission at all,
+        // so GetActiveMissionType is blind to the entire final approach - this is
+        // what covers it. Rockstar polls the equivalent in AM_HELI_TAXI.
+        private ScriptTaskNameHash? _expectedTask;
 
         #endregion
 
@@ -286,10 +304,16 @@ namespace GrandTheftAccessibility.Menus
 
         #region Actions Submenu
 
+        // Ground taxi used to sit between auto-land and lineup. It was removed:
+        // TASK_PLANE_TAXI drives straight at the target with no obstacle
+        // avoidance and then circles it forever ("the plane will form 8s on the
+        // ground", per the native docs). Rockstar never calls it and no shipped
+        // mod does either - every search hit is a binding table or native DB.
+        // Lining up places the aircraft instead, which cannot hit anything.
         private const int ACTION_TOGGLE_BEACON = 0;
         private const int ACTION_AUTO_LAND = 1;
-        private const int ACTION_TAXI = 2;
-        private const int ACTION_LINE_UP = 3;
+        private const int ACTION_LINE_UP = 2;
+        private const int ACTION_SET_HEADING = 3;
         private const int ACTION_CANCEL_ALL = 4;
 
         protected override int SubmenuItemCount => 5;
@@ -307,10 +331,18 @@ namespace GrandTheftAccessibility.Menus
                     return IsAutopilotActive && _autopilotDestination == _destinations[SelectedIndex]
                         ? $"Auto-land here (autopilot), currently {DescribePhase()}"
                         : "Auto-land here (autopilot)";
-                case ACTION_TAXI:
-                    return "Taxi here (planes on the ground)";
                 case ACTION_LINE_UP:
                     return "Line up for takeoff (moves you onto the runway)";
+                case ACTION_SET_HEADING:
+                {
+                    LandingDestination d = _destinations[SelectedIndex];
+                    if (!d.IsHelipad)
+                        return $"Touchdown heading: {(int)d.RunwayHeading} degrees, fixed by the runway";
+                    float saved = _headings.GetHeading(d.Name);
+                    return saved >= 0f
+                        ? $"Touchdown heading: {(int)saved} degrees. Select to set it from your current heading"
+                        : "Touchdown heading: not set. Select to set it from your current heading";
+                }
                 case ACTION_CANCEL_ALL:
                     return "Cancel navigation and autopilot";
                 default:
@@ -328,11 +360,11 @@ namespace GrandTheftAccessibility.Menus
                 case ACTION_AUTO_LAND:
                     EngageAutoLand(SelectedIndex);
                     break;
-                case ACTION_TAXI:
-                    EngageTaxi(SelectedIndex);
-                    break;
                 case ACTION_LINE_UP:
                     LineUpForTakeoff(SelectedIndex);
+                    break;
+                case ACTION_SET_HEADING:
+                    SetTouchdownHeading(SelectedIndex);
                     break;
                 case ACTION_CANCEL_ALL:
                     CancelAllGuidance();
@@ -490,15 +522,76 @@ namespace GrandTheftAccessibility.Menus
         /// </summary>
         private void StartHelicopterLanding(Ped player, Vehicle aircraft, LandingDestination dest, int index)
         {
-            bool wantsOrientation = dest.RunwayHeading >= 0;
-            float orientation = wantsOrientation ? dest.RunwayHeading : -1f;
+            // A runway supplies its own heading; a pad uses whatever the pilot
+            // saved for it, and stays unconstrained until they do
+            float orientation = EffectiveLandingHeading(dest);
+            bool wantsOrientation = orientation >= 0f;
 
-            HeliMissionFlags flags = HeliMissionFlags.LandOnArrival;
+            // Rockstar's AM_HELI_TAXI lands with
+            // HF_AttainRequestedOrientation | HF_LandOnArrival | HF_IgnoreHiddenEntitiesDuringLand.
+            // The last one stops the touchdown being refused by props the pad owns
+            // but that are not currently streamed in.
+            HeliMissionFlags flags = HeliMissionFlags.LandOnArrival |
+                                     HeliMissionFlags.IgnoreHiddenEntitiesDuringLand;
             if (wantsOrientation)
                 flags |= HeliMissionFlags.AttainRequestedOrientation;
 
             int cruiseZ = (int)(Math.Max(aircraft.Position.Z, dest.Position.Z) + Constants.HELI_CRUISE_CLEARANCE);
+            _heliLandingFlags = flags;
+            _heliCruiseZ = cruiseZ;
 
+            BeginAutopilot(AutopilotPhase.Final, dest, aircraft, index);
+
+            // Asking one mission to fly there, rotate to a heading and set down all
+            // at once gives the worst of all three. Turn first when a heading was
+            // asked for, then descend - the turn is a goto at walking pace, which
+            // makes the helicopter pivot rather than translate.
+            if (wantsOrientation)
+            {
+                IssueHelicopterOrientLeg(player, aircraft, dest, orientation, cruiseZ);
+                Speak($"Helicopter autopilot engaged for {dest.Name}. {DescribeApproach(aircraft, dest)} Turning to the landing heading first.");
+                LogAutopilotParams("heli-orient", aircraft, dest,
+                    $"cruiseZ={cruiseZ}|orient={orientation:F0}|orientSpd={Constants.HELI_ORIENT_SPEED}");
+                return;
+            }
+
+            IssueHelicopterLandingLeg(player, aircraft, dest, orientation, cruiseZ, flags);
+            Speak($"Helicopter autopilot engaged, landing at {dest.Name}. {DescribeApproach(aircraft, dest)}");
+            LogAutopilotParams("heli", aircraft, dest,
+                $"cruiseZ={cruiseZ}|minTerrain={Constants.HELI_MIN_TERRAIN_CLEARANCE}" +
+                $"|orient={orientation:F0}|flags={flags}");
+        }
+
+        /// <summary>
+        /// Fly to the pad and rotate onto the touchdown heading without descending.
+        /// A near-zero cruise speed turns the goto into a pivot in place.
+        /// </summary>
+        private void IssueHelicopterOrientLeg(Ped player, Vehicle aircraft, LandingDestination dest,
+            float orientation, int cruiseZ)
+        {
+            player.Task.StartHeliMission(
+                aircraft,
+                dest.Position,
+                VehicleMissionType.GoTo,
+                Constants.HELI_ORIENT_SPEED,
+                Constants.HELI_TARGET_REACHED_DIST,
+                cruiseZ,
+                Constants.HELI_MIN_TERRAIN_CLEARANCE,
+                orientation,
+                Constants.HELI_SLOWDOWN_DISTANCE,
+                HeliMissionFlags.AttainRequestedOrientation);
+
+            PinTask(player);
+
+            _autopilotPhase = AutopilotPhase.Orienting;
+            _orientStartTick = Game.GameTime;
+            SetExpectedMission(VehicleMissionType.GoTo);
+        }
+
+        /// <summary>Descend and set down, on the requested heading if there is one.</summary>
+        private void IssueHelicopterLandingLeg(Ped player, Vehicle aircraft, LandingDestination dest,
+            float orientation, int cruiseZ, HeliMissionFlags flags)
+        {
             player.Task.StartHeliMission(
                 aircraft,
                 dest.Position,
@@ -511,12 +604,35 @@ namespace GrandTheftAccessibility.Menus
                 Constants.HELI_SLOWDOWN_DISTANCE,
                 flags);
 
-            BeginAutopilot(AutopilotPhase.Final, dest, aircraft, index);
+            PinTask(player);
+
+            _autopilotPhase = AutopilotPhase.Final;
             SetExpectedMission(VehicleMissionType.LandAndWait);
-            Speak($"Helicopter autopilot engaged, landing at {dest.Name}. {DescribeApproach(aircraft, dest)}");
-            LogAutopilotParams("heli", aircraft, dest,
-                $"cruiseZ={cruiseZ}|minTerrain={Constants.HELI_MIN_TERRAIN_CLEARANCE}" +
-                $"|orient={orientation:F0}|flags={flags}");
+        }
+
+        /// <summary>
+        /// Orienting leg: descend once the nose is near the wanted heading, or
+        /// after a timeout so a helicopter that cannot settle still lands.
+        /// </summary>
+        private void UpdateOrienting(Vehicle aircraft, LandingDestination dest, long currentTick)
+        {
+            float wanted = EffectiveLandingHeading(dest);
+            float error = HeadingErrorTo(aircraft.Heading, wanted);
+            bool settled = error <= Constants.HELI_ORIENT_TOLERANCE;
+            bool timedOut = currentTick - _orientStartTick > Constants.HELI_ORIENT_TIMEOUT;
+
+            if (!settled && !timedOut)
+                return;
+
+            Ped player = Game.Player?.Character;
+            if (player == null || !player.Exists())
+                return;
+
+            LogAutopilotEvent("HELI-ORIENTED", aircraft, dest,
+                $"error={error:F1}|timedOut={(timedOut ? 1 : 0)}");
+
+            IssueHelicopterLandingLeg(player, aircraft, dest, wanted, _heliCruiseZ, _heliLandingFlags);
+            Speak(timedOut ? "Descending." : "On heading. Descending.");
         }
 
         /// <summary>
@@ -527,7 +643,8 @@ namespace GrandTheftAccessibility.Menus
         /// </summary>
         private void StartVtolApproach(Ped player, Vehicle aircraft, LandingDestination dest, int index)
         {
-            float? orientation = dest.RunwayHeading >= 0 ? (float?)dest.RunwayHeading : null;
+            float padHeading = EffectiveLandingHeading(dest);
+            float? orientation = padHeading >= 0f ? (float?)padHeading : null;
 
             player.Task.GoToPlanePreciseVtol(
                 aircraft,
@@ -535,6 +652,8 @@ namespace GrandTheftAccessibility.Menus
                 (int)(dest.Position.Z + Constants.VTOL_HOVER_HEIGHT),  // absolute hold altitude
                 Constants.VTOL_MIN_TERRAIN_CLEARANCE,
                 orientation);
+
+            PinTask(player);
 
             BeginAutopilot(AutopilotPhase.Hovering, dest, aircraft, index);
             SetExpectedMission(null);   // VTOL goto is a ped task, not a vehicle mission
@@ -609,6 +728,8 @@ namespace GrandTheftAccessibility.Menus
                 Constants.APPROACH_MIN_TERRAIN_CLEARANCE,
                 -1f,                                           // orientation: let the AI fly it
                 false);                                        // no VTOL nozzles on the cruise leg
+
+            PinTask(player);
         }
 
         /// <summary>
@@ -623,11 +744,11 @@ namespace GrandTheftAccessibility.Menus
             _shortFinalCalled = false;
             _finalStartTick = Game.GameTime;
 
-            // TASK_PLANE_LAND is a ped task and registers no vehicle mission;
-            // the Land mission does, so only then is there something to verify
-            SetExpectedMission(Constants.USE_PLANE_LAND_MISSION
-                ? (VehicleMissionType?)VehicleMissionType.Land
-                : null);
+            // TASK_PLANE_LAND registers no vehicle mission, so it is verified via
+            // its ped task instead; the Land mission is verified as a mission
+            SetExpectedMission(
+                Constants.USE_PLANE_LAND_MISSION ? (VehicleMissionType?)VehicleMissionType.Land : null,
+                Constants.USE_PLANE_LAND_MISSION ? null : (ScriptTaskNameHash?)ScriptTaskNameHash.PlaneLand);
 
             // New leg, new yardstick for the stall check
             ResetProgress((dest.Position - aircraft.Position).Length());
@@ -651,8 +772,11 @@ namespace GrandTheftAccessibility.Menus
         {
             if (!Constants.USE_PLANE_LAND_MISSION)
             {
-                // Both points sit on the runway: threshold and far end
-                player.Task.LandPlane(dest.Position, dest.RunwayEndPosition, aircraft);
+                // The line runs from short of the threshold to the far end, the
+                // way Rockstar lays it out - starting it ON the threshold leaves
+                // the aircraft nowhere to descend
+                player.Task.LandPlane(dest.LandingLineStart, dest.RunwayEndPosition, aircraft);
+                PinTask(player);
                 return "land-task";
             }
 
@@ -702,6 +826,12 @@ namespace GrandTheftAccessibility.Menus
             if (Math.Abs(lateral) > Constants.APPROACH_MAX_CROSSTRACK)
                 return false;   // off to one side of the extended centerline
 
+            // Height matters as much as position. Handed the runway from altitude
+            // the landing task has to lose the height itself, which is when it
+            // starts circling - so only hand over once already low.
+            if (SafeHeightAboveGround(aircraft) > Constants.APPROACH_MAX_HANDOFF_HEIGHT)
+                return false;
+
             return HeadingErrorTo(aircraft.Heading, dest.RunwayHeading) <= Constants.APPROACH_ALIGN_TOLERANCE;
         }
 
@@ -748,90 +878,54 @@ namespace GrandTheftAccessibility.Menus
         }
 
         /// <summary>
-        /// Taxi a plane along the ground to the destination using the engine's
-        /// taxi task, which follows taxiways instead of cutting across grass.
+        /// The heading the autopilot should touch down on: the runway's own for a
+        /// runway, or whatever the pilot saved for this pad. -1 means "no
+        /// preference", which skips the turn and lets the aircraft settle as it is.
         /// </summary>
-        private void EngageTaxi(int index)
+        private float EffectiveLandingHeading(LandingDestination dest)
+        {
+            if (dest.RunwayHeading >= 0f)
+                return dest.RunwayHeading;
+
+            return _headings.GetHeading(dest.Name);
+        }
+
+        /// <summary>
+        /// Record which way the aircraft is currently pointing as the touchdown
+        /// heading for this pad. A rooftop pad has no orientation the mod can
+        /// work out for itself - where the door and the aerials are is something
+        /// only the pilot sitting on it knows - so it is captured, not guessed.
+        /// </summary>
+        private void SetTouchdownHeading(int index)
         {
             LandingDestination dest = _destinations[index];
 
+            if (!dest.IsHelipad)
+            {
+                Speak($"{dest.Name} is a runway. Its landing heading is fixed at {(int)dest.RunwayHeading} degrees.");
+                return;
+            }
+
             Ped player = Game.Player?.Character;
-            if (player == null || !player.Exists() || !player.IsInVehicle())
+            Vehicle aircraft = player?.CurrentVehicle;
+            if (player == null || !player.Exists() || aircraft == null || !aircraft.Exists())
             {
-                Speak("You must be in a plane on the ground to taxi.");
-                return;
-            }
-
-            Vehicle aircraft = player.CurrentVehicle;
-            if (aircraft == null || !aircraft.Exists() || aircraft.ClassType != VehicleClass.Planes)
-            {
-                Speak("Taxiing is for planes. Helicopters can auto-land directly.");
-                return;
-            }
-
-            if (player.SeatIndex != VehicleSeat.Driver)
-            {
-                Speak("You must be the pilot to taxi.");
-                return;
-            }
-
-            if (aircraft.IsInAir)
-            {
-                Speak("You are airborne. Use auto-land instead, then taxi after touchdown.");
-                return;
-            }
-
-            if (dest.IsHelipad)
-            {
-                Speak("That is a helipad, not somewhere a plane can taxi to. Pick a runway.");
-                return;
-            }
-
-            // The taxi task drives the plane but will not start it, so with the
-            // engine off it sits there at zero throttle looking like a hang
-            if (!SafeEngineRunning(aircraft))
-            {
-                Speak("Start the engine first, then taxi.");
-                LogAutopilotEvent("TAXI-REFUSED", aircraft, dest, "reason=engine-off");
-                return;
-            }
-
-            // Taxiing follows the ground - a destination on the far side of the map
-            // means grinding cross-country for many minutes, which is never what
-            // was meant. Fly there instead.
-            float distance = (dest.Position - aircraft.Position).Length();
-
-            // Already parked on it - running the whole arrive-and-brake sequence
-            // just to announce a stop half a second later helps nobody
-            if (distance <= Constants.TAXI_ARRIVAL_RADIUS)
-            {
-                Speak($"You are already at {dest.Name}.");
-                return;
-            }
-
-            if (distance > Constants.TAXI_MAX_DISTANCE)
-            {
-                float miles = distance * Constants.METERS_TO_MILES;
-                Speak($"{dest.Name} is {miles:F1} miles away, too far to taxi. Take off and use auto-land instead.");
+                Speak("Get into an aircraft and point it the way you want to land, then set the heading.");
                 return;
             }
 
             try
             {
-                player.Task.PlaneTaxi(aircraft, dest.Position, Constants.TAXI_CRUISE_SPEED, Constants.TAXI_TARGET_REACHED_DIST);
-
-                BeginAutopilot(AutopilotPhase.Taxiing, dest, aircraft, index);
-                SetExpectedMission(null);   // TASK_PLANE_TAXI is a ped task
-                Speak($"Taxiing to {dest.Name}, {(int)distance} meters. I will tell you when you arrive.");
-                LogAutopilotParams("taxi", aircraft, dest,
-                    $"cruiseSpd={Constants.TAXI_CRUISE_SPEED}|reachDist={Constants.TAXI_TARGET_REACHED_DIST}" +
-                    $"|arrivalRadius={Constants.TAXI_ARRIVAL_RADIUS}");
+                float heading = aircraft.Heading;
+                _headings.SetHeading(dest.Name, heading);
+                Speak($"Touchdown heading for {dest.Name} set to {(int)heading} degrees. " +
+                      "The autopilot will turn onto it before landing there.");
+                Logger.Info($"AP|PAD-HEADING|dest={dest.Name}|heading={heading:F0}");
             }
             catch (Exception ex)
             {
-                Logger.Exception(ex, "AircraftLandingMenu.EngageTaxi");
-                Speak("Failed to start taxiing.");
-                ResetAutopilot();
+                Logger.Exception(ex, "AircraftLandingMenu.SetTouchdownHeading");
+                Speak("Failed to save the touchdown heading.");
             }
         }
 
@@ -965,6 +1059,10 @@ namespace GrandTheftAccessibility.Menus
                     // ped": it rebuilds the ped's state on the spot, which warps
                     // the pilot out of the seat. Using it on release ejected the
                     // player from the plane the moment the autopilot disengaged.
+                    //
+                    // Unpin first: a task pinned with AlwaysKeepTask survives a
+                    // plain clear, which would leave the aircraft still flying it.
+                    UnpinTask(player);
                     player.Task.ClearAll();
                 }
 
@@ -1027,11 +1125,32 @@ namespace GrandTheftAccessibility.Menus
         /// Record what vehicle mission the phase just issued should show up as.
         /// Pass null for phases driven by a ped task, which register no mission.
         /// </summary>
-        private void SetExpectedMission(VehicleMissionType? mission)
+        private void SetExpectedMission(VehicleMissionType? mission, ScriptTaskNameHash? task = null)
         {
             _expectedMission = mission;
+            _expectedTask = task;
             _missionIssuedTick = Game.GameTime;
             _missionReissued = false;
+        }
+
+        /// <summary>
+        /// Whether the ped-side task we issued is still running. Rockstar's own
+        /// pattern (AM_HELI_TAXI): anything other than Performing or
+        /// WaitingToStart means the task is over and should be re-issued.
+        /// The status codes are R*'s SCRIPTTASKSTATUS enum, which SHVDN mirrors.
+        /// </summary>
+        private static bool IsTaskStillRunning(Ped player, ScriptTaskNameHash task)
+        {
+            try
+            {
+                ScriptTaskStatus status = player.GetScriptTaskStatus(task);
+                return status == ScriptTaskStatus.Performing ||
+                       status == ScriptTaskStatus.WaitingToStart;
+            }
+            catch
+            {
+                return true;   // Can't tell - assume alive rather than abort a good approach
+            }
         }
 
         /// <summary>
@@ -1051,9 +1170,9 @@ namespace GrandTheftAccessibility.Menus
                     return true;
                 case AutopilotPhase.Final:
                     IssueLandingTask(player, aircraft, dest);
-                    SetExpectedMission(Constants.USE_PLANE_LAND_MISSION
-                        ? (VehicleMissionType?)VehicleMissionType.Land
-                        : null);
+                    SetExpectedMission(
+                        Constants.USE_PLANE_LAND_MISSION ? (VehicleMissionType?)VehicleMissionType.Land : null,
+                        Constants.USE_PLANE_LAND_MISSION ? null : (ScriptTaskNameHash?)ScriptTaskNameHash.PlaneLand);
                     return true;
                 default:
                     return false;
@@ -1067,30 +1186,42 @@ namespace GrandTheftAccessibility.Menus
         /// </summary>
         private void CheckMissionAlive(Vehicle aircraft, LandingDestination dest, long currentTick)
         {
-            if (!_expectedMission.HasValue)
-                return;   // Ped-task phase - nothing registers on the vehicle
-
             if (currentTick - _missionIssuedTick < Constants.MISSION_CHECK_GRACE)
                 return;   // Still settling
-
-            VehicleMissionType active = SafeActiveMission(aircraft);
-            if (active == _expectedMission.Value)
-                return;
 
             Ped player = Game.Player?.Character;
             if (player == null || !player.Exists())
                 return;
 
+            string problem = null;
+
+            // Vehicle-side mission (GoTo legs, heli landing, the Land mission)
+            if (_expectedMission.HasValue)
+            {
+                VehicleMissionType active = SafeActiveMission(aircraft);
+                if (active != _expectedMission.Value)
+                    problem = $"mission expected={_expectedMission.Value}|actual={active}";
+            }
+
+            // Ped-side task (TASK_PLANE_LAND, which registers no vehicle mission).
+            // A finished landing task while still airborne means it gave up.
+            if (problem == null && _expectedTask.HasValue && aircraft.IsInAir &&
+                !IsTaskStillRunning(player, _expectedTask.Value))
+            {
+                problem = $"task={_expectedTask.Value}|status=ended";
+            }
+
+            if (problem == null)
+                return;
+
             if (_missionReissued)
             {
-                LogAutopilotEvent("MISSION-LOST", aircraft, dest,
-                    $"expected={_expectedMission.Value}|actual={active}|reissuedAlready=1");
+                LogAutopilotEvent("MISSION-LOST", aircraft, dest, $"{problem}|reissuedAlready=1");
                 FinishAutopilot("Autopilot task was rejected. You have manual control.", true, "mission-lost");
                 return;
             }
 
-            LogAutopilotEvent("MISSION-REISSUE", aircraft, dest,
-                $"expected={_expectedMission.Value}|actual={active}");
+            LogAutopilotEvent("MISSION-REISSUE", aircraft, dest, problem);
 
             if (ReissueCurrentLeg(player, aircraft, dest))
             {
@@ -1116,7 +1247,6 @@ namespace GrandTheftAccessibility.Menus
                 case AutopilotPhase.Final: return "on final approach";
                 case AutopilotPhase.Hovering: return "holding over the pad";
                 case AutopilotPhase.Rollout: return "braking on the ground";
-                case AutopilotPhase.Taxiing: return "taxiing";
                 default: return "off";
             }
         }
@@ -1148,6 +1278,8 @@ namespace GrandTheftAccessibility.Menus
             _autopilotPhase = AutopilotPhase.Off;
             _autopilotDestination = null;
             _autopilotVehicle = null;
+            _expectedMission = null;
+            _expectedTask = null;
             _autopilotStartTick = 0;
             _stallWarned = false;
             _shortFinalCalled = false;
@@ -1203,8 +1335,7 @@ namespace GrandTheftAccessibility.Menus
             {
                 // Only a flying phase needs a running engine - a rough landing can
                 // kill it during the rollout, and that still ends as an arrival
-                bool airbornePhase = _autopilotPhase != AutopilotPhase.Rollout &&
-                                     _autopilotPhase != AutopilotPhase.Taxiing;
+                bool airbornePhase = _autopilotPhase != AutopilotPhase.Rollout;
                 if (aircraft.IsDead || (airbornePhase && !aircraft.IsEngineRunning))
                 {
                     FinishAutopilot("Autopilot lost, the aircraft is not flyable.", false, "not-flyable");
@@ -1246,6 +1377,9 @@ namespace GrandTheftAccessibility.Menus
                     case AutopilotPhase.Intercept:
                         UpdateIntercept(aircraft, position, dest, distance);
                         break;
+                    case AutopilotPhase.Orienting:
+                        UpdateOrienting(aircraft, dest, currentTick);
+                        break;
                     case AutopilotPhase.Final:
                         UpdateFinal(aircraft, dest, distance, currentTick);
                         break;
@@ -1254,9 +1388,6 @@ namespace GrandTheftAccessibility.Menus
                         break;
                     case AutopilotPhase.Rollout:
                         UpdateRollout(aircraft, dest);
-                        break;
-                    case AutopilotPhase.Taxiing:
-                        UpdateTaxiing(aircraft, dest, distance);
                         break;
                 }
             }
@@ -1312,6 +1443,8 @@ namespace GrandTheftAccessibility.Menus
                 Constants.APPROACH_INTERCEPT_CLEARANCE,
                 -1f,
                 false);
+
+            PinTask(player);
 
             _autopilotPhase = AutopilotPhase.Intercept;
             ResetProgress((dest.Position - aircraft.Position).Length());
@@ -1463,28 +1596,15 @@ namespace GrandTheftAccessibility.Menus
 
             // Slow is not the same as stopped: a halt request can catch the
             // aircraft mid-bounce, and calling that "stopped" while it is still
-            // several meters up hands back control at the worst moment
-            if (aircraft.IsInAir)
+            // several meters up hands back control at the worst moment.
+            // IsOnAllWheels is the stricter test - not merely "touching something"
+            // but settled on the gear, which is what "stopped" should mean.
+            if (!aircraft.IsOnAllWheels)
                 return;
 
             FinishAutopilot($"Stopped at {dest.Name}. You have manual control.", true, "stopped");
         }
 
-        /// <summary>
-        /// Ground taxi: PlaneTaxi stops steering once it is within its arrival
-        /// distance but leaves the plane rolling, so stop it here and say so.
-        /// </summary>
-        private void UpdateTaxiing(Vehicle aircraft, LandingDestination dest, float distance)
-        {
-            if (distance > Constants.TAXI_ARRIVAL_RADIUS)
-                return;
-
-            LogAutopilotEvent("TAXI-ARRIVED", aircraft, dest);
-            ClearFlightTasks();
-            BringToStop(aircraft);
-            _autopilotPhase = AutopilotPhase.Rollout;
-            Speak($"Arrived at {dest.Name}, braking.");
-        }
 
         /// <summary>
         /// Watch for the transition from airborne to wheels-on-ground. On the
@@ -1567,7 +1687,8 @@ namespace GrandTheftAccessibility.Menus
                    $"|agl={SafeHeightAboveGround(aircraft):F0}|asl={position.Z:F0}|spd={aircraft.Speed:F1}" +
                    $"|hdg={aircraft.Heading:F0}|hdgErr={headingError:F1}|air={(aircraft.IsInAir ? 1 : 0)}" +
                    $"|eng={(SafeEngineRunning(aircraft) ? 1 : 0)}|gear={SafeGearState(aircraft)}" +
-                   $"|mis={SafeActiveMission(aircraft)}|want={(_expectedMission.HasValue ? _expectedMission.Value.ToString() : "ped-task")}";
+                   $"|mis={SafeActiveMission(aircraft)}|want={(_expectedMission.HasValue ? _expectedMission.Value.ToString() : "-")}" +
+                   $"|task={(_expectedTask.HasValue ? SafeTaskStatus(_expectedTask.Value).ToString() : "-")}";
         }
 
         /// <summary>
@@ -1594,6 +1715,60 @@ namespace GrandTheftAccessibility.Menus
         {
             try { return aircraft.LandingGearState.ToString(); }
             catch { return "none"; }
+        }
+
+        /// <summary>
+        /// Ask the engine to hold on to the task we just issued.
+        ///
+        /// Caveat worth knowing: this is SET_PED_KEEP_TASK, and per SHVDN's own
+        /// deprecation note it only takes effect once the ped has been marked as
+        /// no longer needed. Our pilot is the player, who never is - so for us
+        /// this is cheap insurance rather than a fix, and it only really bites if
+        /// the aircraft is ever flown by a spawned NPC pilot. Set after issuing.
+        /// </summary>
+        private static void PinTask(Ped player)
+        {
+            try
+            {
+                if (player != null && player.Exists())
+                    player.KeepTaskWhenMarkedAsNoLongerNeeded = true;
+            }
+            catch (Exception ex)
+            {
+                Logger.Exception(ex, "AircraftLandingMenu.PinTask");
+            }
+        }
+
+        /// <summary>
+        /// Drop the hold before clearing, so a held task cannot outlive the clear.
+        /// </summary>
+        private static void UnpinTask(Ped player)
+        {
+            try
+            {
+                if (player != null && player.Exists())
+                    player.KeepTaskWhenMarkedAsNoLongerNeeded = false;
+            }
+            catch (Exception ex)
+            {
+                Logger.Exception(ex, "AircraftLandingMenu.UnpinTask");
+            }
+        }
+
+        /// <summary>Status of a ped script task, for the trace. Never throws.</summary>
+        private static ScriptTaskStatus SafeTaskStatus(ScriptTaskNameHash task)
+        {
+            try
+            {
+                Ped player = Game.Player?.Character;
+                if (player == null || !player.Exists())
+                    return ScriptTaskStatus.Vacant;
+                return player.GetScriptTaskStatus(task);
+            }
+            catch
+            {
+                return ScriptTaskStatus.Vacant;
+            }
         }
 
         private static bool SafeEngineRunning(Vehicle aircraft)

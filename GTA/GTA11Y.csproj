@@ -100,6 +100,7 @@
     <Compile Include="Core\HashManager.cs" />
     <Compile Include="Core\EntityScanner.cs" />
     <Compile Include="Core\VehicleSaveManager.cs" />
+    <Compile Include="Core\HelipadHeadingStore.cs" />
     <Compile Include="Core\TurretCrewManager.cs" />
     <Compile Include="Core\HealthArmorManager.cs" />
     <Compile Include="Core\VehicleDamageManager.cs" />
@@ -133,7 +134,6 @@
     <!-- Data -->
     <Compile Include="Data\LocationData.cs" />
     <Compile Include="Data\LocationDataLoader.cs" />
-    <Compile Include="Data\AirportData.cs" />
     <!-- Menus -->
     <Compile Include="Menus\IMenuState.cs" />
     <Compile Include="Menus\MenuBase.cs" />

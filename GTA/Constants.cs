@@ -34,8 +34,6 @@ namespace GrandTheftAccessibility
         // PERFORMANCE: Pre-calculated math constants to avoid repeated calculations in hot paths
         public const float DEG_TO_RAD = (float)(Math.PI / 180.0);   // ~0.01745329f
         public const float RAD_TO_DEG = (float)(180.0 / Math.PI);   // ~57.29578f
-        public const float PI_FLOAT = (float)Math.PI;               // ~3.14159265f
-        public const float TWO_PI = (float)(Math.PI * 2.0);         // ~6.28318531f
 
         // Altitude indicator audio
         public const double ALTITUDE_GAIN = 0.1;
@@ -66,20 +64,8 @@ namespace GrandTheftAccessibility
 
         #region Altitude and Aircraft Attitude
 
-        // Altitude mode values
-        public const int ALTITUDE_MODE_OFF = 0;
-        public const int ALTITUDE_MODE_NORMAL = 1;
-        public const int ALTITUDE_MODE_AIRCRAFT = 2;
-
         // Aircraft attitude indicator - base check interval
         public const long TICK_INTERVAL_AIRCRAFT_ATTITUDE = 50;    // 0.05 seconds (check frequently)
-
-        // Aircraft type classification
-        public const int AIRCRAFT_TYPE_FIXED_WING = 0;
-        public const int AIRCRAFT_TYPE_HELICOPTER = 1;
-        public const int AIRCRAFT_TYPE_BLIMP = 2;
-        public const int AIRCRAFT_TYPE_VTOL_HOVER = 3;   // VTOL in hover mode (like heli)
-        public const int AIRCRAFT_TYPE_VTOL_PLANE = 4;   // VTOL in plane mode (like fixed-wing)
 
         // VTOL mode threshold (nozzle position)
         public const float VTOL_HOVER_THRESHOLD = 0.5f;  // Above 0.5 = hover mode
@@ -127,7 +113,6 @@ namespace GrandTheftAccessibility
 
         // Landing beacon audio (3D audio beacon for aircraft navigation)
         public const float BEACON_GAIN = 0.08f;
-        public const float BEACON_MIN_GAIN = BEACON_GAIN * 0.1f;   // Floor gain when behind
         public const float BEACON_BASE_FREQUENCY = 400f;           // Hz at destination altitude
         public const float BEACON_MIN_FREQUENCY = 150f;            // Hz when very high above
         public const float BEACON_MAX_FREQUENCY = 800f;            // Hz when below destination
@@ -227,11 +212,11 @@ namespace GrandTheftAccessibility
 
         // Native function hashes for VTOL nozzle position control
         public const ulong NATIVE_GET_VEHICLE_FLIGHT_NOZZLE_POSITION = 0xDA62027C8BDB326E;
-        public const ulong NATIVE_SET_VEHICLE_FLIGHT_NOZZLE_POSITION = 0x30D779DE7C4F6DD3;  // Set VTOL nozzle angle (0=plane, 1=hover)
 
         // Vehicle save/load
         public const int VEHICLE_SAVE_SLOT_COUNT = 10;
         public const string SAVED_VEHICLES_FILE_NAME = "gta11ySavedVehicles.json";
+        public const string HELIPAD_HEADINGS_FILE_NAME = "gta11yHelipadHeadings.json";
 
         // Vehicle mod menu display names - expanded to include all known mod types
         // Standard mods: 0-49, Colors: 66-67, Extended/DLC mods probed dynamically
@@ -314,34 +299,9 @@ namespace GrandTheftAccessibility
         // All valid mod type indices (0-49)
         // Note: 17-22 are toggle mods (Nitrous, Turbo, Subwoofer, TyreSmoke, Hydraulics, XenonLights)
         // which are handled separately via VehicleToggleModType
-        public static readonly int[] ALL_MOD_TYPES = new int[]
-        {
-            // Body/Exterior
-            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
-            // Performance
-            11, 12, 13, 14, 15, 16,
-            // Note: 17-22 are handled as toggle mods, not through GET_NUM_VEHICLE_MODS
-            // Wheels
-            23, 24,
-            // Plates
-            25, 26,
-            // Interior/Benny's
-            27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45,
-            // Doors/Windows
-            46, 47,
-            // Livery/Light Bar
-            48, 49
-        };
 
         // Performance mod types (commonly used)
         // Note: 17 (Nitrous) and 18 (Turbo) are toggle mods handled separately
-        public static readonly int[] PERFORMANCE_MOD_TYPES = { 11, 12, 13, 15, 16 };
-
-        // Body mod types
-        public static readonly int[] BODY_MOD_TYPES = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 46, 47 };
-
-        // Interior/Benny's mod types
-        public static readonly int[] INTERIOR_MOD_TYPES = { 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45 };
 
         // Horn names for horn mod type (14)
         public static readonly string[] HORN_NAMES = new string[]
@@ -404,11 +364,6 @@ namespace GrandTheftAccessibility
             "Track"             // 12
         };
 
-        // Special mod type values for custom categories
-        public const int MOD_TYPE_NEONS = -2;
-        public const int MOD_TYPE_WHEEL_TYPE = -3;
-        public const int WHEEL_TYPE_COUNT = 13;  // 0-12
-
         // Weaponized vehicle model names (lowercase for case-insensitive matching)
         // These vehicles have built-in weapons like missiles, guns, or turrets
         public static readonly HashSet<string> WEAPONIZED_VEHICLE_NAMES = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -460,7 +415,6 @@ namespace GrandTheftAccessibility
         public const float AUTODRIVE_SPEED_INCREMENT = 2f;                // m/s per key press
         public const float AUTODRIVE_WAYPOINT_ARRIVAL_RADIUS = 10f;        // meters - tighter for mission markers
         public const float AUTODRIVE_FINAL_APPROACH_DISTANCE = 50f;        // meters - start final approach
-        public const float AUTODRIVE_FINAL_APPROACH_SPEED = 8f;            // m/s (~18 mph) for precise arrival
         public const float AUTODRIVE_PRECISE_ARRIVAL_RADIUS = 6f;          // meters - very close to destination
         public const float AUTODRIVE_LONGRANGE_THRESHOLD = 500f;           // meters - use LONGRANGE native above this distance
 
@@ -477,7 +431,6 @@ namespace GrandTheftAccessibility
         public const int DRIVING_STYLE_MODE_CAUTIOUS = 0;
         public const int DRIVING_STYLE_MODE_NORMAL = 1;
         public const int DRIVING_STYLE_MODE_AGGRESSIVE = 2;
-        public const int DRIVING_STYLE_MODE_RECKLESS = 3;
 
         // ===== DRIVING STYLE FLAGS (VehicleDrivingFlags from SHVDN v3.6.0) =====
         // Complete flag reference:
@@ -624,16 +577,12 @@ namespace GrandTheftAccessibility
             "Reckless"       // Ram through vehicles, ignore everything
         };
 
-        // Native for changing driving style mid-task (without re-issuing)
-        public const ulong NATIVE_SET_DRIVE_TASK_DRIVING_STYLE = 0xDACE1BE37D88AF67;
-
         // Road feature detection - Dynamic lookahead based on speed
         public const float ROAD_LOOKAHEAD_MIN = 50f;                      // Minimum lookahead 50m (at slow speeds)
         public const float ROAD_LOOKAHEAD_MAX = 200f;                     // Maximum lookahead 200m (at high speeds)
         public const float ROAD_LOOKAHEAD_SPEED_FACTOR = 4f;              // Lookahead = speed * factor (clamped to min/max)
         public const float ROAD_SAMPLE_INTERVAL = 20f;                    // Sample every 20m
         public const float CURVE_HEADING_THRESHOLD = 25f;                 // >25 degree = curve
-        public const float SHARP_CURVE_THRESHOLD = 45f;                   // >45 degree = sharp curve
 
         // Speed-scaled announcement cooldowns
         public const long ROAD_FEATURE_COOLDOWN_MIN = 2_000;         // 2 seconds at high speed
@@ -672,40 +621,24 @@ namespace GrandTheftAccessibility
 
         // Road node flags (from GET_VEHICLE_NODE_PROPERTIES - eVehicleNodeProperties)
         public const int ROAD_FLAG_OFF_ROAD = 1;           // Bit 0: Dirt roads, trails, alleys
-        public const int ROAD_FLAG_ON_PLAYERS_ROAD = 2;    // Bit 1: On player's current road
-        public const int ROAD_FLAG_NO_BIG_VEHICLES = 4;    // Bit 2: Narrow road, no large vehicles
         public const int ROAD_FLAG_SWITCHED_OFF = 8;       // Bit 3: Disabled/inactive node
         public const int ROAD_FLAG_TUNNEL = 16;            // Bit 4: Tunnel or interior
         public const int ROAD_FLAG_DEAD_END = 32;          // Bit 5: Dead end road
         public const int ROAD_FLAG_HIGHWAY = 64;           // Bit 6: Highway/freeway
         public const int ROAD_FLAG_JUNCTION = 128;         // Bit 7: Intersection
         public const int ROAD_FLAG_TRAFFIC_LIGHT = 256;    // Bit 8: Has traffic light
-        public const int ROAD_FLAG_GIVE_WAY = 512;         // Bit 9: Yield sign
         public const int ROAD_FLAG_WATER = 1024;           // Bit 10: Water route node
 
         // eGetClosestNodeFlags - used with GET_CLOSEST_VEHICLE_NODE_WITH_HEADING etc.
         // NOTE: These are NOT the same as eVehicleNodeProperties above
-        public const int NODE_FLAG_INCLUDE_SWITCHED_OFF = 1;   // Include disabled/inactive nodes
-        public const int NODE_FLAG_INCLUDE_BOAT_NODES = 2;     // Include boat/water nodes
-        public const int NODE_FLAG_IGNORE_SLIPLANES = 4;       // Skip slip lanes
         public const int NODE_FLAG_ACTIVE_NODES_ONLY = 0;      // Default: only active road nodes
 
         // Lane count thresholds for road classification
         public const int ROAD_LANES_HIGHWAY_MIN = 3;           // 3+ lanes = likely highway
-        public const int ROAD_LANES_CITY_MIN = 2;              // 2+ lanes = city/main road
 
         // Road density thresholds (0-15 from GET_VEHICLE_NODE_PROPERTIES)
         public const int ROAD_DENSITY_RURAL_MAX = 3;       // 0-3 = Rural/empty
         public const int ROAD_DENSITY_SUBURBAN_MAX = 7;    // 4-7 = Suburban/light traffic
-
-        // Road type classification values
-        public const int ROAD_TYPE_UNKNOWN = 0;
-        public const int ROAD_TYPE_HIGHWAY = 1;
-        public const int ROAD_TYPE_CITY_STREET = 2;
-        public const int ROAD_TYPE_SUBURBAN = 3;
-        public const int ROAD_TYPE_RURAL = 4;
-        public const int ROAD_TYPE_DIRT_TRAIL = 5;
-        public const int ROAD_TYPE_TUNNEL = 6;
 
         // Road type display names (indexed by ROAD_TYPE_* values)
         public static readonly string[] ROAD_TYPE_NAMES = new string[]
@@ -772,7 +705,6 @@ namespace GrandTheftAccessibility
 
         // Traffic light state detection
         public const float TRAFFIC_LIGHT_STOP_SPEED = 0.5f;              // m/s - considered stopped
-        public const float TRAFFIC_LIGHT_DETECTION_RADIUS = 30f;         // meters to check for lights
         public const long TRAFFIC_LIGHT_STATE_COOLDOWN = 3_000;     // 3 seconds between state announcements
 
         // U-turn detection
@@ -783,7 +715,6 @@ namespace GrandTheftAccessibility
         // Hill/gradient detection
         public const float HILL_STEEP_THRESHOLD = 8f;                    // degrees - steep hill
         public const float HILL_MODERATE_THRESHOLD = 4f;                 // degrees - moderate hill
-        public const float HILL_DETECTION_DISTANCE = 50f;                // meters ahead to check
         public const long HILL_ANNOUNCE_COOLDOWN = 5_000;           // 5 seconds between hill announcements
 
         // Announcement priority levels (higher = more important, but lower number = higher priority)
@@ -791,7 +722,6 @@ namespace GrandTheftAccessibility
         public const int ANNOUNCE_PRIORITY_HIGH = 1;         // Traffic lights, hills
         public const int ANNOUNCE_PRIORITY_MEDIUM = 2;       // Curves, intersections
         public const int ANNOUNCE_PRIORITY_LOW = 3;          // Distance updates, road type
-        public const long ANNOUNCE_MIN_GAP = 500;      // 0.5 seconds minimum between announcements
 
         // Per-priority cooldown durations (ticks)
         public const long ANNOUNCE_COOLDOWN_CRITICAL = 500;    // 0.5 seconds
@@ -808,14 +738,6 @@ namespace GrandTheftAccessibility
         public const long SPEED_ANNOUNCE_COOLDOWN = 15_000;    // 15 seconds
 
         // ===== ROAD SEEKING =====
-
-        // Seek modes
-        public const int ROAD_SEEK_MODE_ANY = 0;
-        public const int ROAD_SEEK_MODE_HIGHWAY = 1;
-        public const int ROAD_SEEK_MODE_CITY = 2;
-        public const int ROAD_SEEK_MODE_SUBURBAN = 3;
-        public const int ROAD_SEEK_MODE_RURAL = 4;
-        public const int ROAD_SEEK_MODE_DIRT = 5;
 
         // Seek mode display names
         public static readonly string[] ROAD_SEEK_MODE_NAMES = new string[]
@@ -846,9 +768,6 @@ namespace GrandTheftAccessibility
         public const int STUCK_CHECK_COUNT_THRESHOLD = 5;                 // 5 consecutive checks = stuck (5 seconds - increased from 3)
         public const float STUCK_HEADING_CHANGE_THRESHOLD = 5f;           // Heading change < 5° while stuck = truly stuck
 
-        // Flight stuck detection (Grok optimization) - for aerial recovery
-        public const int FLIGHT_STUCK_THRESHOLD = 50;                     // 50 checks at 0.2s = ~10 seconds not progressing
-
         // Task re-issue thresholds (optimized to reduce jerky movement)
         public const float TASK_DEVIATION_THRESHOLD = 10f;                // Only re-issue task if deviated >10m from path
         public const float TASK_HEADING_DEVIATION_THRESHOLD = 45f;        // Only re-issue if heading differs >45° from target
@@ -865,8 +784,6 @@ namespace GrandTheftAccessibility
         // Native function hashes for vehicle control
         public const ulong NATIVE_IS_ENTITY_IN_WATER = 0xCFB0A0D8EDD145A3;
         // NOTE: Use vehicle.UpVector.Z for upright detection (no native needed)
-        public const ulong NATIVE_SET_VEHICLE_ON_GROUND_PROPERLY = 0x49733E92263139D1;
-        public const ulong NATIVE_SET_VEHICLE_FORWARD_SPEED = 0xAB54A438726D25D5;
         // Hard speed ceiling the AI will never exceed (cooperative with AI driving task)
         public const ulong NATIVE_SET_DRIVE_TASK_MAX_CRUISE_SPEED = 0x404A5AA9B9F0B746;
 
@@ -920,7 +837,6 @@ namespace GrandTheftAccessibility
 
         // Native for weather
         public const ulong NATIVE_GET_PREV_WEATHER_TYPE_HASH_NAME = 0x564B884A05EC45A3;
-        public const ulong NATIVE_GET_NEXT_WEATHER_TYPE_HASH_NAME = 0x711327CD09C8F162;
 
         // ===== COLLISION WARNING SYSTEM =====
 
@@ -937,7 +853,6 @@ namespace GrandTheftAccessibility
         public const float COLLISION_WARNING_CLOSE = 15f;      // meters - minimum imminent threshold
         public const float COLLISION_WARNING_MEDIUM = 30f;     // meters - minimum close threshold
         public const float COLLISION_WARNING_FAR = 50f;        // meters - minimum far threshold
-        public const float COLLISION_SAFE_DISTANCE = 60f;      // meters - all clear
 
         // Collision scan parameters
         public const float COLLISION_SCAN_ANGLE = 30f;         // degrees - cone in front
@@ -946,10 +861,6 @@ namespace GrandTheftAccessibility
 
         // Following distance (time-based, in seconds at current speed)
         // Based on real-world "2-second rule" (3+ seconds in adverse conditions)
-        public const float FOLLOWING_DISTANCE_SAFE = 3.0f;     // 3 second rule (safe)
-        public const float FOLLOWING_DISTANCE_NORMAL = 2.0f;   // 2 second rule (acceptable)
-        public const float FOLLOWING_DISTANCE_CLOSE = 1.5f;    // Too close
-        public const float FOLLOWING_DISTANCE_TAILGATING = 0.8f; // Dangerous
 
         // ===== TIME-OF-DAY AWARENESS =====
 
@@ -969,18 +880,15 @@ namespace GrandTheftAccessibility
 
         // Headlight natives
         public const ulong NATIVE_SET_VEHICLE_LIGHTS = 0x34E710FF01247C5A;
-        public const ulong NATIVE_SET_VEHICLE_FULLBEAM = 0x8B7FD87F0DDB421E;
 
         // ===== EMERGENCY VEHICLE AWARENESS =====
 
         // Emergency vehicle detection
         public const float EMERGENCY_DETECTION_RADIUS = 100f;  // meters to detect sirens
-        public const float EMERGENCY_YIELD_DISTANCE = 30f;     // meters to start yielding
         public const long TICK_INTERVAL_EMERGENCY_CHECK = 1_000;  // 1 second
         public const long EMERGENCY_YIELD_DURATION = 5_000;  // 5 seconds of yielding
 
         // Native for siren check
-        public const ulong NATIVE_IS_VEHICLE_SIREN_ON = 0x4C9BF537BE2634B2;
         public const ulong NATIVE_IS_VEHICLE_SIREN_AUDIO_ON = 0xB5CC40FBCB586380;
 
         // ===== ETA ANNOUNCEMENTS =====
@@ -1000,15 +908,6 @@ namespace GrandTheftAccessibility
 
         // ===== PAUSE/RESUME CAPABILITY =====
 
-        // Pause states
-        public const int PAUSE_STATE_NONE = 0;
-        public const int PAUSE_STATE_PAUSED = 1;
-        public const int PAUSE_STATE_RESUMING = 2;
-
-        // Pause behavior
-        public const float PAUSE_BRAKE_FORCE = 1.0f;               // Full brakes when pausing
-        public const long PAUSE_RESUME_DELAY = 1_000;         // 1 second delay before resuming
-
         // Native for braking
         public const ulong NATIVE_SET_VEHICLE_HANDBRAKE = 0x684785568EF26A22;
 
@@ -1016,10 +915,6 @@ namespace GrandTheftAccessibility
 
         // Following distance thresholds (in meters)
         public const float FOLLOWING_CLEAR_ROAD = 80f;             // No vehicle ahead
-        public const float FOLLOWING_COMFORTABLE = 40f;            // Good distance
-        public const float FOLLOWING_CLOSE = 20f;                  // Getting close
-        public const float FOLLOWING_TOO_CLOSE = 10f;              // Too close
-        public const float FOLLOWING_DANGEROUS = 5f;               // Dangerous
 
         // Following distance announcements
         public const long TICK_INTERVAL_FOLLOWING_CHECK = 2_000;  // 2 seconds
@@ -1033,16 +928,8 @@ namespace GrandTheftAccessibility
         public const long TICK_INTERVAL_STRUCTURE_CHECK = 2_000;  // 2 seconds
         public const long STRUCTURE_ANNOUNCE_COOLDOWN = 5_000;    // 5 seconds
 
-        // Structure types
-        public const int STRUCTURE_TYPE_NONE = 0;
-        public const int STRUCTURE_TYPE_TUNNEL = 1;
-        public const int STRUCTURE_TYPE_BRIDGE = 2;
-        public const int STRUCTURE_TYPE_OVERPASS = 3;              // Under an overpass
-        public const int STRUCTURE_TYPE_UNDERPASS = 4;             // Going under something
-
         // Natives for probe/raycast
         public const ulong NATIVE_GET_GROUND_Z_FOR_3D_COORD = 0xC906A7DAB05C8D2B;
-        public const ulong NATIVE_START_EXPENSIVE_SYNCHRONOUS_SHAPE_TEST_LOS_PROBE = 0x377906D8A31E5586;
 
         // ===== LANE CHANGE AND OVERTAKING =====
 
@@ -1072,22 +959,36 @@ namespace GrandTheftAccessibility
         // Default runway length for landing destination calculations (used by AircraftLandingMenu)
         public const float DEFAULT_RUNWAY_LENGTH = 800f;         // meters (~2625 feet)
 
+        // The landing line handed to TASK_PLANE_LAND starts BEFORE the threshold,
+        // not on it. Rockstar's own gtest_airplane.sc lands at Sandy Shores with
+        // <<1061.6,3071.7,41.0>> -> <<1703.5,3261.8,40.9>>, a 669m line whose
+        // start sits roughly this far short of the runway proper - giving the
+        // aircraft somewhere to descend onto rather than having to arrive exactly
+        // over the threshold.
+        public const float RUNWAY_LINE_LEAD_IN = 350f;           // meters before the threshold
+
         // ===== AUTOPILOT (AircraftLandingMenu) =====
         // TASK_PLANE_LAND only flies the last part of an approach - it expects the
         // plane to already be near the runway centerline. These drive the extra
         // positioning leg the menu flies first, using TASK_PLANE_MISSION GoTo.
-        public const float APPROACH_FIX_DISTANCE = 2500f;        // meters before the threshold to aim for
-        public const float APPROACH_FIX_ALTITUDE = 200f;         // meters above field elevation at the fix
+        // The landing task wants the aircraft handed over on SHORT final - low,
+        // close and settled. Working mods that drive it successfully hand it the
+        // plane only a few hundred meters out and a few tens of meters up; our
+        // original 2.5km at 200m was far outside anything it copes with. These
+        // now describe a shallow, continuous descent: fix -> centerline -> flare.
+        public const float APPROACH_FIX_DISTANCE = 1800f;        // meters before the threshold to aim for
+        public const float APPROACH_FIX_ALTITUDE = 140f;         // meters above field elevation at the fix
         public const float APPROACH_CRUISE_SPEED = 60f;          // m/s (~117 knots)
         public const float APPROACH_CAPTURE_RADIUS = 400f;       // meters from the fix that counts as reached
         // Handing off to the landing task needs runway-relative geometry, not a
         // straight-line range: an aircraft kilometers PAST the threshold and well
         // off to the side can still be "3 km from the runway" while pointing
         // roughly runway-ward, which is not remotely a final approach.
-        public const float APPROACH_HANDOFF_DISTANCE = 3200f;    // meters before the threshold, outer limit
-        public const float APPROACH_MIN_FINAL_DISTANCE = 400f;   // meters before the threshold, inner limit
-        public const float APPROACH_MAX_CROSSTRACK = 350f;       // meters off the centerline still counted as lined up
-        public const float APPROACH_ALIGN_TOLERANCE = 35f;       // degrees off runway heading still counted as lined up
+        public const float APPROACH_HANDOFF_DISTANCE = 1500f;    // meters before the threshold, outer limit
+        public const float APPROACH_MIN_FINAL_DISTANCE = 300f;   // meters before the threshold, inner limit
+        public const float APPROACH_MAX_CROSSTRACK = 250f;       // meters off the centerline still counted as lined up
+        public const float APPROACH_ALIGN_TOLERANCE = 25f;       // degrees off runway heading still counted as lined up
+        public const float APPROACH_MAX_HANDOFF_HEIGHT = 180f;   // meters above ground - too high and it will not settle
         public const long APPROACH_FINAL_TIMEOUT = 120_000;      // ms on final before giving up and going around
 
         // Which engine task flies the final approach.
@@ -1119,8 +1020,8 @@ namespace GrandTheftAccessibility
         // fix the aircraft flies a second leg along the centerline toward the
         // threshold, which forces it onto the runway heading before the landing
         // task takes over.
-        public const float APPROACH_INTERCEPT_ALTITUDE = 80f;    // meters above field for the intercept target
-        public const int APPROACH_INTERCEPT_CLEARANCE = 30;      // meters above terrain on the intercept leg
+        public const float APPROACH_INTERCEPT_ALTITUDE = 45f;    // meters above field for the intercept target
+        public const int APPROACH_INTERCEPT_CLEARANCE = 20;      // meters above terrain on the intercept leg
         public const float APPROACH_GO_AROUND_OVERSHOOT = 250f;  // meters past the threshold before re-positioning
         public const int APPROACH_MAX_GO_AROUNDS = 2;            // attempts before handing back control
 
@@ -1131,6 +1032,13 @@ namespace GrandTheftAccessibility
         public const float HELI_SLOWDOWN_DISTANCE = 100f;        // meters out to start slowing
         public const float HELI_CRUISE_CLEARANCE = 50f;          // meters above the higher of aircraft/destination
         public const int HELI_MIN_TERRAIN_CLEARANCE = 20;        // meters
+
+        // Turning to the touchdown heading BEFORE descending works far better than
+        // asking one mission to arrive, rotate and land at once. The orient leg is
+        // a goto at near-zero speed, which makes the helicopter pivot in place.
+        public const float HELI_ORIENT_SPEED = 0.5f;             // m/s - effectively a hover while it rotates
+        public const float HELI_ORIENT_TOLERANCE = 15f;          // degrees from the wanted heading that counts as done
+        public const long HELI_ORIENT_TIMEOUT = 20_000;          // ms before giving up on the turn and landing anyway
 
         // VTOL precision approach to a helipad
         public const float VTOL_HOVER_HEIGHT = 3f;               // meters above the pad to hold
@@ -1143,11 +1051,8 @@ namespace GrandTheftAccessibility
         public const float AUTOPILOT_STOPPED_SPEED = 3f;         // m/s at or below counts as stopped
         public const float SHORT_FINAL_HEIGHT = 60f;             // meters above ground for the short final callout
 
-        // Ground taxi
-        public const float TAXI_CRUISE_SPEED = 12f;              // m/s (~23 knots)
-        public const float TAXI_TARGET_REACHED_DIST = 10f;       // meters
-        public const float TAXI_MAX_DISTANCE = 2500f;            // meters - refuse cross-map taxi requests
-        public const float TAXI_ARRIVAL_RADIUS = 20f;            // meters
+        // Ground taxi constants removed with the taxi action - TASK_PLANE_TAXI has
+        // no obstacle avoidance and circles its target forever once it arrives.
 
         // Lining up for departure
         public const float LINEUP_OFFSET = 40f;                  // meters down the runway from the threshold
@@ -1194,62 +1099,6 @@ namespace GrandTheftAccessibility
             "Commercial",    // 20 - Commercial
             "Train",         // 21 - Trains
             "Open Wheel"     // 22 - OpenWheel
-        };
-
-        // Common vehicle colors for quick selection
-        public static readonly string[] VEHICLE_COLOR_NAMES = new string[]
-        {
-            "Metallic Black",
-            "Metallic Graphite Black",
-            "Metallic Black Steel",
-            "Metallic Dark Silver",
-            "Metallic Silver",
-            "Metallic Blue Silver",
-            "Metallic Steel Gray",
-            "Metallic Shadow Silver",
-            "Metallic Stone Silver",
-            "Metallic Midnight Silver",
-            "Metallic Red",
-            "Metallic Torino Red",
-            "Metallic Formula Red",
-            "Metallic Blaze Red",
-            "Metallic Graceful Red",
-            "Metallic Garnet Red",
-            "Metallic Desert Red",
-            "Metallic Cabernet Red",
-            "Metallic Candy Red",
-            "Metallic Sunrise Orange",
-            "Metallic Classic Gold",
-            "Metallic Orange",
-            "Metallic Dark Green",
-            "Metallic Racing Green",
-            "Metallic Sea Green",
-            "Metallic Olive Green",
-            "Metallic Green",
-            "Metallic Gasoline Blue Green",
-            "Metallic Midnight Blue",
-            "Metallic Dark Blue",
-            "Metallic Saxony Blue",
-            "Metallic Blue",
-            "Metallic Mariner Blue",
-            "Metallic Harbor Blue",
-            "Metallic Diamond Blue",
-            "Metallic Surf Blue",
-            "Metallic Nautical Blue",
-            "Metallic Bright Blue",
-            "Metallic Purple Blue",
-            "Metallic Spinnaker Blue",
-            "Metallic Ultra Blue",
-            "Metallic Purple",
-            "Metallic Dark Yellow",
-            "Metallic Race Yellow",
-            "Metallic Bronze",
-            "Metallic Yellow Bird",
-            "Metallic Lime",
-            "Metallic Champagne",
-            "Metallic Cream",
-            "Metallic White",
-            "Chrome"
         };
 
         #endregion
@@ -1445,12 +1294,6 @@ namespace GrandTheftAccessibility
 
         #region Turret Crew System
 
-        // Turret crew announcement modes
-        public const int TURRET_ANNOUNCE_OFF = 0;
-        public const int TURRET_ANNOUNCE_FIRING_ONLY = 1;
-        public const int TURRET_ANNOUNCE_APPROACHING_ONLY = 2;
-        public const int TURRET_ANNOUNCE_BOTH = 3;
-
         // Turret announcement mode display names
         public static readonly string[] TURRET_ANNOUNCE_MODE_NAMES = new string[]
         {
@@ -1503,7 +1346,6 @@ namespace GrandTheftAccessibility
 
         // Turret engagement range squared (avoid sqrt in distance comparisons)
         public const float TURRET_MIN_ENGAGEMENT_RANGE_SQ = TURRET_MIN_ENGAGEMENT_RANGE * TURRET_MIN_ENGAGEMENT_RANGE;
-        public const float TURRET_FULL_AUTO_RANGE_SQ = TURRET_FULL_AUTO_RANGE * TURRET_FULL_AUTO_RANGE;
         public const float TURRET_AIM_RANGE_SQ = TURRET_AIM_RANGE * TURRET_AIM_RANGE;
 
         // Turret target priority scores (higher = more threatening)
@@ -1519,18 +1361,11 @@ namespace GrandTheftAccessibility
 
         // Turret tick intervals
         public const long TICK_INTERVAL_TURRET_UPDATE = 50;          // 0.05s - turret AI update
-        public const long TICK_INTERVAL_TURRET_ANNOUNCE = 5_000;     // 5s - announcement cooldown
-
-        // Turret crew states
-        public const int TURRET_STATE_IDLE = 0;
-        public const int TURRET_STATE_AIMING = 1;
-        public const int TURRET_STATE_FIGHTING = 2;
 
         // Natives for turret crew behavior
         public const ulong NATIVE_SET_PED_FIRING_PATTERN = 0x9AC577F5A12AD8A9;
         public const ulong NATIVE_TASK_VEHICLE_SHOOT_AT_COORD = 0x5190796ED39C9B6D;
         public const ulong NATIVE_IS_TURRET_SEAT = 0xE33FFA906CE74880;
-        public const ulong NATIVE_TASK_COMBAT_HATED_TARGETS = 0x2BBA30B854534A0C;
         public const ulong NATIVE_HAS_ENTITY_BEEN_DAMAGED_BY = 0xC86D67D52A707CF8;
         public const ulong NATIVE_IS_PED_IN_COMBAT = 0x4859F1FC66A6278E;
         public const ulong NATIVE_SET_PED_COMBAT_ABILITY = 0xC7622C0D36B2FDA8;
@@ -1555,40 +1390,16 @@ namespace GrandTheftAccessibility
 
         // DLC check native - used to verify if specific DLC content is available
         // IS_DLC_PRESENT(dlcHash) - returns true if the specified DLC is present
-        public const ulong NATIVE_IS_DLC_PRESENT = 0x812595A0644CE1DE;
 
         // Set this player as MP player for certain game systems
         // _SET_PLAYER_MODEL_IS_MP_PLAYER(bool toggle)
-        public const ulong NATIVE_SET_PLAYER_MODEL_IS_MP_PLAYER = 0xFFFA0DE1DFEB4E72;
 
         // Enable/disable freemode property manager (for MP properties)
         // _ENABLE_FREEMODE_PROPERTY_MANAGER(bool toggle)
-        public const ulong NATIVE_ENABLE_FREEMODE_PROPERTY_MANAGER = 0xC505036A35AFD01B;
 
         // Set instance priority mode (affects MP content loading)
         // SET_INSTANCE_PRIORITY_MODE(int mode) - 0=normal, 1=priority
         public const ulong NATIVE_SET_INSTANCE_PRIORITY_MODE = 0x35A3CD97B2C0A6D2;
-
-        // Request IPL (Interior Proxy List) - loads specific interiors/exteriors
-        public const ulong NATIVE_REQUEST_IPL = 0x41B4893843BBDB74;
-
-        // Remove IPL - unloads specific interiors/exteriors
-        public const ulong NATIVE_REMOVE_IPL = 0xEE6C5AD3ECE0A82D;
-
-        // Check if IPL is active
-        public const ulong NATIVE_IS_IPL_ACTIVE = 0x88A741E44A2B3495;
-
-        // Get interior at coordinates
-        public const ulong NATIVE_GET_INTERIOR_AT_COORDS = 0xB0F7F8663821D9C3;
-
-        // Enable interior prop set
-        public const ulong NATIVE_ENABLE_INTERIOR_PROP = 0x55E86AF2712B36A1;
-
-        // Disable interior prop set
-        public const ulong NATIVE_DISABLE_INTERIOR_PROP = 0x420BD37289EEE162;
-
-        // Refresh interior (after changing props)
-        public const ulong NATIVE_REFRESH_INTERIOR = 0x41F37C3F5D25F3AA;
 
         // ===== END GTA ONLINE FEATURES =====
 

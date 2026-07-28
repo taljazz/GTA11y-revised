@@ -180,8 +180,8 @@ namespace GrandTheftAccessibility
         Intercept = 6,     // Tracking down the centerline from the fix, getting aligned
         Final = 2,         // Engine landing task is flying the approach
         Hovering = 3,      // VTOL holding over a helipad for the pilot to ease down
-        Rollout = 4,       // On the ground after touchdown, braking to a stop
-        Taxiing = 5        // Taxiing along the ground to the destination
+        Orienting = 7,     // Helicopter turning onto the touchdown heading before descending
+        Rollout = 4        // On the ground after touchdown, braking to a stop
     }
 
     #endregion
