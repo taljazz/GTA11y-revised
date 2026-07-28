@@ -310,6 +310,12 @@ namespace GrandTheftAccessibility.Menus
         // ground", per the native docs). Rockstar never calls it and no shipped
         // mod does either - every search hit is a binding table or native DB.
         // Lining up places the aircraft instead, which cannot hit anything.
+        // The eight compass points as GTA headings. GTA runs counterclockwise
+        // (0 = north, 90 = WEST, 180 = south, 270 = east), so these are not the
+        // values a standard compass rose would give. Order is the spoken one:
+        // north, north-east, east, south-east, south, south-west, west, north-west.
+        private static readonly float[] CompassHeadings = { 0f, 315f, 270f, 225f, 180f, 135f, 90f, 45f };
+
         private const int ACTION_TOGGLE_BEACON = 0;
         private const int ACTION_AUTO_LAND = 1;
         private const int ACTION_LINE_UP = 2;
@@ -337,11 +343,9 @@ namespace GrandTheftAccessibility.Menus
                 {
                     LandingDestination d = _destinations[SelectedIndex];
                     if (!d.IsHelipad)
-                        return $"Touchdown heading: {(int)d.RunwayHeading} degrees, fixed by the runway";
-                    float saved = _headings.GetHeading(d.Name);
-                    return saved >= 0f
-                        ? $"Touchdown heading: {(int)saved} degrees. Select to set it from your current heading"
-                        : "Touchdown heading: not set. Select to set it from your current heading";
+                        return $"Touchdown heading: {SpatialCalculator.GetDirectionFromHeading(d.RunwayHeading)}, fixed by the runway";
+
+                    return $"Touchdown heading: {DescribeTouchdownHeading(d)}. Select to change";
                 }
                 case ACTION_CANCEL_ALL:
                     return "Cancel navigation and autopilot";
@@ -364,7 +368,7 @@ namespace GrandTheftAccessibility.Menus
                     LineUpForTakeoff(SelectedIndex);
                     break;
                 case ACTION_SET_HEADING:
-                    SetTouchdownHeading(SelectedIndex);
+                    CycleTouchdownHeading(SelectedIndex);
                     break;
                 case ACTION_CANCEL_ALL:
                     CancelAllGuidance();
@@ -891,42 +895,103 @@ namespace GrandTheftAccessibility.Menus
         }
 
         /// <summary>
-        /// Record which way the aircraft is currently pointing as the touchdown
-        /// heading for this pad. A rooftop pad has no orientation the mod can
-        /// work out for itself - where the door and the aerials are is something
-        /// only the pilot sitting on it knows - so it is captured, not guessed.
+        /// Step the pad's touchdown heading round the compass.
+        ///
+        /// This is chosen from the menu by name rather than by physically aiming
+        /// the aircraft, because aiming assumes you can see what you are aiming
+        /// at. Picking "north-east" from a spoken list needs no sight at all, and
+        /// a heading you chose is one you can predict when you step out - which
+        /// is the part that actually matters on a rooftop.
+        /// Cycles: not set, the eight compass points, then whichever way the
+        /// aircraft happens to be pointing now, for a pilot who has already
+        /// lined up by beacon and just wants to keep it.
         /// </summary>
-        private void SetTouchdownHeading(int index)
+        private void CycleTouchdownHeading(int index)
         {
             LandingDestination dest = _destinations[index];
 
             if (!dest.IsHelipad)
             {
-                Speak($"{dest.Name} is a runway. Its landing heading is fixed at {(int)dest.RunwayHeading} degrees.");
-                return;
-            }
-
-            Ped player = Game.Player?.Character;
-            Vehicle aircraft = player?.CurrentVehicle;
-            if (player == null || !player.Exists() || aircraft == null || !aircraft.Exists())
-            {
-                Speak("Get into an aircraft and point it the way you want to land, then set the heading.");
+                Speak($"{dest.Name} is a runway. Its landing heading is fixed at " +
+                      $"{SpatialCalculator.GetDirectionFromHeading(dest.RunwayHeading)}, " +
+                      $"{(int)dest.RunwayHeading} degrees.");
                 return;
             }
 
             try
             {
-                float heading = aircraft.Heading;
-                _headings.SetHeading(dest.Name, heading);
-                Speak($"Touchdown heading for {dest.Name} set to {(int)heading} degrees. " +
-                      "The autopilot will turn onto it before landing there.");
-                Logger.Info($"AP|PAD-HEADING|dest={dest.Name}|heading={heading:F0}");
+                int next = NextHeadingStep(_headings.GetHeading(dest.Name));
+
+                // Past the last compass point: take the aircraft's own heading
+                if (next == CompassHeadings.Length)
+                {
+                    Vehicle aircraft = Game.Player?.Character?.CurrentVehicle;
+                    if (aircraft == null || !aircraft.Exists())
+                    {
+                        // Nothing to copy from, so wrap round to unset instead
+                        _headings.ClearHeading(dest.Name);
+                        Speak($"Touchdown heading for {dest.Name}: not set.");
+                        return;
+                    }
+
+                    float current = aircraft.Heading;
+                    _headings.SetHeading(dest.Name, current);
+                    Speak($"Touchdown heading for {dest.Name}: your current heading, " +
+                          $"{SpatialCalculator.GetDirectionFromHeading(current)}.");
+                    Logger.Info($"AP|PAD-HEADING|dest={dest.Name}|heading={current:F0}|source=current");
+                    return;
+                }
+
+                // Wrapped past the end: clear it
+                if (next < 0)
+                {
+                    _headings.ClearHeading(dest.Name);
+                    Speak($"Touchdown heading for {dest.Name}: not set. It will land whichever way it arrives.");
+                    Logger.Info($"AP|PAD-HEADING|dest={dest.Name}|cleared");
+                    return;
+                }
+
+                float chosen = CompassHeadings[next];
+                _headings.SetHeading(dest.Name, chosen);
+                Speak($"Touchdown heading for {dest.Name}: facing " +
+                      $"{SpatialCalculator.GetDirectionFromHeading(chosen)}.");
+                Logger.Info($"AP|PAD-HEADING|dest={dest.Name}|heading={chosen:F0}|source=compass");
             }
             catch (Exception ex)
             {
-                Logger.Exception(ex, "AircraftLandingMenu.SetTouchdownHeading");
-                Speak("Failed to save the touchdown heading.");
+                Logger.Exception(ex, "AircraftLandingMenu.CycleTouchdownHeading");
+                Speak("Failed to change the touchdown heading.");
             }
+        }
+
+        /// <summary>
+        /// Where the next press lands in the cycle. Returns an index into
+        /// CompassHeadings, CompassHeadings.Length for "use current heading",
+        /// or -1 for "clear it".
+        /// </summary>
+        private static int NextHeadingStep(float stored)
+        {
+            if (stored < 0f)
+                return 0;   // unset -> first compass point
+
+            for (int i = 0; i < CompassHeadings.Length; i++)
+            {
+                if (Math.Abs(CompassHeadings[i] - stored) < 0.5f)
+                    return i == CompassHeadings.Length - 1 ? CompassHeadings.Length : i + 1;
+            }
+
+            // A captured heading matches no compass point - next press clears it
+            return -1;
+        }
+
+        /// <summary>Spoken description of a pad's current touchdown setting.</summary>
+        private string DescribeTouchdownHeading(LandingDestination dest)
+        {
+            float stored = _headings.GetHeading(dest.Name);
+            if (stored < 0f)
+                return "not set";
+
+            return SpatialCalculator.GetDirectionFromHeading(stored);
         }
 
         /// <summary>
