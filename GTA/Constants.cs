@@ -1402,6 +1402,11 @@ namespace GrandTheftAccessibility
         // so the read-back that reports the real result waits this long.
         public const long INTERIOR_VERIFY_DELAY = 1500;          // ms before checking IS_IPL_ACTIVE
 
+        // Holding the game clock to the system clock. The rate change does most
+        // of the work; this catches the drift that pauses and loading introduce.
+        public const long CLOCK_RESYNC_INTERVAL = 30_000;        // ms between drift checks
+        public const int CLOCK_DRIFT_TOLERANCE = 60;             // seconds of drift worth correcting
+
         // The MP map natives are called through SHVDN's Hash enum in GTA11Y.cs,
         // not from literals here. Hand-transcribed hashes are what broke this:
         // the constant named SET_INSTANCE_PRIORITY_MODE actually held

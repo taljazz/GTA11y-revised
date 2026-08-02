@@ -23,6 +23,7 @@ namespace GrandTheftAccessibility.Menus
         private readonly PedestrianNavigationManager _pedNav;
         private readonly PlayerModelManager _playerModel;
         private readonly InteriorManager _interiors;
+        private readonly TimeMenu _timeMenu;
         private int _currentMenuIndex;
 
         #endregion
@@ -53,6 +54,9 @@ namespace GrandTheftAccessibility.Menus
 
             // Create PedestrianNavigationManager for on-foot waypoint guidance
             _pedNav = new PedestrianNavigationManager(audio, settings);
+
+            // Create TimeMenu (kept as a field so its clock sync can be ticked)
+            _timeMenu = new TimeMenu(audio);
 
             // Create WeaponSelectMenu (kept as a field so the main script can
             // suppress its duplicate weapon-change announcement)
@@ -91,7 +95,7 @@ namespace GrandTheftAccessibility.Menus
                 new FunctionsMenu(settings, _turretCrewManager, _playerModel, audio),
                 new OnlineInteriorsMenu(_interiors, audio),
                 new WeatherMenu(audio),
-                new TimeMenu(audio),
+                _timeMenu,
                 new VehicleGuideMenu(audio),
                 new SettingsMenu(settings, audio),
                 new HelpMenu(hotkeys, audio)
@@ -328,6 +332,15 @@ namespace GrandTheftAccessibility.Menus
         public void UpdateInteriors(long currentTick)
         {
             _interiors.Update(currentTick);
+        }
+
+        /// <summary>
+        /// Keep the game clock on the system clock when that is switched on.
+        /// Called every tick; it only acts when synced and only when drifted.
+        /// </summary>
+        public void UpdateClockSync(long currentTick)
+        {
+            _timeMenu.Update(currentTick);
         }
 
         /// <summary>

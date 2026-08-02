@@ -568,6 +568,9 @@ namespace GrandTheftAccessibility
             // Reports the verified result of an online interior load/unload
             _menu.UpdateInteriors(currentTick);
 
+            // Holds the game clock to the system clock when that is switched on
+            _menu.UpdateClockSync(currentTick);
+
             // Pedestrian navigation (when on foot and active)
             if (_menu.IsPedestrianNavigationActive && currentVehicle == null)
             {
