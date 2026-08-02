@@ -81,7 +81,138 @@ namespace GrandTheftAccessibility
             // Boats
             { "dinghy", "A small inflatable boat with an outboard motor. Light, quick, and easy to beach." },
             { "marquis", "A large sailing yacht with a mast. Slow under power and mostly a novelty." },
-            { "submersible", "A tiny two-person submarine. Very slow, but it can reach the sea floor safely." }
+            { "submersible", "A tiny two-person submarine. Very slow, but it can reach the sea floor safely." },
+
+            // ===== WEAPONIZED: ARMED AIRCRAFT =====
+            { "buzzard", "The armed Buzzard: a small attack helicopter with nose miniguns and rockets fired by the pilot. Fast, nimble, and the usual choice for armed air support." },
+            { "savage", "A heavy gunship helicopter with a stubby armoured body, nose cannon and rockets. Slower and tougher than the Buzzard." },
+            { "hunter", "A large two-seat attack helicopter. The pilot has rockets; a passenger in the front seat operates a separate cannon. Heavily armoured and slow to turn." },
+            { "akula", "A stealth attack helicopter with folding rotors and retractable gear. Carries missiles and turrets, and can reduce its radar signature." },
+            { "annihilator", "A blacked-out police attack helicopter with four miniguns. Available in story mode without any online content." },
+            { "annihilator2", "The stealth Annihilator: the same airframe, quieter and darker." },
+            { "valkyrie", "A boxy transport helicopter with a nose gun and two side-mounted guns for passengers. Needs a crew to use fully." },
+            { "seasparrow", "A tiny two-seat amphibious helicopter with miniguns. Lands on water, and small enough for awkward spaces." },
+            { "hydra", "A vertical-takeoff military jet. It can hover like a helicopter or fly like a fighter, and switching between the two is the hard part. Missiles and a cannon." },
+            { "raiju", "A very fast vertical-takeoff jet fighter with folding wings. The quickest aircraft in the game and correspondingly unforgiving." },
+            { "pyro", "A compact jet fighter. Fast and agile, with cannon and missiles." },
+            { "molotok", "A swept-wing jet fighter of 1950s design. Quick and manoeuvrable, easier to fly than the modern jets." },
+            { "strikeforce", "A twin-engine ground-attack jet with a heavy cannon and bombs. Slower than a fighter and built for hitting things on the ground." },
+            { "b11", "A twin-engine ground-attack jet with a heavy cannon and bombs. Slower than a fighter and built for hitting things on the ground." },
+            { "nokota", "A propeller fighter of Second World War design, with machine guns. Slow by jet standards but very agile." },
+            { "mogul", "A twin-propeller Second World War bomber with crewed gun turrets and a bomb bay. Large, slow and steady." },
+            { "bombushka", "An enormous four-propeller bomber with multiple gun turrets and a bomb bay. Extremely slow, extremely durable, and needs a crew to defend itself." },
+            { "volatol", "A very large stealth bomber. Slow and high-flying, with a bomb bay." },
+            { "alkonost", "A large stealth bomber built for carrying rather than fighting. Slow, high-flying, and fitted with countermeasures rather than guns." },
+            { "rogue", "A propeller-driven attack aircraft with machine guns, a cannon and bombs. Slow, tough, and steady enough to aim from." },
+            { "starling", "A propeller fighter with a boost and machine guns. Small, quick and twitchy." },
+            { "seabreeze", "An armed light seaplane. Lands on water, carries machine guns, and is slow and forgiving." },
+            { "tula", "An amphibious vertical-takeoff bomber. It can hover, land on water, and carries bombs and guns. Bulky and slow to respond." },
+            { "avenger", "A huge vertical-takeoff transport aircraft with a rear ramp and gun turrets. It doubles as a mobile base and is very slow to manoeuvre." },
+            { "conada", "A small light helicopter. Quick and easy to fly." },
+
+            // ===== WEAPONIZED: TANKS AND ARMOUR =====
+            { "rhino", "The classic tank: tracked, very heavily armoured, with a rotating turret and main gun. Extremely slow, and almost nothing can hurt it." },
+            { "khanjali", "A modern tank with a rotating turret. Faster and lower than the Rhino, with optional secondary weapons." },
+            { "apc", "An amphibious armoured personnel carrier with a roof turret. It floats, shrugs off small arms, and is slow on land." },
+            { "halftrack", "A Second World War half-track: wheels at the front, tracks at the back, with mounted machine guns. Slow and very stable." },
+            { "chernobog", "A large military truck carrying a bank of surface-to-air missiles. It must stop and deploy before firing." },
+            { "barrage", "An open-framed military buggy with mounted guns operated from the passenger seats. Light, fast, and completely unprotected." },
+            { "insurgent", "A large armoured off-road truck. Resistant to gunfire and explosions, seats several, and is heavy and slow to stop." },
+            { "insurgent2", "The Insurgent Pick-Up: the armoured truck with an open rear bed and a mounted turret for a passenger." },
+            { "technical", "A civilian pickup with a heavy machine gun bolted to the bed, fired by a passenger. Fast and completely unarmoured." },
+            { "menacer", "A large armoured 4x4 with a boxy body. Tough, heavy, and built to ram." },
+            { "nightshark", "An armoured off-road SUV with heavy bodywork and optional side-mounted miniguns. Bulletproof windows make it a common getaway choice." },
+            { "rcv", "A riot control vehicle with a water cannon on the roof. Very heavy, very slow." },
+            { "minitank", "A tiny remote-control-styled tank you sit inside. Small, low, surprisingly tough, and armed with a cannon." },
+            { "thruster", "A jetpack. You fly it standing up, it carries missiles and guns, and it is slow but can go and land almost anywhere." },
+
+            // ===== WEAPONIZED: ARMED CARS =====
+            { "vigilante", "A low, jet-black superhero car with an exposed rear engine and an afterburner boost. Rockets, machine guns, and enormous straight-line speed." },
+            { "scramjet", "A wedge-shaped weaponized car that can hop over obstacles and boost. Missiles and machine guns." },
+            { "deluxo", "A wedge-shaped 1980s sports car with gullwing doors that converts into a hovering, flying car. Missiles and machine guns. Slow on the road, awkward in the air, and hugely capable once mastered." },
+            { "stromberg", "A wedge-shaped sports car that submerges and drives underwater. Missiles and machine guns." },
+            { "toreador", "A 1970s-styled coupe that submerges and drives underwater, with missiles and a boost. Faster and easier to handle than the Stromberg." },
+            { "ruiner2", "A heavily modified muscle car with rockets, a boost, a jump and a parachute. Chaotic and fast." },
+            { "tampa3", "A muscle car converted into a weapons platform, with a missile launcher, mortar and mounted guns operated by passengers." },
+            { "ardent", "A rounded 1960s sports car with a rear gunner's seat. Needs a passenger to be armed." },
+            { "viseris", "A retro wedge-shaped grand tourer with concealed machine guns. Fast and stylish." },
+            { "jb7002", "A 1960s spy car with pop-out machine guns. Slow by modern standards and mostly a period piece." },
+            { "rcbandito", "A genuine remote-control car, driven from outside it. Tiny, very quick, and can carry explosives." },
+            { "turretlimo", "A stretched limousine with a roof turret for a passenger. Long, heavy, and awkward to place." },
+            { "dune3", "The Ramp Buggy: an off-road buggy with an enormous wedge-shaped ramp on the nose for launching other cars into the air." },
+            { "dune4", "A heavily armed off-road assault buggy with mounted guns and missiles. Open-topped and fast over rough ground." },
+            { "dune5", "A heavily armed off-road assault buggy with mounted guns and missiles. Open-topped and fast over rough ground." },
+
+            // ===== WEAPONIZED: MOTORCYCLES =====
+            { "oppressor", "A sports motorcycle with deployable wings and a rocket boost, plus missiles. It glides rather than flies, and needs ramps or speed to get airborne." },
+            { "oppressor2", "A hovering motorcycle that flies freely in any direction, with missiles and countermeasures. The most mobile vehicle in the game and the hardest to escape." },
+
+            // ===== WEAPONIZED: BOATS =====
+            { "patrolboat", "A military patrol boat with a crewed gun turret and a cabin you can walk around inside. Large and slow to turn." },
+            { "dinghy5", "An armed inflatable boat with a mounted gun. Small, fast, and easy to beach." },
+
+            // ===== WEAPONIZED: SUPPORT AND UTILITY =====
+            { "terrorbyte", "A large windowless command truck. It carries no weapons of its own; it exists to work from, and to launch a drone from inside." },
+            { "pounder2", "A large armoured flatbed lorry with mounted weapons operated from the rear. Very heavy and very slow." },
+            { "mule4", "A weaponized box lorry with a firing position in the back. Slow, tall, and easy to tip." },
+            { "boxville5", "An armoured delivery van with mounted guns. Slow and boxy, and unremarkable to look at, which is the point." },
+            { "speedo4", "A weaponized panel van with a firing position in the back. Ordinary-looking and slow." },
+            { "trailersmall2", "An anti-aircraft trailer, towed behind a lorry and fired from a seat on top. It cannot move on its own." },
+
+            // ===== ARENA WAR SERIES =====
+            // Each of these comes in three themed variants - Apocalypse, Future
+            // Shock and Nightmare - which differ in appearance, not in what they do.
+            { "bruiser", "An Arena War muscle car: heavily armoured, spiked, and built to ram. Three cosmetic themes exist; they drive the same." },
+            { "brutus", "An Arena War monster truck: enormous wheels, armour plating, and built to drive over other cars." },
+            { "cerberus", "An Arena War armoured lorry with a spiked ram and a flamethrower. Very heavy, hard to stop, devastating in a collision." },
+            { "imperator", "An Arena War armoured saloon, spiked and plated, built for ramming." },
+            { "dominator4", "An Arena War muscle car, armoured and spiked. Fast in a straight line and built to ram." },
+            { "issi4", "An Arena War version of a tiny city car: armoured, spiked, and comically small next to the rest of the field." },
+            { "monster3", "An Arena War monster truck on huge wheels, armoured and built to crush." },
+            { "sasquatch", "An Arena War monster truck on huge wheels, armoured and built to crush." },
+            { "scarab", "An Arena War armoured half-track: tracked, enormously heavy, and nearly unstoppable in a straight line." },
+            { "slamvan4", "An Arena War pickup, armoured and spiked, built for ramming." },
+            { "zr380", "An Arena War sports car: armoured and spiked, but lighter and faster than the trucks." },
+            { "revolter", "An Arena War sports saloon, armoured and quick." },
+            { "deathbike", "An Arena War motorcycle, armoured and armed. Fast and fragile compared to the cars around it." },
+            { "impaler2", "An Arena War muscle car, armoured and spiked, built for ramming." },
+
+            // The Arena War themed variants. Apocalypse, Future Shock and
+            // Nightmare differ only in how they look, so they share a note - the
+            // theme is the one thing a blind player gains nothing from.
+            { "bruiser2", "An Arena War muscle car: heavily armoured, spiked, and built to ram. A cosmetic variant of the Bruiser." },
+            { "bruiser3", "An Arena War muscle car: heavily armoured, spiked, and built to ram. A cosmetic variant of the Bruiser." },
+            { "brutus2", "An Arena War monster truck: enormous wheels, armour plating, built to drive over other cars. A cosmetic variant of the Brutus." },
+            { "brutus3", "An Arena War monster truck: enormous wheels, armour plating, built to drive over other cars. A cosmetic variant of the Brutus." },
+            { "cerberus2", "An Arena War armoured lorry with a spiked ram and a flamethrower. A cosmetic variant of the Cerberus." },
+            { "cerberus3", "An Arena War armoured lorry with a spiked ram and a flamethrower. A cosmetic variant of the Cerberus." },
+            { "imperator2", "An Arena War armoured saloon, spiked and built for ramming. A cosmetic variant of the Imperator." },
+            { "imperator3", "An Arena War armoured saloon, spiked and built for ramming. A cosmetic variant of the Imperator." },
+            { "dominator5", "An Arena War muscle car, armoured and spiked. A cosmetic variant of the arena Dominator." },
+            { "dominator6", "An Arena War muscle car, armoured and spiked. A cosmetic variant of the arena Dominator." },
+            { "issi5", "An Arena War version of a tiny city car: armoured and spiked. A cosmetic variant of the arena Issi." },
+            { "issi6", "An Arena War version of a tiny city car: armoured and spiked. A cosmetic variant of the arena Issi." },
+            { "monster4", "An Arena War monster truck on huge wheels, armoured and built to crush. A cosmetic variant." },
+            { "monster5", "An Arena War monster truck on huge wheels, armoured and built to crush. A cosmetic variant." },
+            { "sasquatch2", "An Arena War monster truck on huge wheels, armoured and built to crush. A cosmetic variant." },
+            { "scarab2", "An Arena War armoured half-track: tracked, enormously heavy, nearly unstoppable. A cosmetic variant of the Scarab." },
+            { "scarab3", "An Arena War armoured half-track: tracked, enormously heavy, nearly unstoppable. A cosmetic variant of the Scarab." },
+            { "slamvan5", "An Arena War pickup, armoured and spiked, built for ramming. A cosmetic variant." },
+            { "slamvan6", "An Arena War pickup, armoured and spiked, built for ramming. A cosmetic variant." },
+            { "zr3802", "An Arena War sports car: armoured and spiked, lighter and faster than the trucks. A cosmetic variant." },
+            { "zr3803", "An Arena War sports car: armoured and spiked, lighter and faster than the trucks. A cosmetic variant." },
+            { "deathbike2", "An Arena War motorcycle, armoured and armed. A cosmetic variant of the Deathbike." },
+            { "deathbike3", "An Arena War motorcycle, armoured and armed. A cosmetic variant of the Deathbike." },
+            { "ruiner3", "An Arena War version of the Ruiner: armoured and spiked, built for ramming." },
+
+            // Variants that genuinely differ from their base vehicle
+            { "technical2", "The Technical Aqua: the gun-armed pickup made amphibious. It floats and drives on water, at the cost of being slower on land." },
+            { "technical3", "The Technical Custom: the gun-armed pickup with a reinforced open bed and a mounted weapon for a passenger." },
+            { "insurgent3", "The Insurgent Pick-Up Custom: an armoured off-road truck with an open bed and a mounted turret, upgradeable in a workshop." },
+            { "valkyrie2", "A boxy transport helicopter with a nose gun and two side guns for passengers. A variant of the Valkyrie." },
+            { "seasparrow2", "A tiny two-seat amphibious helicopter with miniguns. A variant of the Sea Sparrow." },
+            { "seasparrow3", "A tiny two-seat amphibious helicopter with miniguns. A variant of the Sea Sparrow." },
+            { "avenger2", "A huge vertical-takeoff transport aircraft with a rear ramp. A variant of the Avenger without the interior workshop." }
         };
 
         #endregion
