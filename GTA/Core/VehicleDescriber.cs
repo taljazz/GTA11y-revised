@@ -160,50 +160,67 @@ namespace GrandTheftAccessibility
             { "trailersmall2", "An anti-aircraft trailer, towed behind a lorry and fired from a seat on top. It cannot move on its own." },
 
             // ===== ARENA WAR SERIES =====
-            // Each of these comes in three themed variants - Apocalypse, Future
-            // Shock and Nightmare - which differ in appearance, not in what they do.
-            { "bruiser", "An Arena War muscle car: heavily armoured, spiked, and built to ram. Three cosmetic themes exist; they drive the same." },
-            { "brutus", "An Arena War monster truck: enormous wheels, armour plating, and built to drive over other cars." },
-            { "cerberus", "An Arena War armoured lorry with a spiked ram and a flamethrower. Very heavy, hard to stop, devastating in a collision." },
-            { "imperator", "An Arena War armoured saloon, spiked and plated, built for ramming." },
-            { "dominator4", "An Arena War muscle car, armoured and spiked. Fast in a straight line and built to ram." },
-            { "issi4", "An Arena War version of a tiny city car: armoured, spiked, and comically small next to the rest of the field." },
-            { "monster3", "An Arena War monster truck on huge wheels, armoured and built to crush." },
-            { "sasquatch", "An Arena War monster truck on huge wheels, armoured and built to crush." },
-            { "scarab", "An Arena War armoured half-track: tracked, enormously heavy, and nearly unstoppable in a straight line." },
-            { "slamvan4", "An Arena War pickup, armoured and spiked, built for ramming." },
-            { "zr380", "An Arena War sports car: armoured and spiked, but lighter and faster than the trucks." },
-            { "revolter", "An Arena War sports saloon, armoured and quick." },
-            { "deathbike", "An Arena War motorcycle, armoured and armed. Fast and fragile compared to the cars around it." },
-            { "impaler2", "An Arena War muscle car, armoured and spiked, built for ramming." },
+            //
+            // Every Arena War vehicle comes in three themes. Verified against the
+            // GTA wiki rather than assumed - the obvious guess is wrong. They are
+            // the same bodyshell in three finishes:
+            //
+            //   Apocalypse   - rusted, scrapyard-built: bare welded plate, exposed
+            //                  hardware, the wasteland look.
+            //   Future Shock - the same shape cleaned up: smooth painted panels,
+            //                  carbon fibre trim, hexagonal-patterned metal.
+            //   Nightmare    - the Apocalypse body in bright colours, panels
+            //                  alternating blue, green, pink, yellow and purple.
+            //                  Despite the name it is the loudest and most
+            //                  carnival-looking of the three, NOT a gothic one.
+            //
+            // None of the three changes how the vehicle drives, and all three take
+            // the same spikes and saw blades - spikes kill on contact, saw blades
+            // burst tyres. So the theme is worth one clause, not a paragraph.
+            { "bruiser", "The Apocalypse Bruiser: a heavily armoured spiked muscle car built to ram, in rusted scrapyard finish." },
+            { "brutus", "The Apocalypse Brutus: an armoured monster truck on enormous wheels, built to drive over other cars. Rusted scrapyard finish." },
+            { "cerberus", "The Apocalypse Cerberus: an armoured lorry with a spiked ram and a flamethrower. Very heavy and devastating in a collision. Rusted scrapyard finish." },
+            { "imperator", "The Apocalypse Imperator: an armoured spiked saloon built for ramming, in rusted scrapyard finish." },
+            { "dominator4", "The Apocalypse Dominator: an armoured spiked muscle car, fast in a straight line and built to ram. Rusted scrapyard finish." },
+            { "issi4", "The Apocalypse Issi: a tiny city car turned arena weapon - armoured and spiked, and comically small next to the trucks. Rusted scrapyard finish." },
+            { "monster3", "The Apocalypse Monster: an armoured monster truck on huge wheels, built to crush. Rusted scrapyard finish." },
+            { "sasquatch", "The Apocalypse Sasquatch: an armoured monster truck on huge wheels, built to crush. Rusted scrapyard finish." },
+            { "scarab", "The Apocalypse Scarab: a tracked armoured half-track, enormously heavy and nearly unstoppable in a straight line. Rusted scrapyard finish - bare welded plate, exposed hardware, towing hooks and a winch. Takes spikes and saw blades." },
+            { "slamvan4", "The Apocalypse Slamvan: an armoured spiked pickup built for ramming, in rusted scrapyard finish." },
+            { "zr380", "The Apocalypse ZR380: an armoured spiked sports car - lighter and faster than the arena trucks. Rusted scrapyard finish." },
+            { "revolter", "An Arena War sports saloon, armoured and quick. Sold in one finish rather than the three arena themes." },
+            { "deathbike", "The Apocalypse Deathbike: an armoured armed motorcycle, fast and fragile next to the cars. Rusted scrapyard finish." },
+            { "impaler2", "The Apocalypse Impaler: an armoured spiked muscle car built for ramming, in rusted scrapyard finish." },
+            { "impaler3", "The Future Shock Impaler: the same armoured muscle car with clean painted bodywork and carbon trim." },
+            { "impaler4", "The Nightmare Impaler: the Apocalypse muscle car in bright alternating colours." },
 
             // The Arena War themed variants. Apocalypse, Future Shock and
             // Nightmare differ only in how they look, so they share a note - the
             // theme is the one thing a blind player gains nothing from.
-            { "bruiser2", "An Arena War muscle car: heavily armoured, spiked, and built to ram. A cosmetic variant of the Bruiser." },
-            { "bruiser3", "An Arena War muscle car: heavily armoured, spiked, and built to ram. A cosmetic variant of the Bruiser." },
-            { "brutus2", "An Arena War monster truck: enormous wheels, armour plating, built to drive over other cars. A cosmetic variant of the Brutus." },
-            { "brutus3", "An Arena War monster truck: enormous wheels, armour plating, built to drive over other cars. A cosmetic variant of the Brutus." },
-            { "cerberus2", "An Arena War armoured lorry with a spiked ram and a flamethrower. A cosmetic variant of the Cerberus." },
-            { "cerberus3", "An Arena War armoured lorry with a spiked ram and a flamethrower. A cosmetic variant of the Cerberus." },
-            { "imperator2", "An Arena War armoured saloon, spiked and built for ramming. A cosmetic variant of the Imperator." },
-            { "imperator3", "An Arena War armoured saloon, spiked and built for ramming. A cosmetic variant of the Imperator." },
-            { "dominator5", "An Arena War muscle car, armoured and spiked. A cosmetic variant of the arena Dominator." },
-            { "dominator6", "An Arena War muscle car, armoured and spiked. A cosmetic variant of the arena Dominator." },
-            { "issi5", "An Arena War version of a tiny city car: armoured and spiked. A cosmetic variant of the arena Issi." },
-            { "issi6", "An Arena War version of a tiny city car: armoured and spiked. A cosmetic variant of the arena Issi." },
-            { "monster4", "An Arena War monster truck on huge wheels, armoured and built to crush. A cosmetic variant." },
-            { "monster5", "An Arena War monster truck on huge wheels, armoured and built to crush. A cosmetic variant." },
-            { "sasquatch2", "An Arena War monster truck on huge wheels, armoured and built to crush. A cosmetic variant." },
-            { "scarab2", "An Arena War armoured half-track: tracked, enormously heavy, nearly unstoppable. A cosmetic variant of the Scarab." },
-            { "scarab3", "An Arena War armoured half-track: tracked, enormously heavy, nearly unstoppable. A cosmetic variant of the Scarab." },
-            { "slamvan5", "An Arena War pickup, armoured and spiked, built for ramming. A cosmetic variant." },
-            { "slamvan6", "An Arena War pickup, armoured and spiked, built for ramming. A cosmetic variant." },
-            { "zr3802", "An Arena War sports car: armoured and spiked, lighter and faster than the trucks. A cosmetic variant." },
-            { "zr3803", "An Arena War sports car: armoured and spiked, lighter and faster than the trucks. A cosmetic variant." },
-            { "deathbike2", "An Arena War motorcycle, armoured and armed. A cosmetic variant of the Deathbike." },
-            { "deathbike3", "An Arena War motorcycle, armoured and armed. A cosmetic variant of the Deathbike." },
-            { "ruiner3", "An Arena War version of the Ruiner: armoured and spiked, built for ramming." },
+            { "bruiser2", "The Future Shock Bruiser: the same armoured rammer with clean painted panels and carbon trim instead of rust." },
+            { "bruiser3", "The Nightmare Bruiser: the Apocalypse rammer in bright alternating colours." },
+            { "brutus2", "The Future Shock Brutus: the same monster truck with clean painted bodywork and carbon trim." },
+            { "brutus3", "The Nightmare Brutus: the Apocalypse monster truck in bright alternating colours." },
+            { "cerberus2", "The Future Shock Cerberus: the same flamethrower lorry with clean painted panels and carbon trim." },
+            { "cerberus3", "The Nightmare Cerberus: the Apocalypse flamethrower lorry in bright alternating colours." },
+            { "imperator2", "The Future Shock Imperator: the same armoured saloon with clean painted bodywork and carbon trim." },
+            { "imperator3", "The Nightmare Imperator: the Apocalypse saloon in bright alternating colours." },
+            { "dominator5", "The Future Shock Dominator: the same armoured muscle car with clean painted bodywork and carbon trim." },
+            { "dominator6", "The Nightmare Dominator: the Apocalypse muscle car in bright colours that alternate between blue, green and yellow." },
+            { "issi5", "The Future Shock Issi: the same tiny armoured city car with clean painted bodywork and carbon trim." },
+            { "issi6", "The Nightmare Issi: the Apocalypse city car in bright colours alternating between blue, green, pink, yellow and purple." },
+            { "monster4", "The Future Shock Monster: the same monster truck with clean painted bodywork and carbon trim." },
+            { "monster5", "The Nightmare Monster: the Apocalypse monster truck in bright alternating colours." },
+            { "sasquatch2", "The Future Shock Sasquatch: the same monster truck with clean painted bodywork and carbon trim." },
+            { "scarab2", "The Future Shock Scarab: the same tracked half-track with clean bodywork instead of rust - smooth painted panels, carbon fibre bumper trim and a hexagonal-patterned bed floor. Drives identically to the Apocalypse version." },
+            { "scarab3", "The Nightmare Scarab: the Apocalypse body in bright colours - track panels in green, blue and pink, purple bed floor. Despite the name it is the most carnival-looking of the three. Drives identically." },
+            { "slamvan5", "The Future Shock Slamvan: the same armoured pickup with clean painted bodywork and carbon trim." },
+            { "slamvan6", "The Nightmare Slamvan: the Apocalypse pickup in bright alternating colours." },
+            { "zr3802", "The Future Shock ZR380: the same armoured sports car with clean painted bodywork and carbon trim." },
+            { "zr3803", "The Nightmare ZR380: the Apocalypse sports car in bright alternating colours." },
+            { "deathbike2", "The Future Shock Deathbike: the same armed motorcycle with clean painted bodywork and carbon trim." },
+            { "deathbike3", "The Nightmare Deathbike: the Apocalypse motorcycle in bright alternating colours." },
+            { "ruiner3", "The Arena War Ruiner: armoured and spiked, built for ramming." },
 
             // Variants that genuinely differ from their base vehicle
             { "technical2", "The Technical Aqua: the gun-armed pickup made amphibious. It floats and drives on water, at the cost of being slower on land." },
@@ -334,12 +351,25 @@ namespace GrandTheftAccessibility
         {
             try
             {
-                string internalName;
-                if (!HashManager.TryGetName(model.Hash, out internalName) || string.IsNullOrEmpty(internalName))
-                    return null;
-
                 string note;
-                return Descriptions.TryGetValue(internalName, out note) ? note : null;
+
+                // SHVDN's own VehicleHash enum first. hashes.txt is missing every
+                // numbered Arena War variant - no scarab2, no zr3803, none of them -
+                // so resolving names through it alone left those notes unreachable.
+                // The enum carries all 843 models, and the lookup is case-insensitive
+                // so "Scarab2" matches the "scarab2" key.
+                string enumName = Enum.GetName(typeof(VehicleHash), (VehicleHash)model.Hash);
+                if (!string.IsNullOrEmpty(enumName) && Descriptions.TryGetValue(enumName, out note))
+                    return note;
+
+                // Fall back to the hash file for anything the enum does not name
+                string internalName;
+                if (HashManager.TryGetName(model.Hash, out internalName) &&
+                    !string.IsNullOrEmpty(internalName) &&
+                    Descriptions.TryGetValue(internalName, out note))
+                    return note;
+
+                return null;
             }
             catch
             {
