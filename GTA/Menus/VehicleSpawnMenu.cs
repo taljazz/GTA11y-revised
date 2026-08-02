@@ -131,11 +131,30 @@ namespace GrandTheftAccessibility.Menus
         protected override string GetItemText(int index)
         {
             VehicleSpawn vehicle = _vehicles[index];
+
+            // Seat count alongside the class, so choosing a car for a job that
+            // needs four people does not mean spawning them to find out. Kept to
+            // one short clause because this is spoken on every keypress while
+            // scrolling - the full description lives in the Vehicle Guide menu.
+            string detail = SafeShortDescription(vehicle.id);
+            if (!string.IsNullOrEmpty(detail))
+                return $"{index + 1} of {_vehicles.Count}: {vehicle.name}, {detail}";
+
             if (!string.IsNullOrEmpty(vehicle.vehicleClassName))
             {
                 return $"{index + 1} of {_vehicles.Count}: {vehicle.name}, {vehicle.vehicleClassName}";
             }
             return $"{index + 1} of {_vehicles.Count}: {vehicle.name}";
+        }
+
+        /// <summary>
+        /// Short class-and-seats line for a model. Never throws and never blocks
+        /// the list: an undescribable vehicle just falls back to its stored class.
+        /// </summary>
+        private static string SafeShortDescription(VehicleHash id)
+        {
+            try { return VehicleDescriber.GetShortDescription(new Model(id)); }
+            catch { return null; }
         }
 
         protected override void OnItemActivated(int index)

@@ -101,6 +101,9 @@
     <Compile Include="Core\EntityScanner.cs" />
     <Compile Include="Core\VehicleSaveManager.cs" />
     <Compile Include="Core\HelipadHeadingStore.cs" />
+    <Compile Include="Core\PlayerModelManager.cs" />
+    <Compile Include="Core\InteriorManager.cs" />
+    <Compile Include="Core\VehicleDescriber.cs" />
     <Compile Include="Core\TurretCrewManager.cs" />
     <Compile Include="Core\HealthArmorManager.cs" />
     <Compile Include="Core\VehicleDamageManager.cs" />
@@ -151,6 +154,10 @@
     <Compile Include="Menus\FunctionsMenu.cs" />
     <Compile Include="Menus\SettingsMenu.cs" />
     <Compile Include="Menus\AutoDriveMenu.cs" />
+    <Compile Include="Menus\OnlineInteriorsMenu.cs" />
+    <Compile Include="Menus\WeatherMenu.cs" />
+    <Compile Include="Menus\TimeMenu.cs" />
+    <Compile Include="Menus\VehicleGuideMenu.cs" />
     <Compile Include="Menus\HelpMenu.cs" />
   </ItemGroup>
   <ItemGroup>

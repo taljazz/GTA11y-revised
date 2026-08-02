@@ -967,6 +967,11 @@ namespace GrandTheftAccessibility
         // over the threshold.
         public const float RUNWAY_LINE_LEAD_IN = 350f;           // meters before the threshold
 
+        // Ground-probe check of a stored runway line (see ValidateRunwayLine).
+        // A real strip is flat; scattered elevations mean the line is off the tarmac.
+        public const float RUNWAY_PROBE_STEP = 100f;             // meters between samples along the line
+        public const float RUNWAY_PROBE_TOLERANCE = 8f;          // meters of elevation spread that still counts as flat
+
         // ===== AUTOPILOT (AircraftLandingMenu) =====
         // TASK_PLANE_LAND only flies the last part of an approach - it expects the
         // plane to already be near the runway centerline. These drive the extra
@@ -988,7 +993,16 @@ namespace GrandTheftAccessibility
         public const float APPROACH_MIN_FINAL_DISTANCE = 300f;   // meters before the threshold, inner limit
         public const float APPROACH_MAX_CROSSTRACK = 250f;       // meters off the centerline still counted as lined up
         public const float APPROACH_ALIGN_TOLERANCE = 25f;       // degrees off runway heading still counted as lined up
-        public const float APPROACH_MAX_HANDOFF_HEIGHT = 180f;   // meters above ground - too high and it will not settle
+        // Measured above the FIELD, not above whatever is directly below. Height
+        // above ground is meaningless on an approach over hills: an aircraft
+        // skimming 12m over a ridge can still be 400m above the runway it is
+        // supposed to land on, with no chance of losing that in the distance left.
+        public const float APPROACH_MAX_HANDOFF_HEIGHT = 180f;   // meters above field elevation
+
+        // Once it is low, lined up and descending it is committed - leave it alone.
+        // The go-around watchdog exists for an aircraft orbiting at height, not
+        // for one a few seconds from touchdown.
+        public const float LANDING_COMMITTED_HEIGHT = 70f;       // meters above field
         public const long APPROACH_FINAL_TIMEOUT = 120_000;      // ms on final before giving up and going around
 
         // Which engine task flies the final approach.
@@ -1381,25 +1395,17 @@ namespace GrandTheftAccessibility
 
         #region GTA Online Features
 
-        // Native to enable MP maps in single player (ON_ENTER_MP)
-        // This activates multiplayer map content (interiors, DLC locations) in single player
-        public const ulong NATIVE_ON_ENTER_MP = 0x0888C3502DBBEEF5;
+        // Player model swapping (PlayerModelManager)
+        public const int MODEL_REQUEST_TIMEOUT_MS = 3000;        // how long to wait for a DLC ped model to stream in
 
-        // Native to disable MP maps (ON_ENTER_SP) - returns to standard single player map
-        public const ulong NATIVE_ON_ENTER_SP = 0xD7C10C4A637992C9;
+        // Interiors are not necessarily active the instant REQUEST_IPL returns,
+        // so the read-back that reports the real result waits this long.
+        public const long INTERIOR_VERIFY_DELAY = 1500;          // ms before checking IS_IPL_ACTIVE
 
-        // DLC check native - used to verify if specific DLC content is available
-        // IS_DLC_PRESENT(dlcHash) - returns true if the specified DLC is present
-
-        // Set this player as MP player for certain game systems
-        // _SET_PLAYER_MODEL_IS_MP_PLAYER(bool toggle)
-
-        // Enable/disable freemode property manager (for MP properties)
-        // _ENABLE_FREEMODE_PROPERTY_MANAGER(bool toggle)
-
-        // Set instance priority mode (affects MP content loading)
-        // SET_INSTANCE_PRIORITY_MODE(int mode) - 0=normal, 1=priority
-        public const ulong NATIVE_SET_INSTANCE_PRIORITY_MODE = 0x35A3CD97B2C0A6D2;
+        // The MP map natives are called through SHVDN's Hash enum in GTA11Y.cs,
+        // not from literals here. Hand-transcribed hashes are what broke this:
+        // the constant named SET_INSTANCE_PRIORITY_MODE actually held
+        // 0x35A3CD97B2C0A6D2, an unnamed HUD native that takes a blip handle.
 
         // ===== END GTA ONLINE FEATURES =====
 

@@ -42,6 +42,7 @@ namespace GrandTheftAccessibility.Menus
         private const int ITEM_KILL_PEDS = 4;
         private const int ITEM_RAISE_WANTED = 5;
         private const int ITEM_CLEAR_WANTED = 6;
+        private const int ITEM_JUGGERNAUT_SUIT = 7;
 
         #endregion
 
@@ -51,16 +52,19 @@ namespace GrandTheftAccessibility.Menus
         private readonly SettingsManager _settings;
         private readonly Random _random;
         private readonly TurretCrewManager _turretCrewManager;
+        private readonly PlayerModelManager _playerModel;
 
         #endregion
 
         #region Construction
 
-        public FunctionsMenu(SettingsManager settings, TurretCrewManager turretCrewManager, AudioManager audio)
+        public FunctionsMenu(SettingsManager settings, TurretCrewManager turretCrewManager,
+            PlayerModelManager playerModel, AudioManager audio)
             : base(audio)
         {
             _settings = settings;
             _turretCrewManager = turretCrewManager;
+            _playerModel = playerModel;
             _random = new Random();
 
             _functions = new List<string>
@@ -71,7 +75,8 @@ namespace GrandTheftAccessibility.Menus
                 "Make all nearby pedestrians attack each other",
                 "Instantly kill all nearby pedestrians",
                 "Raise Wanted Level",
-                "Clear Wanted Level"
+                "Clear Wanted Level",
+                "Toggle Juggernaut suit (online armoured suit)"
             };
         }
 
@@ -88,6 +93,14 @@ namespace GrandTheftAccessibility.Menus
             {
                 return _turretCrewManager.GetStatusText();
             }
+
+            if (index == ITEM_JUGGERNAUT_SUIT && _playerModel != null)
+            {
+                return _playerModel.IsSwapped
+                    ? "Take off the Juggernaut suit"
+                    : "Put on the Juggernaut suit (online armoured suit)";
+            }
+
             return _functions[index];
         }
 
@@ -115,6 +128,9 @@ namespace GrandTheftAccessibility.Menus
                     break;
                 case ITEM_CLEAR_WANTED:
                     ClearWantedLevel();
+                    break;
+                case ITEM_JUGGERNAUT_SUIT:
+                    ToggleJuggernautSuit();
                     break;
             }
         }
@@ -245,6 +261,23 @@ namespace GrandTheftAccessibility.Menus
             wanted.SetWantedLevel(0, false);
             wanted.ApplyWantedLevelChangeNow(false);
             Speak("Wanted level cleared");
+        }
+
+        /// <summary>
+        /// Put on or take off the online Juggernaut suit. This replaces the whole
+        /// player ped, so the manager carries health, armour and the entire weapon
+        /// inventory across and puts them back on the way out.
+        /// </summary>
+        private void ToggleJuggernautSuit()
+        {
+            if (_playerModel == null)
+            {
+                Speak("The suit is not available.");
+                return;
+            }
+
+            // The manager speaks its own result, including why it failed
+            _playerModel.Toggle(PedHash.Juggernaut01M, "Juggernaut suit");
         }
 
         private void MarkWaypointToMissionObjective()

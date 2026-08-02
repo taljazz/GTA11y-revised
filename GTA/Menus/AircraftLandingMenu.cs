@@ -833,10 +833,25 @@ namespace GrandTheftAccessibility.Menus
             // Height matters as much as position. Handed the runway from altitude
             // the landing task has to lose the height itself, which is when it
             // starts circling - so only hand over once already low.
-            if (SafeHeightAboveGround(aircraft) > Constants.APPROACH_MAX_HANDOFF_HEIGHT)
+            //
+            // Measured against the FIELD, not the ground below: approaching over
+            // rising terrain the aircraft can be a few meters above a ridge and
+            // still hundreds of meters above the runway.
+            if (HeightAboveField(aircraft, dest) > Constants.APPROACH_MAX_HANDOFF_HEIGHT)
                 return false;
 
             return HeadingErrorTo(aircraft.Heading, dest.RunwayHeading) <= Constants.APPROACH_ALIGN_TOLERANCE;
+        }
+
+        /// <summary>
+        /// Height above the destination's own elevation. This is the number that
+        /// matters on an approach - height above whatever happens to be directly
+        /// underneath says nothing about how far there is left to descend.
+        /// </summary>
+        private static float HeightAboveField(Vehicle aircraft, LandingDestination dest)
+        {
+            try { return aircraft.Position.Z - dest.Position.Z; }
+            catch { return 0f; }
         }
 
         /// <summary>Smallest absolute angle in degrees between two headings.</summary>
@@ -879,6 +894,70 @@ namespace GrandTheftAccessibility.Menus
             float miles = (dest.Position - position).Length() * Constants.METERS_TO_MILES;
             string direction = SpatialCalculator.GetDirectionTo(position, dest.Position);
             return $"{direction}, {miles:F1} miles.";
+        }
+
+        /// <summary>
+        /// Walk the stored runway line and probe the ground under it.
+        ///
+        /// A real runway is flat and sits at field elevation, so if the stored
+        /// heading and coordinates describe an actual strip the samples stay
+        /// level. If the heading is wrong the line runs off onto grass, water or
+        /// buildings and the elevations scatter. Runs from the lineup action,
+        /// which is the one moment the aircraft is definitely at the airfield
+        /// with the terrain streamed in - the ground probe answers nothing for
+        /// terrain that is not loaded, which is why this cannot be done offline.
+        /// Findings go to the log rather than to speech; the pilot asked to line
+        /// up, not for a survey.
+        /// </summary>
+        private static void ValidateRunwayLine(LandingDestination dest)
+        {
+            if (dest.IsHelipad || dest.RunwayDirection == Vector3.Zero)
+                return;
+
+            try
+            {
+                float worst = 0f;
+                int probed = 0;
+                var readings = new System.Text.StringBuilder();
+
+                for (float along = 0f; along <= Constants.DEFAULT_RUNWAY_LENGTH; along += Constants.RUNWAY_PROBE_STEP)
+                {
+                    Vector3 point = dest.Position + (dest.RunwayDirection * along);
+
+                    float ground;
+                    if (!World.GetGroundHeight(point + new Vector3(0f, 0f, 50f), out ground,
+                            GetGroundHeightMode.ConsiderWaterAsGround))
+                        continue;
+
+                    probed++;
+                    float deviation = Math.Abs(ground - dest.Position.Z);
+                    if (deviation > worst)
+                        worst = deviation;
+
+                    readings.Append($"{(int)along}:{ground:F1} ");
+                }
+
+                if (probed == 0)
+                {
+                    Logger.Info($"AP|RWY-CHECK|dest={dest.Name}|result=no-terrain-streamed");
+                    return;
+                }
+
+                bool suspect = worst > Constants.RUNWAY_PROBE_TOLERANCE;
+                Logger.Info($"AP|RWY-CHECK|dest={dest.Name}|hdg={dest.RunwayHeading:F0}|fieldZ={dest.Position.Z:F1}" +
+                            $"|probes={probed}|worstDeviation={worst:F1}|verdict={(suspect ? "SUSPECT" : "flat")}" +
+                            $"|samples={readings.ToString().Trim()}");
+
+                if (suspect)
+                {
+                    Logger.Warning($"AP|RWY-CHECK|{dest.Name}: ground along the stored runway line varies by " +
+                                   $"{worst:F0}m. The heading or the coordinates are probably wrong.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Exception(ex, "AircraftLandingMenu.ValidateRunwayLine");
+            }
         }
 
         /// <summary>
@@ -1061,6 +1140,8 @@ namespace GrandTheftAccessibility.Menus
 
                 if (!aircraft.IsEngineRunning)
                     aircraft.IsEngineRunning = true;
+
+                ValidateRunwayLine(dest);
 
                 int runwayAhead = (int)(Constants.DEFAULT_RUNWAY_LENGTH - Constants.LINEUP_OFFSET);
                 Speak($"Lined up on {dest.Name}, heading {(int)dest.RunwayHeading} degrees, " +
@@ -1414,6 +1495,17 @@ namespace GrandTheftAccessibility.Menus
                 }
 
                 LandingDestination dest = _autopilotDestination;
+
+                // The engine reports a crash as a mission in its own right. Say so
+                // immediately rather than leaving the pilot waiting out a timeout
+                // wondering why nothing is happening.
+                if (SafeActiveMission(aircraft) == VehicleMissionType.Crash)
+                {
+                    LogAutopilotEvent("CRASHED", aircraft, dest);
+                    FinishAutopilot("The aircraft crashed. You have manual control.", true, "crashed");
+                    return;
+                }
+
                 float distance = (dest.Position - position).Length();
 
                 // Progress is measured against the leg being flown, not the field.
@@ -1612,11 +1704,24 @@ namespace GrandTheftAccessibility.Menus
             if (DetectTouchdown(aircraft, dest))
                 return;
 
-            // A good final is short - roughly the approach corridor flown at the
-            // landing task's own approach speed. Well past that the task is not
-            // converging, it is orbiting the field, which it will do indefinitely.
-            if (currentTick - _finalStartTick > Constants.APPROACH_FINAL_TIMEOUT)
+            // Low, lined up and coming down means it is committed. Hold the
+            // watchdog off rather than pulling an aircraft out of a landing it is
+            // seconds from completing - which is exactly what the first version of
+            // this did, going around at 9m above the deck, on the centerline, at
+            // 20 m/s, with the heading error under two degrees.
+            bool committed =
+                HeightAboveField(aircraft, dest) <= Constants.LANDING_COMMITTED_HEIGHT &&
+                HeadingErrorTo(aircraft.Heading, EffectiveLandingHeading(dest)) <= Constants.APPROACH_ALIGN_TOLERANCE;
+
+            if (committed)
             {
+                // Keep pushing the deadline out for as long as it stays committed
+                _finalStartTick = currentTick;
+            }
+            else if (currentTick - _finalStartTick > Constants.APPROACH_FINAL_TIMEOUT)
+            {
+                // A good final is short. Well past that the task is not
+                // converging, it is orbiting the field, which it does forever.
                 Ped player = Game.Player?.Character;
                 if (player != null && player.Exists())
                 {

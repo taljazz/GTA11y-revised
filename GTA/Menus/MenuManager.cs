@@ -21,6 +21,8 @@ namespace GrandTheftAccessibility.Menus
         private readonly AutoDriveManager _autoDriveManager;
         private readonly TurretCrewManager _turretCrewManager;
         private readonly PedestrianNavigationManager _pedNav;
+        private readonly PlayerModelManager _playerModel;
+        private readonly InteriorManager _interiors;
         private int _currentMenuIndex;
 
         #endregion
@@ -35,6 +37,13 @@ namespace GrandTheftAccessibility.Menus
             // Create AutoDrive manager and menu
             _autoDriveManager = new AutoDriveManager(audio, settings);
             _autoDriveMenu = new AutoDriveMenu(_autoDriveManager, audio);
+
+            // Create PlayerModelManager (owns the online model swap, and must be
+            // able to restore the original model on shutdown)
+            _playerModel = new PlayerModelManager(audio);
+
+            // Create InteriorManager (loads online interior map data on request)
+            _interiors = new InteriorManager(audio, settings);
 
             // Create TurretCrewManager
             _turretCrewManager = new TurretCrewManager(settings, audio);
@@ -60,8 +69,12 @@ namespace GrandTheftAccessibility.Menus
             // 8. Weapon Mods (attachments and tints for the equipped weapon)
             // 9. Vehicle Save/Load
             // 10. Functions (chaos)
-            // 11. Settings
-            // 12. Help
+            // 11. Online Interiors (load GTA Online interior map data)
+            // 12. Weather
+            // 13. Time
+            // 14. Vehicle Guide (what each vehicle is, what each upgrade does)
+            // 15. Settings
+            // 16. Help
             // Every menu receives the shared AudioManager so speech goes through
             // the Tolk health/reconnect logic and Ctrl+NumPad5 repeat-last works.
             _menus = new List<IMenuState>
@@ -75,7 +88,11 @@ namespace GrandTheftAccessibility.Menus
                 _weaponSelectMenu,
                 new WeaponModMenu(audio),
                 new VehicleSaveLoadMenu(_saveManager, settings, audio),
-                new FunctionsMenu(settings, _turretCrewManager, audio),
+                new FunctionsMenu(settings, _turretCrewManager, _playerModel, audio),
+                new OnlineInteriorsMenu(_interiors, audio),
+                new WeatherMenu(audio),
+                new TimeMenu(audio),
+                new VehicleGuideMenu(audio),
                 new SettingsMenu(settings, audio),
                 new HelpMenu(hotkeys, audio)
             };
@@ -285,6 +302,35 @@ namespace GrandTheftAccessibility.Menus
         }
 
         /// <summary>
+        /// Put the player's own model back. Safe to call at any time - it does
+        /// nothing unless a swapped model is actually on right now. Called on
+        /// death, because the game's respawn sequence hangs if it runs while the
+        /// player is an NPC model.
+        /// </summary>
+        public void RestorePlayerModel(bool announce)
+        {
+            _playerModel?.Restore(announce);
+        }
+
+        /// <summary>
+        /// What the player is currently wearing, or null for their own character.
+        /// Verified against the live ped, not a remembered flag.
+        /// </summary>
+        public string GetPlayerModelStatus()
+        {
+            return _playerModel?.GetStatusText();
+        }
+
+        /// <summary>
+        /// Let the interior manager report what actually loaded. Called every
+        /// tick; it only speaks once, shortly after a load or unload request.
+        /// </summary>
+        public void UpdateInteriors(long currentTick)
+        {
+            _interiors.Update(currentTick);
+        }
+
+        /// <summary>
         /// Whether the automatic weapon-change announcement should stay quiet
         /// because the weapon menu just spoke its own confirmation for this swap.
         /// One-shot - calling this consumes the suppression.
@@ -331,6 +377,12 @@ namespace GrandTheftAccessibility.Menus
 
                 if (_pedNav != null && _pedNav.IsActive)
                     _pedNav.StopNavigation();
+
+                // Put the player's own model back before the script goes away.
+                // A reload while wearing an online model would otherwise strand
+                // them as an NPC with no menu left to change back.
+                if (_playerModel != null && _playerModel.IsSwapped)
+                    _playerModel.Restore(false);
             }
             catch (Exception ex)
             {

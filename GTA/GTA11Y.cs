@@ -97,10 +97,11 @@ namespace GrandTheftAccessibility
         private long _lastAutoDriveTick;
         private long _lastRoadFeatureTick;
 
-        // PERFORMANCE: Pre-cached Hash for MP map natives
-        private static readonly Hash _onEnterMPHash = (Hash)Constants.NATIVE_ON_ENTER_MP;
-        private static readonly Hash _onEnterSPHash = (Hash)Constants.NATIVE_ON_ENTER_SP;
-        private static readonly Hash _setInstancePriorityModeHash = (Hash)Constants.NATIVE_SET_INSTANCE_PRIORITY_MODE;
+        // MP map natives come from SHVDN's Hash enum rather than hand-typed
+        // literals. A transcribed hash was how this broke: the constant named
+        // SET_INSTANCE_PRIORITY_MODE actually held 0x35A3CD97B2C0A6D2, which is an
+        // unnamed HUD native taking a blip handle, so enabling online maps quietly
+        // passed 1 to that instead. The enum cannot be mistyped.
 
         #endregion
 
@@ -187,6 +188,13 @@ namespace GrandTheftAccessibility
                 {
                     _playerUnavailable = true;
                     _audio.StopIndicatorTones();
+
+                    // CRITICAL: get the player's own model back before the game
+                    // runs its death and respawn sequence. That sequence expects a
+                    // real player model, and dying as an NPC model hangs the game.
+                    // This is the first tick on which death is detectable, so it is
+                    // the earliest chance to undo it.
+                    _menu.RestorePlayerModel(false);
                 }
 
                 // Health monitoring is the one thing that must keep running while
@@ -198,7 +206,16 @@ namespace GrandTheftAccessibility
                 return;
             }
 
-            _playerUnavailable = false;
+            if (_playerUnavailable)
+            {
+                _playerUnavailable = false;
+
+                // Belt and braces: if the model could not be changed while the ped
+                // was dead, put it right now that there is a live one to change.
+                // IsSwapped reads the actual model, so this is a no-op unless the
+                // suit really did survive the death.
+                _menu.RestorePlayerModel(false);
+            }
 
             long currentTick = Game.GameTime;
             Vector3 playerPos = player.Position;
@@ -548,6 +565,9 @@ namespace GrandTheftAccessibility
             // Game state monitoring (cutscenes, phone, loading - throttled internally to 500ms)
             _gameState.Update(currentTick);
 
+            // Reports the verified result of an online interior load/unload
+            _menu.UpdateInteriors(currentTick);
+
             // Pedestrian navigation (when on foot and active)
             if (_menu.IsPedestrianNavigationActive && currentVehicle == null)
             {
@@ -805,26 +825,30 @@ namespace GrandTheftAccessibility
             {
                 if (enable)
                 {
-                    // Enable MP maps - this activates GTA Online map content in single player
-                    // ON_ENTER_MP native tells the game to load multiplayer map content
-                    Function.Call(_onEnterMPHash);
+                    // Loads the GTA Online DLC map group (apartments, garages,
+                    // heist interiors). Neither the MP nor the SP DLC map group is
+                    // loaded by default.
+                    Function.Call(Hash.ON_ENTER_MP);
 
-                    // Set instance priority mode for better MP content loading
-                    Function.Call(_setInstancePriorityModeHash, 1);
+                    // Required alongside it: the native docs state the online heist
+                    // IPLs only come in when instance priority mode is on. It also
+                    // raises prop density and triggers a map reload, so the game
+                    // briefly shows a loading screen - expected, not a fault.
+                    Function.Call(Hash.SET_INSTANCE_PRIORITY_MODE, 1);
 
-                    Logger.Info("GTA Online maps and interiors enabled");
+                    Logger.Info("GTA Online maps and interiors enabled (ON_ENTER_MP + instance priority 1)");
                 }
                 else
                 {
-                    // Disable MP maps - return to standard single player map
-                    // ON_ENTER_SP native returns to normal single player map state
-                    Function.Call(_onEnterSPHash);
+                    // Unloads the online map group and loads the single player one
+                    Function.Call(Hash.ON_ENTER_SP);
+                    Function.Call(Hash.SET_INSTANCE_PRIORITY_MODE, 0);
 
-                    // Reset instance priority mode
-                    Function.Call(_setInstancePriorityModeHash, 0);
-
-                    Logger.Info("GTA Online maps and interiors disabled");
+                    Logger.Info("GTA Online maps and interiors disabled (ON_ENTER_SP + instance priority 0)");
                 }
+
+                // Read the toggle back so a trace shows what actually happened
+                Logger.Info($"MPMAPS|requested={(enable ? 1 : 0)}");
             }
             catch (Exception ex)
             {
@@ -1061,7 +1085,18 @@ namespace GrandTheftAccessibility
                         {
                             // Ctrl: Health and armor status
                             Ped p4 = Game.Player?.Character;
-                            if (p4 != null && p4.Exists()) _healthArmor.AnnounceStatus(p4);
+                            if (p4 != null && p4.Exists())
+                            {
+                                _healthArmor.AnnounceStatus(p4);
+
+                                // Whether an online model is on is invisible to a
+                                // player who cannot see themselves, so it belongs
+                                // in the status they can ask for. Queued, not
+                                // interrupting, so it follows the health line.
+                                string worn = _menu.GetPlayerModelStatus();
+                                if (!string.IsNullOrEmpty(worn))
+                                    _audio.Speak(worn, false);
+                            }
                         }
                         else
                         {
