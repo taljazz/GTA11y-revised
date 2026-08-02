@@ -73,6 +73,13 @@ namespace GrandTheftAccessibility.Menus
                 // Special category - Weaponized vehicles (armed with guns/missiles)
                 new VehicleCategory("Weaponized"),
 
+                // Catch-all. The class categories below only reach a vehicle if
+                // the game reports a class that matches one of them; anything
+                // that reports something unexpected would otherwise be in no
+                // category at all and impossible to spawn. This one filters on
+                // nothing, so every model in the game is reachable from here.
+                new VehicleCategory("All Vehicles"),
+
                 // Standard categories
                 new VehicleCategory("Super Cars", VehicleClass.Super),
                 new VehicleCategory("Sports Cars", VehicleClass.Sports),
@@ -126,6 +133,11 @@ namespace GrandTheftAccessibility.Menus
                     if (category.Name == "Weaponized")
                     {
                         _currentSubmenu = new VehicleSpawnMenu(_settings, Constants.WEAPONIZED_VEHICLE_NAMES, category.Name, _audio);
+                    }
+                    else if (category.Name == "All Vehicles")
+                    {
+                        // No class filter at all - every model the game defines
+                        _currentSubmenu = new VehicleSpawnMenu(_settings, (VehicleClass?)null, category.Name, _audio);
                     }
                     // Add more special categories here as needed
                 }

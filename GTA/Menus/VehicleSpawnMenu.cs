@@ -57,13 +57,7 @@ namespace GrandTheftAccessibility.Menus
                         continue;
                 }
 
-                string displayName = Game.GetLocalizedString(Function.Call<string>(Hash.GET_DISPLAY_NAME_FROM_VEHICLE_MODEL, vh));
-
-                // Skip vehicles with empty or null names
-                if (string.IsNullOrWhiteSpace(displayName) || displayName == "NULL")
-                    continue;
-
-                _vehicles.Add(new VehicleSpawn(displayName, vh));
+                _vehicles.Add(new VehicleSpawn(ResolveName(vh), vh));
             }
 
             _vehicles.Sort();
@@ -91,12 +85,6 @@ namespace GrandTheftAccessibility.Menus
                 if (!_filterNames.Contains(enumName))
                     continue;
 
-                string displayName = Game.GetLocalizedString(Function.Call<string>(Hash.GET_DISPLAY_NAME_FROM_VEHICLE_MODEL, vh));
-
-                // Skip vehicles with empty or null names
-                if (string.IsNullOrWhiteSpace(displayName) || displayName == "NULL")
-                    continue;
-
                 // Get the vehicle class for display in special categories
                 int vehicleClassIndex = Function.Call<int>(Hash.GET_VEHICLE_CLASS_FROM_NAME, (int)vh);
                 string className = null;
@@ -105,7 +93,7 @@ namespace GrandTheftAccessibility.Menus
                     className = Constants.VEHICLE_CLASS_NAMES[vehicleClassIndex];
                 }
 
-                _vehicles.Add(new VehicleSpawn(displayName, vh, className));
+                _vehicles.Add(new VehicleSpawn(ResolveName(vh), vh, className));
             }
 
             _vehicles.Sort();
@@ -219,6 +207,67 @@ namespace GrandTheftAccessibility.Menus
         {
             // Use native function to get vehicle class
             return (VehicleClass)Function.Call<int>(Hash.GET_VEHICLE_CLASS_FROM_NAME, (int)hash);
+        }
+
+        /// <summary>
+        /// The best name available for a model, and never nothing.
+        ///
+        /// This used to read the game's display name and SKIP the vehicle when it
+        /// came back empty or "NULL", which happens for models whose text label
+        /// is not loaded. A skipped vehicle is not merely unnamed, it is absent
+        /// from every category and therefore impossible to spawn at all. Falling
+        /// back to the model's own name keeps everything reachable - a slightly
+        /// awkward name is a far smaller problem than a missing vehicle, and the
+        /// Vehicle Guide will still describe it correctly because the curated
+        /// notes are keyed on exactly this name.
+        /// </summary>
+        private static string ResolveName(VehicleHash hash)
+        {
+            try
+            {
+                string displayName = Game.GetLocalizedString(
+                    Function.Call<string>(Hash.GET_DISPLAY_NAME_FROM_VEHICLE_MODEL, hash));
+
+                if (!string.IsNullOrWhiteSpace(displayName) && displayName != "NULL")
+                    return displayName;
+            }
+            catch
+            {
+                // Fall through to the model name
+            }
+
+            return PrettifyModelName(hash.ToString());
+        }
+
+        /// <summary>
+        /// Break a model name into something that reads aloud sensibly:
+        /// "DeathBike2" becomes "Death Bike 2", "ZR3802" becomes "ZR 3802".
+        /// </summary>
+        private static string PrettifyModelName(string modelName)
+        {
+            if (string.IsNullOrEmpty(modelName))
+                return "Unknown vehicle";
+
+            var builder = new System.Text.StringBuilder(modelName.Length + 8);
+
+            for (int i = 0; i < modelName.Length; i++)
+            {
+                char current = modelName[i];
+
+                if (i > 0)
+                {
+                    char previous = modelName[i - 1];
+                    bool startsWord = char.IsUpper(current) && !char.IsUpper(previous);
+                    bool startsNumber = char.IsDigit(current) && !char.IsDigit(previous);
+
+                    if (startsWord || startsNumber)
+                        builder.Append(' ');
+                }
+
+                builder.Append(current);
+            }
+
+            return builder.ToString();
         }
 
         #endregion
