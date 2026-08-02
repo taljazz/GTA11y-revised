@@ -26,6 +26,7 @@ namespace GrandTheftAccessibility.Menus
         #region Fields
 
         private readonly List<VehicleModType> _upgradeTypes;
+        private readonly List<VehicleToggleModType> _toggleTypes;
 
         #endregion
 
@@ -34,6 +35,7 @@ namespace GrandTheftAccessibility.Menus
         public VehicleGuideMenu(AudioManager audio) : base(audio)
         {
             _upgradeTypes = VehicleDescriber.GetUpgradeTypes();
+            _toggleTypes = VehicleDescriber.GetToggleTypes();
         }
 
         #endregion
@@ -54,7 +56,7 @@ namespace GrandTheftAccessibility.Menus
                         : "Describe the vehicle I am in";
                 }
                 case ITEM_UPGRADE_GUIDE:
-                    return $"Upgrade guide: what each modification does, {_upgradeTypes.Count} categories";
+                    return $"Upgrade guide: what each modification does, {SubmenuItemCount} categories";
                 default:
                     return "Unknown";
             }
@@ -70,7 +72,12 @@ namespace GrandTheftAccessibility.Menus
 
                 case ITEM_UPGRADE_GUIDE:
                     EnterSubmenu();
-                    Speak($"Upgrade guide, {_upgradeTypes.Count} categories. {GetSubmenuItemText(0)}");
+                    // The caveat comes first: several categories are numbered
+                    // slots that mean different things on different vehicles,
+                    // and hearing that up front stops the rest being read as
+                    // promises the game does not keep
+                    Speak($"Upgrade guide, {SubmenuItemCount} categories. " +
+                          $"{VehicleDescriber.GetSlotCaveat()} {GetSubmenuItemText(0)}");
                     break;
             }
         }
@@ -84,25 +91,32 @@ namespace GrandTheftAccessibility.Menus
 
         #region Upgrade Submenu
 
-        protected override int SubmenuItemCount => _upgradeTypes.Count;
+        // The on-or-off upgrades follow the numbered ones in the same list
+        protected override int SubmenuItemCount => _upgradeTypes.Count + _toggleTypes.Count;
 
         protected override string GetSubmenuItemText(int index)
         {
-            if (index < 0 || index >= _upgradeTypes.Count)
+            int total = SubmenuItemCount;
+            if (index < 0 || index >= total)
                 return EmptyMenuText;
 
-            return $"{index + 1} of {_upgradeTypes.Count}: " +
-                   VehicleDescriber.GetUpgradeEffect(_upgradeTypes[index]);
+            string effect = index < _upgradeTypes.Count
+                ? VehicleDescriber.GetUpgradeEffect(_upgradeTypes[index])
+                : VehicleDescriber.GetToggleEffect(_toggleTypes[index - _upgradeTypes.Count]);
+
+            return $"{index + 1} of {total}: {effect}";
         }
 
         protected override void OnSubmenuItemActivated(int index)
         {
-            if (index < 0 || index >= _upgradeTypes.Count)
+            if (index < 0 || index >= SubmenuItemCount)
                 return;
 
             // Repeating the entry is the useful action here - these are long
             // lines and the player may want to hear one again
-            Speak(VehicleDescriber.GetUpgradeEffect(_upgradeTypes[index]));
+            Speak(index < _upgradeTypes.Count
+                ? VehicleDescriber.GetUpgradeEffect(_upgradeTypes[index])
+                : VehicleDescriber.GetToggleEffect(_toggleTypes[index - _upgradeTypes.Count]));
         }
 
         #endregion

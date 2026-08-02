@@ -237,9 +237,37 @@ namespace GrandTheftAccessibility
         #region Upgrade Guide
 
         /// <summary>
-        /// What each upgrade category actually does. Unlike the vehicle notes,
-        /// this is complete: the effects are the same on every car, so there is
-        /// nothing to guess at.
+        /// What each upgrade category does.
+        ///
+        /// IMPORTANT, and the reason an earlier version of this table was wrong:
+        /// several of SHVDN's friendly names are inventions over slots Rockstar
+        /// defines only by number, and those slots mean different things on
+        /// different vehicles. Checked against Rockstar's own MOD_TYPE enum:
+        ///
+        ///   SHVDN name      Rockstar's name    What it really is
+        ///   Tank        45  MOD_CHASSIS5       generic chassis slot
+        ///   Trim        44  MOD_CHASSIS4       generic chassis slot
+        ///   Aerials     43  MOD_CHASSIS3       generic chassis slot
+        ///   ArchCover   42  MOD_CHASSIS2       generic chassis slot
+        ///   Windows     46  MOD_DOOR_L         left door, NOT window tint
+        ///   TrimDesign  27  MOD_INTERIOR1      generic interior slot
+        ///   Ornaments   28  MOD_INTERIOR2      generic interior slot
+        ///   Dashboard   29  MOD_INTERIOR3      generic interior slot
+        ///   DialDesign  30  MOD_INTERIOR4      generic interior slot
+        ///   DoorSpeakers 31 MOD_INTERIOR5      generic interior slot
+        ///
+        /// Two further names collide across the two enums: VehicleModType
+        /// .Hydraulics is slot 38, MOD_HYDRO, the Benny's hydraulic suspension
+        /// part, while VehicleToggleModType.Hydraulics is slot 21,
+        /// MOD_HYDRAULICS, the older on-or-off switch. Both are listed, and each
+        /// entry says which it is so they do not read as a duplicate.
+        ///
+        /// On a weaponized vehicle the chassis slots carry the WEAPONS - which
+        /// gun is mounted, what the turret is - so calling slot 45 "fuel tank
+        /// styling, cosmetic" was not a small slip: it described a weapon choice
+        /// as decoration. The notes for those slots now say what they are and
+        /// point at the only reliable answer, which is the option names the game
+        /// itself returns for the vehicle in front of you.
         /// </summary>
         private static readonly Dictionary<VehicleModType, string> UpgradeEffects =
             new Dictionary<VehicleModType, string>
@@ -255,36 +283,53 @@ namespace GrandTheftAccessibility
             { VehicleModType.RearBumper, "Rear bumper. Cosmetic - changes the shape of the tail." },
             { VehicleModType.SideSkirt, "Side skirts. Cosmetic panels along the sills between the wheels." },
             { VehicleModType.Exhaust, "Exhaust. Changes the tailpipes and the engine note. Cosmetic, but you will hear it." },
-            { VehicleModType.Frame, "Roll cage or frame. Cosmetic on most cars." },
+            { VehicleModType.Frame, "Chassis, slot 5. Roll cages on many cars, but on arena and weaponized vehicles this slot often carries armour plating or a ram. Listen to the option names." },
             { VehicleModType.Grille, "Grille. Cosmetic - the panel at the front of the bonnet." },
             { VehicleModType.Hood, "Bonnet. Cosmetic - may add scoops or vents." },
             { VehicleModType.Fender, "Wings. Cosmetic panels over the wheels." },
-            { VehicleModType.Roof, "Roof. Cosmetic - scoops, vents or a different roofline." },
+            { VehicleModType.Roof, "Roof. Scoops, vents or a different roofline on ordinary cars; on weaponized ones this slot sometimes carries a roof-mounted weapon or turret." },
             { VehicleModType.FrontWheel, "Front wheels. Changes the wheel design, and on most vehicles both axles. Wheels can slightly affect grip." },
-            { VehicleModType.RearWheel, "Rear wheels. On bikes, the back wheel only." },
+            { VehicleModType.RearWheel, "Rear wheels, slot 24. On motorcycles this sets the back wheel separately from the front. On most cars it is empty, because the front wheel category already changes both axles." },
             { VehicleModType.PlateHolder, "Number plate holder. Cosmetic." },
             { VehicleModType.VanityPlates, "Number plate style. Cosmetic - changes the plate design." },
-            { VehicleModType.TrimDesign, "Interior trim. Cosmetic, and only visible from inside." },
-            { VehicleModType.Ornaments, "Ornaments. Small cosmetic details such as a hanging charm." },
-            { VehicleModType.Dashboard, "Dashboard. Cosmetic interior detail." },
-            { VehicleModType.DialDesign, "Dials. Cosmetic instrument faces." },
-            { VehicleModType.DoorSpeakers, "Door speakers. Cosmetic interior detail." },
+            { VehicleModType.TrimDesign, "Interior slot 1. Usually trim or upholstery, but it is a generic slot and some vehicles use it for something else entirely. Listen to the option names." },
+            { VehicleModType.Ornaments, "Interior slot 2. Usually small interior details, but generic - some vehicles use it differently." },
+            { VehicleModType.Dashboard, "Interior slot 3. Usually the dashboard, but generic - some vehicles use it differently." },
+            { VehicleModType.DialDesign, "Interior slot 4. Usually instrument dials, but generic - some vehicles use it differently." },
+            { VehicleModType.DoorSpeakers, "Interior slot 5. Usually door speakers, but generic - some vehicles use it differently." },
             { VehicleModType.Seats, "Seats. Cosmetic - racing seats or different upholstery." },
             { VehicleModType.SteeringWheels, "Steering wheel. Cosmetic." },
             { VehicleModType.ColumnShifterLevers, "Gear lever. Cosmetic." },
             { VehicleModType.Plaques, "Plaques. Cosmetic interior badges." },
             { VehicleModType.Speakers, "Speakers. Cosmetic boot-mounted audio." },
             { VehicleModType.Trunk, "Boot. Cosmetic." },
-            { VehicleModType.Hydraulics, "Hydraulics. Lets the car bounce and lean on command. A lowrider feature - no performance benefit." },
+            { VehicleModType.Hydraulics, "Hydraulic suspension, slot 38. The lowrider hydraulics fitted at Benny's, with a choice of setups. Lets the car bounce and lean on command. There is also a plain on-or-off hydraulics entry later in this list; that is the older switch, and this one is the part choice." },
             { VehicleModType.EngineBlock, "Engine block. Cosmetic detail under the bonnet." },
             { VehicleModType.AirFilter, "Air filter. Cosmetic detail under the bonnet." },
             { VehicleModType.Struts, "Strut brace. Cosmetic detail under the bonnet." },
-            { VehicleModType.ArchCover, "Arch covers. Cosmetic wheel arch extensions." },
-            { VehicleModType.Aerials, "Aerials. Cosmetic." },
-            { VehicleModType.Trim, "Trim. Cosmetic." },
-            { VehicleModType.Tank, "Tank. Cosmetic - fuel tank styling, mostly on bikes." },
-            { VehicleModType.Windows, "Window tint. Darkens the glass. Cosmetic, though heavy tint makes you harder to identify." },
+            { VehicleModType.ArchCover, "Slot 42, which Rockstar calls chassis 2. Vehicle-dependent: arch covers or bodywork on some, a weapon or spike choice on arena vehicles. Listen to the option names." },
+            { VehicleModType.Aerials, "Slot 43, which Rockstar calls chassis 3. Vehicle-dependent: aerials or bodywork on some, a weapon or armour choice on weaponized ones. Listen to the option names." },
+            { VehicleModType.Trim, "Slot 44, which Rockstar calls chassis 4. Vehicle-dependent: bodywork on some, a weapon or turret choice on weaponized ones. Listen to the option names." },
+            { VehicleModType.Tank, "Slot 45, which Rockstar calls chassis 5. What it holds depends entirely on the vehicle: on weaponized ones it is usually the MOUNTED WEAPON - plasma cannon, fifty calibre, missile pod and so on - and on bikes it is often the fuel tank. Listen to the option names; they are the only reliable guide." },
+            { VehicleModType.Windows, "Slot 46. Despite the name this is the LEFT DOOR slot, not window tint - tint is set separately and is not one of these categories. On some vehicles this slot is bodywork or a weapon." },
             { VehicleModType.Livery, "Livery. A painted design over the bodywork. Cosmetic." }
+        };
+
+        /// <summary>
+        /// The on-or-off upgrades. These are a separate list in the game -
+        /// VehicleToggleModType, slots 17 to 22 - and were missing from the guide
+        /// entirely, which left out turbo, the single biggest performance gain
+        /// after the engine.
+        /// </summary>
+        private static readonly Dictionary<VehicleToggleModType, string> ToggleEffects =
+            new Dictionary<VehicleToggleModType, string>
+        {
+            { VehicleToggleModType.Turbo, "Turbo. On or off. A large increase in acceleration and top speed - after the engine, the upgrade you feel most. You will hear it as well." },
+            { VehicleToggleModType.Nitrous, "Nitrous. On or off. A short burst of extra speed on demand, refilling over time. Only fitted to arena and some special vehicles." },
+            { VehicleToggleModType.SubWoofer, "Subwoofer. On or off. Cosmetic boot speakers." },
+            { VehicleToggleModType.TireSmoke, "Tyre smoke. On or off, with a colour chosen separately. Cosmetic - coloured smoke when the wheels spin." },
+            { VehicleToggleModType.Hydraulics, "Hydraulics switch. On or off - the older, simpler version of the hydraulic suspension listed above. No performance benefit." },
+            { VehicleToggleModType.XenonHeadlights, "Xenon headlights. On or off, with a colour chosen separately. Brighter lights - useful at night, and cosmetic otherwise." }
         };
 
         #endregion
@@ -381,6 +426,34 @@ namespace GrandTheftAccessibility
         public static List<VehicleModType> GetUpgradeTypes()
         {
             return new List<VehicleModType>(UpgradeEffects.Keys);
+        }
+
+        /// <summary>The on-or-off upgrades, in menu order.</summary>
+        public static List<VehicleToggleModType> GetToggleTypes()
+        {
+            return new List<VehicleToggleModType>(ToggleEffects.Keys);
+        }
+
+        /// <summary>What a given on-or-off upgrade does.</summary>
+        public static string GetToggleEffect(VehicleToggleModType type)
+        {
+            string effect;
+            return ToggleEffects.TryGetValue(type, out effect)
+                ? effect
+                : $"{type}. No description available.";
+        }
+
+        /// <summary>
+        /// The guidance that applies to the generic slots, spoken once when the
+        /// upgrade guide is opened. Without it the vehicle-dependent entries read
+        /// as evasive rather than as the honest answer they are.
+        /// </summary>
+        public static string GetSlotCaveat()
+        {
+            return "Note: several categories are numbered slots rather than fixed parts, " +
+                   "and hold different things on different vehicles. On weaponized vehicles " +
+                   "they usually carry the weapons. When a category says it is vehicle-dependent, " +
+                   "the option names read out in the Vehicle Mods menu are the reliable answer.";
         }
 
         /// <summary>What a given upgrade category does.</summary>
