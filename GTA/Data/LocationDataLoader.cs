@@ -368,6 +368,43 @@ namespace GrandTheftAccessibility.Data
             }
             categories.Add(emergency);
 
+            // Roads by type - spots verified by teleporting there and asking
+            // "Current Road Type", which logs the classifier's verdict
+            var highways = new TeleportCategory("Highways and Freeways");
+            foreach (var loc in LocationData.HighwaysAndFreeways)
+            {
+                highways.Locations.Add(loc);
+            }
+            categories.Add(highways);
+
+            var cityStreets = new TeleportCategory("City Streets");
+            foreach (var loc in LocationData.CityStreets)
+            {
+                cityStreets.Locations.Add(loc);
+            }
+            categories.Add(cityStreets);
+
+            var ruralRoads = new TeleportCategory("Rural Roads");
+            foreach (var loc in LocationData.RuralRoads)
+            {
+                ruralRoads.Locations.Add(loc);
+            }
+            categories.Add(ruralRoads);
+
+            var dirtRoads = new TeleportCategory("Dirt Roads and Trails");
+            foreach (var loc in LocationData.DirtRoadsAndTrails)
+            {
+                dirtRoads.Locations.Add(loc);
+            }
+            categories.Add(dirtRoads);
+
+            var tunnels = new TeleportCategory("Tunnels");
+            foreach (var loc in LocationData.Tunnels)
+            {
+                tunnels.Locations.Add(loc);
+            }
+            categories.Add(tunnels);
+
             return categories;
         }
 

@@ -20,6 +20,33 @@ namespace GrandTheftAccessibility.Data
     }
 
     /// <summary>
+    /// A curated drive along a single road: teleport to the start, face the
+    /// right way, and autodrive to the end. The start and end are chosen on
+    /// the SAME road, so the game's own router keeps the car on it - that is
+    /// what makes these the reliable way to stay on one road type, where the
+    /// wander-based lock can only correct after the fact.
+    /// </summary>
+    public struct RoadDrive
+    {
+        public string Name { get; }
+        public string RoadTypeName { get; }
+        public Vector3 Start { get; }
+        public float StartHeading { get; }
+        public Vector3 End { get; }
+
+        public RoadDrive(string name, string roadTypeName,
+                         float startX, float startY, float startZ, float startHeading,
+                         float endX, float endY, float endZ)
+        {
+            Name = name;
+            RoadTypeName = roadTypeName;
+            Start = new Vector3(startX, startY, startZ);
+            StartHeading = startHeading;
+            End = new Vector3(endX, endY, endZ);
+        }
+    }
+
+    /// <summary>
     /// Represents a GPS waypoint destination
     /// </summary>
     public struct WaypointDestination
@@ -52,7 +79,12 @@ namespace GrandTheftAccessibility.Data
             "Blaine County",
             "Coastal and Beaches",
             "Remote Areas",
-            "Emergency Services"
+            "Emergency Services",
+            "Highways and Freeways",
+            "City Streets",
+            "Rural Roads",
+            "Dirt Roads and Trails",
+            "Tunnels"
         };
 
         #endregion
@@ -236,6 +268,201 @@ namespace GrandTheftAccessibility.Data
 
         #endregion
 
+        #region Teleport Locations - Roads by Type
+
+        // EVERY coordinate below came out of the in-game road survey
+        // (Core/RoadSurveyor.cs), not from map memory. Each one is a real
+        // vehicle node the game handed us, and each name is the street and
+        // zone the GAME reports for that node - so a point cannot sit on the
+        // wrong road, and cannot be called something it is not.
+        //
+        // The highway, tunnel and dirt entries are additionally proven by the
+        // node's own property flags: highway nodes all carried flag 64,
+        // tunnels flag 16, dirt trails flag 1 (off-road). Those three
+        // categories are fact rather than judgement.
+        //
+        // City and Rural are the two the flags cannot settle, because the game
+        // separates them only by traffic DENSITY, which measures how busy a
+        // road is and not how urban it is. So these two lists are filtered by
+        // the game's zone names instead: city spots are in Los Santos zones,
+        // rural spots in Blaine County ones. See the note on GetRoadTypeName.
+
+        public static readonly TeleportLocation[] HighwaysAndFreeways = new TeleportLocation[]
+        {
+            // Los Santos freeways
+            new TeleportLocation("La Puerta Freeway, Little Seoul", -379.8f, -943.5f, 32.3f, "Highways and Freeways"),
+            new TeleportLocation("Del Perro Freeway, Downtown", 133.0f, -524.3f, 33.1f, "Highways and Freeways"),
+            new TeleportLocation("Del Perro Freeway, Del Perro", -1606.8f, -752.5f, 10.4f, "Highways and Freeways"),
+            new TeleportLocation("Del Perro Freeway, Pacific Bluffs", -2030.8f, -433.8f, 10.4f, "Highways and Freeways"),
+            new TeleportLocation("Los Santos Freeway, East Vinewood", 740.5f, -87.5f, 54.7f, "Highways and Freeways"),
+            new TeleportLocation("Los Santos Freeway, Vinewood Hills", 1376.0f, 674.8f, 78.8f, "Highways and Freeways"),
+            new TeleportLocation("Olympic Freeway, Strawberry", 317.3f, -1182.3f, 37.3f, "Highways and Freeways"),
+            new TeleportLocation("Elysian Fields Freeway, Cypress Flats", 933.5f, -2595.3f, 47.3f, "Highways and Freeways"),
+            new TeleportLocation("Elysian Fields Freeway, El Burro Heights", 1324.3f, -2253.5f, 50.8f, "Highways and Freeways"),
+            new TeleportLocation("Palomino Freeway, Palomino Highlands", 1633.5f, -956.3f, 62.3f, "Highways and Freeways"),
+            new TeleportLocation("Palomino Freeway, Tataviam Mountains", 2521.0f, 190.5f, 103.1f, "Highways and Freeways"),
+
+            // The coast road and the country freeways
+            new TeleportLocation("Great Ocean Highway, Pacific Bluffs", -2702.8f, -21.5f, 14.6f, "Highways and Freeways"),
+            new TeleportLocation("Great Ocean Highway, Banham Canyon", -3001.5f, 340.0f, 13.6f, "Highways and Freeways"),
+            new TeleportLocation("Great Ocean Highway, Lago Zancudo", -2628.8f, 2834.5f, 15.7f, "Highways and Freeways"),
+            new TeleportLocation("Great Ocean Highway, North Chumash", -2338.0f, 4087.5f, 32.3f, "Highways and Freeways"),
+            new TeleportLocation("Great Ocean Highway, Raton Canyon", -2076.5f, 4451.8f, 58.1f, "Highways and Freeways"),
+            new TeleportLocation("Great Ocean Highway, Mount Chiliad wilderness", -1618.8f, 4877.3f, 60.0f, "Highways and Freeways"),
+            new TeleportLocation("Great Ocean Highway, Paleto Bay", 432.5f, 6568.5f, 26.1f, "Highways and Freeways"),
+            new TeleportLocation("Senora Freeway, Grand Senora Desert", 2291.5f, 2832.0f, 40.8f, "Highways and Freeways"),
+            new TeleportLocation("Senora Freeway, San Chianski Mountains", 2825.3f, 3445.8f, 54.4f, "Highways and Freeways"),
+            new TeleportLocation("Senora Freeway, Braddock Pass", 2427.8f, 5668.5f, 44.2f, "Highways and Freeways"),
+            new TeleportLocation("Senora Freeway, Mount Chiliad", 1757.8f, 6370.5f, 35.8f, "Highways and Freeways")
+        };
+
+        public static readonly TeleportLocation[] CityStreets = new TeleportLocation[]
+        {
+            new TeleportLocation("Hawick Avenue, Hawick", 140.8f, -180.0f, 53.5f, "City Streets"),
+            new TeleportLocation("Hawick Avenue, Burton", -330.0f, -21.3f, 46.9f, "City Streets"),
+            new TeleportLocation("Vespucci Boulevard, Pillbox Hill", -122.5f, -916.0f, 28.3f, "City Streets"),
+            new TeleportLocation("Popular Street, East Vinewood", 679.5f, -416.8f, 40.5f, "City Streets"),
+            new TeleportLocation("Eclipse Boulevard, West Vinewood", -633.3f, 264.8f, 80.6f, "City Streets"),
+            new TeleportLocation("West Eclipse Boulevard, Morningwood", -1488.3f, -109.5f, 50.1f, "City Streets"),
+            new TeleportLocation("West Eclipse Boulevard, Rockford Hills", -1059.5f, 256.3f, 63.2f, "City Streets"),
+            new TeleportLocation("Boulevard Del Perro, Rockford Hills", -825.8f, -88.3f, 36.9f, "City Streets"),
+            new TeleportLocation("Boulevard Del Perro, Del Perro", -1553.3f, -507.5f, 34.7f, "City Streets"),
+            new TeleportLocation("Palomino Avenue, Rockford Hills", -633.8f, -460.8f, 33.8f, "City Streets"),
+            new TeleportLocation("Innocence Boulevard, Little Seoul", -507.0f, -1296.3f, 26.5f, "City Streets"),
+            new TeleportLocation("Dutch London Street, La Puerta", -759.0f, -1724.3f, 28.3f, "City Streets")
+        };
+
+        public static readonly TeleportLocation[] RuralRoads = new TeleportLocation[]
+        {
+            new TeleportLocation("Route 68, Grand Senora Desert", -0.8f, 2786.0f, 56.9f, "Rural Roads"),
+            new TeleportLocation("Route 68, Grand Senora Desert east", 2013.0f, 2987.3f, 44.4f, "Rural Roads"),
+            new TeleportLocation("Route 68, Zancudo River", -595.5f, 2855.5f, 33.7f, "Rural Roads"),
+            new TeleportLocation("Route 68, Tongva Hills", -2252.3f, 2276.5f, 31.7f, "Rural Roads"),
+            new TeleportLocation("Marina Drive, Sandy Shores", 1945.3f, 3922.5f, 31.5f, "Rural Roads"),
+            new TeleportLocation("Marina Drive, Alamo Sea", 1214.5f, 3627.3f, 32.7f, "Rural Roads"),
+            new TeleportLocation("Marina Drive, Grand Senora Desert", 715.3f, 3587.5f, 31.9f, "Rural Roads"),
+            new TeleportLocation("Joshua Road, Sandy Shores", 1636.5f, 3484.0f, 35.6f, "Rural Roads"),
+            new TeleportLocation("East Joshua Road, Alamo Sea", 2364.0f, 3901.0f, 34.5f, "Rural Roads"),
+            new TeleportLocation("East Joshua Road, Grapeseed", 2640.8f, 4325.8f, 43.5f, "Rural Roads"),
+            new TeleportLocation("Grapeseed Main Street", 1779.5f, 5029.3f, 54.9f, "Rural Roads"),
+            new TeleportLocation("Buen Vino Road, Tongva Hills", -1848.0f, 1837.3f, 159.7f, "Rural Roads")
+        };
+
+        public static readonly TeleportLocation[] DirtRoadsAndTrails = new TeleportLocation[]
+        {
+            new TeleportLocation("North Calafia Way, Grapeseed", 1701.0f, 4570.8f, 40.2f, "Dirt Roads and Trails"),
+            new TeleportLocation("North Calafia Way, Mount Chiliad east", 1041.8f, 4445.8f, 51.3f, "Dirt Roads and Trails"),
+            new TeleportLocation("North Calafia Way, Mount Chiliad middle", 485.0f, 4354.3f, 59.5f, "Dirt Roads and Trails"),
+            new TeleportLocation("North Calafia Way, Mount Chiliad west", -42.3f, 4418.3f, 56.8f, "Dirt Roads and Trails"),
+            new TeleportLocation("Calafia Road, Zancudo River", 106.5f, 3431.3f, 38.4f, "Dirt Roads and Trails"),
+            new TeleportLocation("Calafia Road, Alamo Sea", -237.3f, 4040.5f, 35.0f, "Dirt Roads and Trails"),
+            new TeleportLocation("Catfish View, San Chianski Mountains", 3398.3f, 4901.8f, 35.0f, "Dirt Roads and Trails"),
+            new TeleportLocation("Paleto Boulevard, Paleto Forest", -423.3f, 5955.5f, 30.7f, "Dirt Roads and Trails"),
+            new TeleportLocation("Tataviam Mountains trail", 2268.5f, 1044.0f, 71.9f, "Dirt Roads and Trails"),
+            new TeleportLocation("Tataviam Mountains high trail", 2444.0f, 621.3f, 138.6f, "Dirt Roads and Trails")
+        };
+
+        public static readonly TeleportLocation[] Tunnels = new TeleportLocation[]
+        {
+            new TeleportLocation("Del Perro Freeway tunnel, Del Perro", -1297.5f, -720.8f, 10.1f, "Tunnels"),
+            new TeleportLocation("Great Ocean Highway tunnel, Lago Zancudo", -2585.5f, 3209.8f, 12.8f, "Tunnels"),
+            new TeleportLocation("Braddock Tunnel, Senora Freeway", 2349.8f, 5801.8f, 45.5f, "Tunnels"),
+            new TeleportLocation("Integrity Way underpass, Pillbox Hill", 147.3f, -582.8f, 30.1f, "Tunnels"),
+            new TeleportLocation("Carcer Way tunnel, Burton", -233.0f, -173.5f, 41.8f, "Tunnels"),
+            new TeleportLocation("Ginger Street tunnel, Little Seoul", -637.8f, -581.0f, 24.3f, "Tunnels")
+        };
+
+        #endregion
+
+        #region Road Drives
+
+        // MEASURED, not chosen. Every drive below is a road the survey walked
+        // end to end: the endpoints are the two furthest-apart nodes the game
+        // reported for that named street, the length is the real distance
+        // between them, and the start heading points from one to the other.
+        // The lengths in the names are therefore facts, which matters when the
+        // only way to judge a drive before taking it is hearing it described.
+        //
+        // Headings are GTA convention: counterclockwise, 0 north, 90 WEST.
+        public static readonly RoadDrive[] RoadDrives = new RoadDrive[]
+        {
+            // The longest road on the map: 435 surveyed nodes, coast to coast
+            new RoadDrive("Great Ocean Highway, the full coast road, 7.8 kilometres", "highway",
+                1596.3f, 6395.3f, 25.3f, 144f,
+                -2971.0f, 106.8f, 13.0f),
+
+            new RoadDrive("Senora Freeway, south to Paleto, 5 kilometres", "highway",
+                1696.5f, 1400.0f, 85.4f, 1f,
+                1586.8f, 6419.0f, 24.2f),
+
+            new RoadDrive("Route 68, across the desert, 5 kilometres", "rural road",
+                2307.0f, 2992.5f, 46.0f, 98f,
+                -2683.5f, 2284.0f, 19.5f),
+
+            new RoadDrive("Olympic Freeway, into the city, 3.6 kilometres", "highway",
+                2115.3f, 1354.8f, 74.5f, 136f,
+                -342.8f, -1229.0f, 47.7f),
+
+            new RoadDrive("Los Santos Freeway, hills to downtown, 3.3 kilometres", "highway",
+                1888.0f, 2357.3f, 54.3f, 154f,
+                437.0f, -558.0f, 44.7f),
+
+            new RoadDrive("Del Perro Freeway, east to west, 3.2 kilometres", "highway",
+                -2030.8f, -433.8f, 10.4f, 260f,
+                1068.0f, -1006.5f, 32.3f),
+
+            new RoadDrive("Palomino Freeway, 2.8 kilometres", "highway",
+                2041.0f, 1519.0f, 74.8f, 163f,
+                1217.5f, -1176.5f, 50.5f),
+
+            new RoadDrive("Marlowe Drive, through Vinewood Hills, 2.8 kilometres", "hill road",
+                -1611.0f, 980.0f, 153.0f, 264f,
+                1156.3f, 693.8f, 131.1f),
+
+            new RoadDrive("San Andreas Avenue, across the city, 2.3 kilometres", "city street",
+                1039.8f, -829.8f, 47.7f, 91f,
+                -1242.3f, -882.3f, 11.3f),
+
+            new RoadDrive("Vespucci Boulevard, city crossing, 2.4 kilometres", "city street",
+                1109.5f, -957.8f, 46.1f, 91f,
+                -1301.8f, -986.3f, 3.2f),
+
+            new RoadDrive("Popular Street, north to south, 2.1 kilometres", "city street",
+                623.3f, -381.3f, 42.4f, 182f,
+                711.5f, -2442.0f, 18.9f),
+
+            // The two real dirt roads the survey found, both off-road flagged
+            new RoadDrive("North Calafia Way, the long dirt road, 1.9 kilometres", "dirt trail",
+                1701.0f, 4570.8f, 40.2f, 100f,
+                -194.3f, 4221.0f, 43.9f),
+
+            new RoadDrive("Calafia Road, dirt along the river, 1.9 kilometres", "dirt trail",
+                1513.8f, 4537.0f, 52.3f, 117f,
+                -185.3f, 3689.8f, 43.1f),
+
+            new RoadDrive("Elysian Fields Freeway, dockside, 1.8 kilometres", "highway",
+                270.8f, -2669.8f, 17.3f, 333f,
+                1085.3f, -1060.3f, 37.6f),
+
+            new RoadDrive("El Burro Boulevard, east side, 1.8 kilometres", "rural road",
+                1984.8f, -938.8f, 78.2f, 155f,
+                1220.5f, -2607.8f, 41.1f),
+
+            new RoadDrive("Marina Drive, along the Alamo Sea, 1.7 kilometres", "rural road",
+                353.8f, 3564.3f, 32.5f, 276f,
+                2053.8f, 3736.5f, 31.9f),
+
+            new RoadDrive("Buen Vino Road, Tongva Hills, 1.2 kilometres", "rural road",
+                -2647.5f, 1522.3f, 117.1f, 305f,
+                -1653.8f, 2217.0f, 87.7f),
+
+            new RoadDrive("Procopio Promenade, Paleto coast, 1.2 kilometres", "rural road",
+                -790.5f, 5539.3f, 32.7f, 329f,
+                -185.3f, 6556.0f, 10.1f)
+        };
+
+        #endregion
+
         #region All Teleport Locations Combined
 
         /// <summary>
@@ -254,6 +481,11 @@ namespace GrandTheftAccessibility.Data
                 case 6: return CoastalAndBeaches;
                 case 7: return RemoteAreas;
                 case 8: return EmergencyServices;
+                case 9: return HighwaysAndFreeways;
+                case 10: return CityStreets;
+                case 11: return RuralRoads;
+                case 12: return DirtRoadsAndTrails;
+                case 13: return Tunnels;
                 default: return CharacterHouses;
             }
         }

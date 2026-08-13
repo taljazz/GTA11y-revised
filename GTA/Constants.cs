@@ -613,9 +613,85 @@ namespace GrandTheftAccessibility
         public const ulong NATIVE_SET_DRIVER_AGGRESSIVENESS = 0xA731F608CA104E3C;
         public const ulong NATIVE_GET_CLOSEST_VEHICLE_NODE_WITH_HEADING = 0xFF071FB798B803B0;
         public const ulong NATIVE_GET_VEHICLE_NODE_PROPERTIES = 0x0568566ACBB5DEDC;
-        public const ulong NATIVE_GENERATE_DIRECTIONS_TO_COORD = 0xF90125F1F79ECDF8;
+        // GENERATE_DIRECTIONS_TO_COORD is deliberately absent. It was called
+        // with ten arguments when it takes seven, so map coordinates were being
+        // used as output-pointer addresses and written through - the memory
+        // corruption behind a run of game crashes, found 2026-08-12. It also
+        // returns the distance to the next junction rather than to the
+        // destination, so it was the wrong native for the job regardless.
+        // If a real road distance is ever needed, do not resurrect this.
+        // CLEAR_PED_TASKS_IMMEDIATELY is deliberately NOT here: on a seated ped
+        // it "teleports the ped" out of the vehicle. It ejected the player at
+        // aircraft autopilot release and again at autodrive stop before both
+        // were switched to CLEAR_PED_TASKS + CLEAR_PRIMARY_VEHICLE_TASK.
         public const ulong NATIVE_CLEAR_PED_TASKS = 0xE1EF3C1216AFF2CD;
-        public const ulong NATIVE_CLEAR_PED_TASKS_IMMEDIATELY = 0xAAA34F8A7CB32098;
+
+        // ===== ROAD TYPE LOCK (stay on the chosen road type) =====
+
+        // The wander AI cannot be told to prefer a road type, so the lock works
+        // by watching the classifier and driving back to the last on-type spot
+        // when the wander strays. The grace period lets it cross intersections
+        // and short connecting stretches without a false correction.
+        public const long ROAD_LOCK_CHECK_INTERVAL = 1000;        // ms between lock checks
+        public const long ROAD_LOCK_OFF_TYPE_GRACE_MS = 6000;     // how long off-type before turning back
+        public const float ROAD_LOCK_ARRIVAL_RADIUS = 12f;        // arrival radius for the turn-back drive
+        public const long ROAD_LOCK_RETURN_TIMEOUT_MS = 45000;    // give up on a turn-back after this long
+        public const int ROAD_LOCK_STRUGGLE_COUNT = 4;            // corrections inside the window before advising
+        public const long ROAD_LOCK_STRUGGLE_WINDOW_MS = 120000;  // window for counting corrections
+
+        // ===== ROAD SURVEY (map-wide road node sweep) =====
+
+        // Los Santos and Blaine County together. Generous on purpose - probes
+        // outside the road network simply find no node and cost nothing.
+        public const float SURVEY_MIN_X = -4000f;
+        public const float SURVEY_MAX_X = 4500f;
+        public const float SURVEY_MIN_Y = -4000f;
+        public const float SURVEY_MAX_Y = 8200f;
+
+        // Node searches snap to the nearest node, so the grid only has to be
+        // fine enough that no road is missed entirely - not fine enough to hit
+        // every node. Asking for the 1st and 2nd closest at each point catches
+        // roads running parallel, which a single query would collapse into one.
+        public const float SURVEY_GRID_SPACING = 60f;
+        public const int SURVEY_NODES_PER_POINT = 2;
+        // Each probe is a spatial node search plus a properties lookup plus
+        // naming, times SURVEY_NODES_PER_POINT. Kept modest so the frame stays
+        // smooth - a stutter is disorienting when the screen is not the thing
+        // you are navigating by. The whole sweep still finishes in seconds.
+        public const int SURVEY_PROBES_PER_TICK = 150;
+        public const float SURVEY_DEDUPE_RADIUS = 8f;       // same node if within this
+        public const int SURVEY_LOAD_TIMEOUT_MS = 30000;    // waiting for all path nodes
+
+        // Curation of the results: spots per road type, and how far apart they
+        // must be so the list is a tour of the map rather than one street
+        public const int SURVEY_PICKS_PER_TYPE = 40;
+        public const float SURVEY_PICK_MIN_SEPARATION = 400f;
+
+        // A road worth driving end to end: enough nodes to be a real road, and
+        // endpoints far enough apart to be a journey
+        public const int SURVEY_ROUTE_MIN_NODES = 8;
+        public const float SURVEY_ROUTE_MIN_LENGTH = 800f;
+        public const int SURVEY_ROUTES_PER_TYPE = 12;
+
+        public const string SURVEY_FILE_NAME = "gta11yRoadSurvey.json";
+
+        // How long to let a road-trip teleport settle before handing the
+        // vehicle AI a route. Warping several kilometres and tasking in the
+        // same frame crashed the game - the arrival area has no collision or
+        // path nodes yet. Long enough to stream, short enough not to feel
+        // broken.
+        public const long ROAD_TRIP_SETTLE_MS = 1500;
+
+        // How many autodrive updates to narrate when a road trip starts, so a
+        // native crash leaves a trail naming the subsystem that ran last.
+        // At the 200 ms update throttle this covers the first ~8 seconds.
+        public const int DRIVE_BREADCRUMB_UPDATES = 40;
+
+        // NODE_FLAGS for the node search, from Rockstar's commands_path.sch.
+        // NF_NONE: do NOT include switched-off nodes. The classifier discards
+        // them anyway, so asking for them would only spend probes on nodes that
+        // can never be classified.
+        public const int SURVEY_NODE_SEARCH_FLAGS = 0;
 
         // ===== ROAD TYPE DETECTION =====
 
@@ -772,9 +848,42 @@ namespace GrandTheftAccessibility
         public const float TASK_DEVIATION_THRESHOLD = 10f;                // Only re-issue task if deviated >10m from path
         public const float TASK_HEADING_DEVIATION_THRESHOLD = 45f;        // Only re-issue if heading differs >45° from target
 
+        // Rate limiting for task re-issue. Each re-issue makes the game replan
+        // the whole remaining route, and the deviation test stays true until the
+        // car turns, so without a floor it fires on every update - measured at
+        // 224 ms apart, and the game crashed during one of those bursts.
+        public const long TASK_REISSUE_COOLDOWN = 3000;        // ms between re-issues
+        public const int TASK_REISSUE_MAX_CONSECUTIVE = 3;     // then hand over to recovery
+        public const long TASK_REISSUE_BACKOFF = 15000;        // ms of quiet after giving up
+
+        // How long after the last style change to rebuild the drive task once,
+        // so cycling through the styles to hear them rebuilds it only once
+        public const long STYLE_SETTLE_DELAY = 3000;
+
         // Progress timeout (waypoint mode)
         public const long PROGRESS_TIMEOUT_TICKS = 30_000;           // 30 seconds without progress = timeout
         public const float PROGRESS_DISTANCE_THRESHOLD = 10f;             // Must get 10m closer within timeout
+
+        // ===== WHEN NOT TO RECOVER =====
+        //
+        // Recovery exists for a car that CANNOT proceed. A car waiting at a red
+        // light, queued behind traffic, or driving through a tunnel can proceed
+        // perfectly well - it just is not moving toward the destination in a
+        // straight line this second. Reversing such a car into the road behind
+        // it is worse than doing nothing, and it is what the mod was doing.
+
+        /// <summary>A car moving at least this fast is going somewhere, whatever the map says.</summary>
+        public const float PROGRESS_MOVING_SPEED = 3f;
+
+        /// <summary>Vehicle ahead closer than this counts as queued in traffic.</summary>
+        public const float BLOCKED_BY_TRAFFIC_DISTANCE = 12f;
+
+        /// <summary>
+        /// Ceiling on how long a legitimate wait excuses a lack of progress.
+        /// Without it, a car wedged against something that happens to look like
+        /// traffic would be excused forever and never recover.
+        /// </summary>
+        public const long MAX_LEGITIMATE_WAIT = 45_000;
 
         // Vehicle state thresholds
         public const float VEHICLE_UPRIGHT_THRESHOLD = 0.5f;              // Dot product with up vector (< 0.5 = flipped)
@@ -1134,7 +1243,6 @@ namespace GrandTheftAccessibility
         public const int SAFE_COORD_FLAGS = 16;                           // Flags for GET_SAFE_COORD_FOR_PED
 
         // Road distance sanity check
-        public const float ROAD_DISTANCE_SANITY_MAX = 50000f;             // meters - max sensible road distance for ETA
 
         // Waypoint moved threshold
         public const float WAYPOINT_MOVED_THRESHOLD = 50f;                // meters - waypoint movement to trigger recalc
@@ -1217,6 +1325,50 @@ namespace GrandTheftAccessibility
             if (index >= 0 && index < ROAD_TYPE_NAMES.Length)
                 return ROAD_TYPE_NAMES[index];
             return "unknown road";
+        }
+
+        /// <summary>
+        /// The plural spoken form for a RoadType's enum NAME, for reading a
+        /// survey summary aloud ("412 highways" rather than "412 Highway").
+        /// Takes the name rather than the enum because the survey file stores
+        /// its counts keyed by name.
+        /// </summary>
+        public static string GetRoadTypeSpokenName(string roadTypeName)
+        {
+            RoadType parsed;
+            if (!TryParseRoadType(roadTypeName, out parsed))
+                return roadTypeName;
+
+            switch (parsed)
+            {
+                case RoadType.Highway: return "highway points";
+                case RoadType.CityStreet: return "city street points";
+                case RoadType.Suburban: return "suburban road points";
+                case RoadType.Rural: return "rural road points";
+                case RoadType.DirtTrail: return "dirt trail points";
+                case RoadType.Tunnel: return "tunnel points";
+                default: return "unclassified points";
+            }
+        }
+
+        /// <summary>Parse a RoadType from its enum name, without throwing.</summary>
+        public static bool TryParseRoadType(string name, out RoadType roadType)
+        {
+            roadType = RoadType.Unknown;
+
+            if (string.IsNullOrEmpty(name))
+                return false;
+
+            foreach (RoadType candidate in (RoadType[])System.Enum.GetValues(typeof(RoadType)))
+            {
+                if (string.Equals(candidate.ToString(), name, System.StringComparison.OrdinalIgnoreCase))
+                {
+                    roadType = candidate;
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -1397,6 +1549,32 @@ namespace GrandTheftAccessibility
 
         // Player model swapping (PlayerModelManager)
         public const int MODEL_REQUEST_TIMEOUT_MS = 3000;        // how long to wait for a DLC ped model to stream in
+
+        // Ballistic suit treatment, matching Rockstar's own numbers: the Paleto
+        // Score gives the suited player 1000 max health (SET_PED_MAX_HEALTH_WITH_SCALE
+        // in rural_bank_heist_support.sch) and hands out the big guns with 1500
+        // rounds. The durability of the online suit is this health figure - the
+        // scripts add no damage modifiers or headshot immunity on top of it.
+        public const int SUIT_MAX_HEALTH = 1000;                 // max health while wearing the ballistic suit
+        public const int SUIT_MINIGUN_AMMO = 1500;               // ammo given with the suit's minigun
+        public const long SUIT_AUDIO_REASSERT_INTERVAL = 2000;   // ms between putting the suit's audio settings back
+
+        // The mod's own footfall for the suit, because Rockstar's juggernaut
+        // footstep sound set produces nothing audible in story mode even when
+        // applied exactly as their scripts do. Low and short - a tread, not a
+        // beep, and deliberately below the warning tones in pitch so it never
+        // competes with them.
+        public const double SUIT_FOOTSTEP_FREQUENCY = 70.0;      // Hz, a low thud
+        public const double SUIT_FOOTSTEP_GAIN = 0.30;
+        public const double SUIT_FOOTSTEP_DURATION_SECONDS = 0.09;
+
+        // Step cadence. The suit cannot sprint, so walking and running are the
+        // only two speeds that matter; pace is derived from actual speed so the
+        // tread matches the movement rather than ticking like a metronome.
+        public const float SUIT_FOOTSTEP_MIN_SPEED = 0.5f;        // m/s below which there are no steps
+        public const long SUIT_FOOTSTEP_WALK_INTERVAL = 620;      // ms per step at a walk
+        public const long SUIT_FOOTSTEP_RUN_INTERVAL = 330;       // ms per step at a run
+        public const float SUIT_FOOTSTEP_RUN_SPEED = 3.5f;        // m/s counted as running
 
         // Interiors are not necessarily active the instant REQUEST_IPL returns,
         // so the read-back that reports the real result waits this long.

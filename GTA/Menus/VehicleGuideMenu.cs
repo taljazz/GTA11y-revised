@@ -72,6 +72,7 @@ namespace GrandTheftAccessibility.Menus
 
                 case ITEM_UPGRADE_GUIDE:
                     EnterSubmenu();
+                    Logger.Info($"GUIDE|upgrades|categories={SubmenuItemCount}");
                     // The caveat comes first: several categories are numbered
                     // slots that mean different things on different vehicles,
                     // and hearing that up front stops the rest being read as
@@ -154,6 +155,12 @@ namespace GrandTheftAccessibility.Menus
 
             try
             {
+                // Log which vehicle was asked about and whether it had a
+                // hand-written note - that is the only way to find out from a
+                // test session which vehicles fell back to the generic facts
+                bool curated = VehicleDescriber.GetCuratedNote(vehicle.Model) != null;
+                Logger.Info($"GUIDE|describe|hash={vehicle.Model.Hash}|curated={curated}");
+
                 Speak(VehicleDescriber.GetFullDescription(vehicle.Model));
             }
             catch (Exception ex)

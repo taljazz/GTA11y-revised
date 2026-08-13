@@ -61,6 +61,12 @@ namespace GrandTheftAccessibility
         private bool _collisionBeepInitialized;
         private long _collisionBeepStopTick;
 
+        // Ballistic suit footfall - a short low thud, one per step
+        private readonly WaveOutEvent _footstepOut;
+        private readonly SignalGenerator _footstepGenerator;
+        private bool _footstepInitialized;
+        private long _footstepStopTick;
+
         private bool _disposed;
         private string _lastSpokenText = "";
 
@@ -204,6 +210,17 @@ namespace GrandTheftAccessibility
             };
             _collisionBeepOut = new WaveOutEvent();
             _collisionBeepInitialized = false;
+
+            // Sine rather than square: a footfall should read as a soft thud
+            // underfoot, not as an alarm competing with the warning tones
+            _footstepGenerator = new SignalGenerator
+            {
+                Gain = Constants.SUIT_FOOTSTEP_GAIN,
+                Frequency = Constants.SUIT_FOOTSTEP_FREQUENCY,
+                Type = SignalGeneratorType.Sin
+            };
+            _footstepOut = new WaveOutEvent();
+            _footstepInitialized = false;
         }
 
         #endregion
@@ -638,6 +655,47 @@ namespace GrandTheftAccessibility
         }
 
         /// <summary>
+        /// One footfall of the ballistic suit: a short low thud.
+        ///
+        /// Rockstar's own juggernaut footstep sound set is applied to the ped
+        /// exactly as their scripts do it, and in story mode it produces
+        /// nothing audible. Rather than leave the suit silent, the mod makes
+        /// its own footfall. For a player who cannot see the armour, the weight
+        /// of it IS the heavy tread - so this is not a cosmetic nicety, it is
+        /// the whole experience of wearing the thing.
+        /// </summary>
+        public void PlaySuitFootstep()
+        {
+            if (_disposed || _footstepOut == null || _footstepGenerator == null) return;
+
+            try
+            {
+                _footstepOut.Stop();
+
+                if (!_footstepInitialized)
+                {
+                    _footstepOut.Init(_footstepGenerator);
+                    _footstepInitialized = true;
+                }
+
+                _footstepOut.Play();
+                _footstepStopTick = DateTime.Now.Ticks +
+                                    (long)(Constants.SUIT_FOOTSTEP_DURATION_SECONDS * 10_000_000);
+            }
+            catch (Exception ex)
+            {
+                Logger.Exception(ex, "AudioManager.PlaySuitFootstep");
+            }
+        }
+
+        /// <summary>Silence the footfall immediately.</summary>
+        public void StopSuitFootstep()
+        {
+            try { _footstepOut?.Stop(); } catch { /* Expected */ }
+            _footstepStopTick = 0;
+        }
+
+        /// <summary>
         /// Stop collision beep immediately (e.g., when AutoDrive stops)
         /// </summary>
         public void StopCollisionBeep()
@@ -668,7 +726,9 @@ namespace GrandTheftAccessibility
             try { _aircraftRollOut?.Stop(); } catch { /* Expected - audio device may be unavailable */ }
             try { _beaconOut?.Stop(); } catch { /* Expected - audio device may be unavailable */ }
             try { _collisionBeepOut?.Stop(); } catch { /* Expected - audio device may be unavailable */ }
+            try { _footstepOut?.Stop(); } catch { /* Expected - audio device may be unavailable */ }
 
+            _footstepStopTick = 0;
             _altitudeStopTick = 0;
             _pitchStopTick = 0;
             _aircraftPitchStopTick = 0;
@@ -725,6 +785,13 @@ namespace GrandTheftAccessibility
                     _beaconStopTick = 0;
                 }
 
+                // Stop the suit footfall after duration
+                if (_footstepStopTick > 0 && currentTick >= _footstepStopTick)
+                {
+                    try { _footstepOut?.Stop(); } catch { /* Expected - audio device may be unavailable */ }
+                    _footstepStopTick = 0;
+                }
+
                 // Stop collision beep after duration
                 if (_collisionBeepStopTick > 0 && currentTick >= _collisionBeepStopTick)
                 {
@@ -758,6 +825,9 @@ namespace GrandTheftAccessibility
 
             try { _collisionBeepOut?.Stop(); } catch { /* Expected during disposal */ }
             _collisionBeepOut?.Dispose();
+
+            try { _footstepOut?.Stop(); } catch { /* Expected during disposal */ }
+            _footstepOut?.Dispose();
 
             _pedTargetSound?.Dispose();
             _vehicleTargetSound?.Dispose();

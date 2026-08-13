@@ -480,6 +480,37 @@ namespace GrandTheftAccessibility
         }
 
         /// <summary>
+        /// Write one line straight to disk, bypassing the queue.
+        ///
+        /// Normal logging hands the line to a background writer, which is the
+        /// right trade for a game loop but useless for chasing a crash: when
+        /// the process dies, whatever is still sitting in that queue dies with
+        /// it, and the log ends several lines before the actual fault. Anything
+        /// tracing a crash must be written before the next instruction runs.
+        ///
+        /// Slow by design - one file open per call. Only for short bursts.
+        /// </summary>
+        public static void InfoImmediate(string message)
+        {
+            if (!_enabled || !_initialized || string.IsNullOrEmpty(_logFilePath))
+                return;
+
+            try
+            {
+                string line = $"[{DateTime.Now:HH:mm:ss.fff}] [INFO   ] {message}";
+
+                lock (_lock)
+                {
+                    File.AppendAllText(_logFilePath, line + Environment.NewLine);
+                }
+            }
+            catch
+            {
+                // Never let crash tracing be the thing that crashes
+            }
+        }
+
+        /// <summary>
         /// Flush pending logs and shutdown the logger
         /// </summary>
         #endregion

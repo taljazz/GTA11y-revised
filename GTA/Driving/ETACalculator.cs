@@ -13,9 +13,6 @@ namespace GrandTheftAccessibility
     {
         #region Fields
 
-        // PERFORMANCE: Pre-cached Hash value to avoid repeated casting
-        private static readonly Hash _generateDirectionsHash = (Hash)Constants.NATIVE_GENERATE_DIRECTIONS_TO_COORD;
-
         private readonly AudioManager _audio;
         private readonly AnnouncementQueue _announcementQueue;
 
@@ -27,11 +24,6 @@ namespace GrandTheftAccessibility
         private int _validSampleCount;     // OPTIMIZED: Track valid samples to avoid iterating whole array
         private float _runningSpeedTotal;  // OPTIMIZED: Running total for O(1) average calculation
         private float _averageSpeed;
-
-        // Pre-allocated OutputArguments
-        private readonly OutputArgument _roadDistanceArg = new OutputArgument();
-        private readonly OutputArgument _roadDirectionArg1 = new OutputArgument();
-        private readonly OutputArgument _roadDirectionArg2 = new OutputArgument();
 
         #endregion
 
@@ -147,38 +139,36 @@ namespace GrandTheftAccessibility
         }
 
         /// <summary>
-        /// Get estimated road distance to waypoint using GENERATE_DIRECTIONS_TO_COORD
-        /// Falls back to straight-line distance with road factor if native fails
+        /// Estimated road distance to the waypoint.
+        ///
+        /// This used to call GENERATE_DIRECTIONS_TO_COORD, and that call was
+        /// THE CRASH that took the game down repeatedly. Two things were wrong
+        /// with it, and the first is fatal:
+        ///
+        /// The native takes SEVEN arguments - a destination x, y, z, an int of
+        /// flags, and then three OUTPUT POINTERS. This passed TEN: a source
+        /// position AND a destination, then true, then the three outputs. So
+        /// everything landed one slot too far along. The game took the
+        /// destination's Y and Z - ordinary coordinate floats - as the
+        /// addresses of the direction and street-name outputs, and the literal
+        /// 1 from `true` as the address of the distance output, then wrote
+        /// through all three. Writing to addresses made of map coordinates is
+        /// memory corruption, which is why the crash wandered: sometimes those
+        /// addresses were unmapped and the game died on the spot, sometimes
+        /// they were writable and it died minutes later somewhere unrelated.
+        ///
+        /// The second problem makes the call pointless even done correctly.
+        /// Rockstar's own header says the float it returns is fApproxDistance,
+        /// "in the case of a junction being identified" - the distance to the
+        /// NEXT JUNCTION, not the distance along the road to the destination.
+        /// It was never the number this method wanted.
+        ///
+        /// So the estimate below is not a fallback any more, it is the answer:
+        /// straight-line distance scaled by how much longer roads run than the
+        /// crow flies. Roughly right, costs nothing, and cannot corrupt memory.
         /// </summary>
         public float GetRoadDistanceToWaypoint(Vector3 position, Vector3 waypointPos)
         {
-            try
-            {
-                // Use GENERATE_DIRECTIONS_TO_COORD to get road-aware distance estimate
-                int result = Function.Call<int>(
-                    _generateDirectionsHash,
-                    position.X, position.Y, position.Z,
-                    waypointPos.X, waypointPos.Y, waypointPos.Z,
-                    true,                   // p6: unknown, true seems standard
-                    _roadDirectionArg1,     // direction - not needed but must be passed
-                    _roadDirectionArg2,     // p8 - not needed but must be passed
-                    _roadDistanceArg);
-
-                if (result != 0) // 0 = failed, other values = success
-                {
-                    float roadDist = _roadDistanceArg.GetResult<float>();
-                    if (roadDist > 0 && roadDist < Constants.ROAD_DISTANCE_SANITY_MAX)
-                    {
-                        return roadDist;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                if (Logger.IsDebugEnabled) Logger.Debug($"GENERATE_DIRECTIONS_TO_COORD failed: {ex.Message}");
-            }
-
-            // Fallback: straight-line distance with road factor (roads are ~1.4x longer)
             float straightLine = (waypointPos - position).Length();
             return straightLine * Constants.ROAD_DISTANCE_FACTOR;
         }

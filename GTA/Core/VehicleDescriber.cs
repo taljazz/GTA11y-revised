@@ -177,20 +177,27 @@ namespace GrandTheftAccessibility
             // None of the three changes how the vehicle drives, and all three take
             // the same spikes and saw blades - spikes kill on contact, saw blades
             // burst tyres. So the theme is worth one clause, not a paragraph.
-            { "bruiser", "The Apocalypse Bruiser: a heavily armoured spiked muscle car built to ram, in rusted scrapyard finish." },
-            { "brutus", "The Apocalypse Brutus: an armoured monster truck on enormous wheels, built to drive over other cars. Rusted scrapyard finish." },
-            { "cerberus", "The Apocalypse Cerberus: an armoured lorry with a spiked ram and a flamethrower. Very heavy and devastating in a collision. Rusted scrapyard finish." },
-            { "imperator", "The Apocalypse Imperator: an armoured spiked saloon built for ramming, in rusted scrapyard finish." },
-            { "dominator4", "The Apocalypse Dominator: an armoured spiked muscle car, fast in a straight line and built to ram. Rusted scrapyard finish." },
-            { "issi4", "The Apocalypse Issi: a tiny city car turned arena weapon - armoured and spiked, and comically small next to the trucks. Rusted scrapyard finish." },
+            //
+            // Each Apocalypse entry also names what the vehicle is copying.
+            // Nearly the whole lineup is quoting something - Mad Max: Fury Road
+            // most of all, then Death Race - and that is the entire joke of the
+            // Arena War update. A player who can see the thing gets the
+            // reference immediately from its silhouette; anyone who cannot is
+            // simply told, which is the whole point of this file.
+            { "bruiser", "The Apocalypse Bruiser: a heavily armoured spiked muscle car built to ram, in rusted scrapyard finish. Its shape is a Mercedes-Benz W123 saloon, done up as the People Eater's limousine from Mad Max: Fury Road." },
+            { "brutus", "The Apocalypse Brutus: an armoured monster truck on enormous wheels, built to drive over other cars. Rusted scrapyard finish. The body underneath is a 1988 Chevrolet Silverado, the truck from the film Tango and Cash." },
+            { "cerberus", "The Apocalypse Cerberus: an armoured lorry with a spiked ram and a flamethrower. Very heavy and devastating in a collision. Rusted scrapyard finish. It is a Peterbilt 281 cab built into the War Rig from Mad Max: Fury Road, and the rust is a nod to the tanker that stalks the driver in the 1971 film Duel." },
+            { "imperator", "The Apocalypse Imperator: an armoured spiked saloon built for ramming, in rusted scrapyard finish. This is the most direct Mad Max reference in the game: a 1973 Ford Falcon XB GT, the Pursuit Special that Max drives, with a drooping nose borrowed from the Vauxhall Firenza. Even the name points at Imperator Furiosa." },
+            { "dominator4", "The Apocalypse Dominator: an armoured spiked muscle car, fast in a straight line and built to ram. Rusted scrapyard finish. It is the Monster, Frankenstein's armoured Ford Mustang from the 2008 film Death Race, down to the slab of plate armour across the tail." },
+            { "issi4", "The Apocalypse Issi: a tiny city car turned arena weapon - armoured and spiked, and comically small next to the trucks. Rusted scrapyard finish. Underneath it is a 1964 Mini Cooper S, wearing the off-road conversion and roll cage of the Mini from Mad Max: Fury Road." },
             { "monster3", "The Apocalypse Monster: an armoured monster truck on huge wheels, built to crush. Rusted scrapyard finish." },
-            { "sasquatch", "The Apocalypse Sasquatch: an armoured monster truck on huge wheels, built to crush. Rusted scrapyard finish." },
-            { "scarab", "The Apocalypse Scarab: a tracked armoured half-track, enormously heavy and nearly unstoppable in a straight line. Rusted scrapyard finish - bare welded plate, exposed hardware, towing hooks and a winch. Takes spikes and saw blades." },
-            { "slamvan4", "The Apocalypse Slamvan: an armoured spiked pickup built for ramming, in rusted scrapyard finish." },
-            { "zr380", "The Apocalypse ZR380: an armoured spiked sports car - lighter and faster than the arena trucks. Rusted scrapyard finish." },
+            { "sasquatch", "The Apocalypse Sasquatch: an armoured monster truck on huge wheels, built to crush. Rusted scrapyard finish. The bodywork is a 1940 Dodge W-Series pickup, matching the Bigfoot truck from Mad Max: Fury Road." },
+            { "scarab", "The Apocalypse Scarab: a tracked armoured half-track, enormously heavy and nearly unstoppable in a straight line. Rusted scrapyard finish - bare welded plate, exposed hardware, towing hooks and a winch. Takes spikes and saw blades. Unusually for this lineup it copies a real machine rather than a film car: the Howe and Howe Ripsaw, an American tracked vehicle sold to the military." },
+            { "slamvan4", "The Apocalypse Slamvan: an armoured spiked pickup built for ramming, in rusted scrapyard finish. The stubby, cab-forward shape comes from a chopped 1950 Ford F6 - the famous hot rod known as Stubby Bob." },
+            { "zr380", "The Apocalypse ZR380: an armoured spiked sports car - lighter and faster than the arena trucks. Rusted scrapyard finish. The base car is a Nissan 350Z crossed with a 370Z, with the huge arches of a Porsche 935." },
             { "revolter", "An Arena War sports saloon, armoured and quick. Sold in one finish rather than the three arena themes." },
-            { "deathbike", "The Apocalypse Deathbike: an armoured armed motorcycle, fast and fragile next to the cars. Rusted scrapyard finish." },
-            { "impaler2", "The Apocalypse Impaler: an armoured spiked muscle car built for ramming, in rusted scrapyard finish." },
+            { "deathbike", "The Apocalypse Deathbike: an armoured armed motorcycle, fast and fragile next to the cars. Rusted scrapyard finish. The front end is modelled on Daryl Dixon's chopper from The Walking Dead." },
+            { "impaler2", "The Apocalypse Impaler: an armoured spiked muscle car built for ramming, in rusted scrapyard finish. Its body and armour follow Pachenko's Buick from the film Death Race." },
             { "impaler3", "The Future Shock Impaler: the same armoured muscle car with clean painted bodywork and carbon trim." },
             { "impaler4", "The Nightmare Impaler: the Apocalypse muscle car in bright alternating colours." },
 

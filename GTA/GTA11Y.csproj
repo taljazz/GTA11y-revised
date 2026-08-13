@@ -104,6 +104,7 @@
     <Compile Include="Core\PlayerModelManager.cs" />
     <Compile Include="Core\InteriorManager.cs" />
     <Compile Include="Core\VehicleDescriber.cs" />
+    <Compile Include="Core\RoadSurveyor.cs" />
     <Compile Include="Core\TurretCrewManager.cs" />
     <Compile Include="Core\HealthArmorManager.cs" />
     <Compile Include="Core\VehicleDamageManager.cs" />
@@ -155,6 +156,8 @@
     <Compile Include="Menus\SettingsMenu.cs" />
     <Compile Include="Menus\AutoDriveMenu.cs" />
     <Compile Include="Menus\OnlineInteriorsMenu.cs" />
+    <Compile Include="Menus\RoadTripsMenu.cs" />
+    <Compile Include="Menus\TrailerMenu.cs" />
     <Compile Include="Menus\WeatherMenu.cs" />
     <Compile Include="Menus\TimeMenu.cs" />
     <Compile Include="Menus\VehicleGuideMenu.cs" />

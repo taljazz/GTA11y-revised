@@ -182,11 +182,18 @@ namespace GrandTheftAccessibility
         {
             try
             {
-                // Get road node properties
-                Function.Call(
+                // GET_VEHICLE_NODE_PROPERTIES returns FALSE when the node was
+                // not found or is not streamed in - Rockstar's own header says
+                // so. Ignoring that return read the output arguments anyway,
+                // which are stale or meaningless in that case, so an unloaded
+                // area could be classified from junk. Take Unknown instead.
+                bool valid = Function.Call<bool>(
                     _getVehicleNodePropsHash,
                     position.X, position.Y, position.Z,
                     _density, _flags);
+
+                if (!valid)
+                    return RoadType.Unknown;
 
                 int nodeFlags = _flags.GetResult<int>();
                 int nodeDensity = _density.GetResult<int>();
@@ -299,6 +306,11 @@ namespace GrandTheftAccessibility
 
                 Vector3 position = player.Position;
                 RoadType roadType = GetRoadTypeAtPosition(position);
+
+                // This keypress doubles as the verification tool for the road
+                // teleport spots: arrive, ask, and the verdict lands in the log
+                // next to the teleport that got you there
+                Logger.Info($"ROAD|verify|x={position.X:F1}|y={position.Y:F1}|z={position.Z:F1}|type={roadType}");
 
                 if (roadType != RoadType.Unknown && Constants.IsValidRoadType(roadType))
                 {

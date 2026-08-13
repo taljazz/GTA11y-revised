@@ -153,7 +153,7 @@ namespace GrandTheftAccessibility
                 Logger.Info("GTA11Y initialized successfully");
 
                 // Log session diagnostics for troubleshooting
-                Logger.LogSessionInfo("1.0.0", "3.4.0.0");
+                Logger.LogSessionInfo(DetectModVersion(), DetectShvdnVersion());
                 Logger.LogSettings(_settings.AllBoolSettings, _settings.AllIntSettings);
 
                 // Announce mod ready
@@ -499,7 +499,10 @@ namespace GrandTheftAccessibility
                 try
                 {
                     // AutoDrive navigation updates (0.2s throttle)
-                    if (_menu.IsAutoDriveActive &&
+                    // A queued start counts as active here: the deferred starts
+                    // are set right after Stop() turned autodrive off, so
+                    // gating on IsAutoDriveActive alone left them never running
+                    if ((_menu.IsAutoDriveActive || _menu.HasPendingAutoDriveStart) &&
                         currentTick - _lastAutoDriveTick > Constants.TICK_INTERVAL_AUTODRIVE_UPDATE)
                     {
                         _lastAutoDriveTick = currentTick;
@@ -570,6 +573,16 @@ namespace GrandTheftAccessibility
 
             // Holds the game clock to the system clock when that is switched on
             _menu.UpdateClockSync(currentTick);
+
+            // Ballistic suit upkeep - re-blocks jumping, rolling, melee and
+            // vehicle entry, which the game forgets every frame
+            _menu.UpdatePlayerModel();
+
+            // Advances a running map road survey, a slice per frame
+            _menu.UpdateRoadSurvey(currentTick);
+
+            // Starts a road-trip drive once its teleport has settled
+            _menu.UpdateRoadTrips(currentTick);
 
             // Pedestrian navigation (when on foot and active)
             if (_menu.IsPedestrianNavigationActive && currentVehicle == null)
@@ -1234,6 +1247,65 @@ namespace GrandTheftAccessibility
             catch (Exception ex)
             {
                 Logger.Exception(ex, "OnKeyUp");
+            }
+        }
+
+        #endregion
+
+        #region Session Diagnostics
+
+        /// <summary>
+        /// The real ScriptHookVDotNet version, read at runtime.
+        ///
+        /// This used to be the hardcoded string "3.4.0.0", which was wrong and
+        /// wrong in a way that cost time: the nightly builds leave their ASSEMBLY
+        /// version at 3.4.0.0 for compatibility while the actual build is 3.7.x,
+        /// so the one line in the log a person would check to answer "which SHVDN
+        /// is this running against" asserted the old version no matter what was
+        /// installed. The file version carries the truth, so report both when they
+        /// disagree rather than picking one and hoping.
+        /// </summary>
+        private static string DetectShvdnVersion()
+        {
+            try
+            {
+                System.Reflection.Assembly shvdn = typeof(Script).Assembly;
+
+                string assemblyVersion = shvdn.GetName().Version?.ToString() ?? "unknown";
+                string fileVersion = null;
+
+                try
+                {
+                    if (!string.IsNullOrEmpty(shvdn.Location))
+                        fileVersion = System.Diagnostics.FileVersionInfo
+                            .GetVersionInfo(shvdn.Location).FileVersion;
+                }
+                catch
+                {
+                    // Location can be empty for assemblies loaded from memory
+                }
+
+                if (string.IsNullOrEmpty(fileVersion) || fileVersion == assemblyVersion)
+                    return assemblyVersion;
+
+                return $"{fileVersion} (assembly reports {assemblyVersion})";
+            }
+            catch
+            {
+                return "unknown";
+            }
+        }
+
+        /// <summary>Our own version, read from the assembly rather than retyped.</summary>
+        private static string DetectModVersion()
+        {
+            try
+            {
+                return typeof(GTA11Y).Assembly.GetName().Version?.ToString() ?? "unknown";
+            }
+            catch
+            {
+                return "unknown";
             }
         }
 

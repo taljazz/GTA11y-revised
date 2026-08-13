@@ -23,6 +23,8 @@ namespace GrandTheftAccessibility.Menus
         private readonly PedestrianNavigationManager _pedNav;
         private readonly PlayerModelManager _playerModel;
         private readonly InteriorManager _interiors;
+        private readonly RoadSurveyor _roadSurveyor;
+        private readonly RoadTripsMenu _roadTripsMenu;
         private readonly TimeMenu _timeMenu;
         private int _currentMenuIndex;
 
@@ -38,6 +40,11 @@ namespace GrandTheftAccessibility.Menus
             // Create AutoDrive manager and menu
             _autoDriveManager = new AutoDriveManager(audio, settings);
             _autoDriveMenu = new AutoDriveMenu(_autoDriveManager, audio);
+
+            // Create the road surveyor, sharing AutoDrive's classifier so the
+            // survey and the live announcements can never disagree
+            _roadSurveyor = new RoadSurveyor(audio, _autoDriveManager.RoadTypes);
+            _roadTripsMenu = new RoadTripsMenu(_autoDriveManager, _roadSurveyor, audio);
 
             // Create PlayerModelManager (owns the online model swap, and must be
             // able to restore the original model on shutdown)
@@ -86,6 +93,7 @@ namespace GrandTheftAccessibility.Menus
                 new LocationMenu(audio),
                 new WaypointMenu(audio),
                 _autoDriveMenu,
+                _roadTripsMenu,
                 _aircraftLandingMenu,
                 new VehicleCategoryMenu(settings, audio),
                 new VehicleModMenuProxy(settings, audio),
@@ -97,6 +105,7 @@ namespace GrandTheftAccessibility.Menus
                 new WeatherMenu(audio),
                 _timeMenu,
                 new VehicleGuideMenu(audio),
+                new TrailerMenu(audio),
                 new SettingsMenu(settings, audio),
                 new HelpMenu(hotkeys, audio)
             };
@@ -248,6 +257,12 @@ namespace GrandTheftAccessibility.Menus
         public bool IsAutoDriveActive => _autoDriveManager.IsActive;
 
         /// <summary>
+        /// Whether a drive is queued for a later frame. The tick has to keep
+        /// pumping AutoDrive for these to ever run - see HasPendingStart.
+        /// </summary>
+        public bool HasPendingAutoDriveStart => _autoDriveManager.HasPendingStart;
+
+        /// <summary>
         /// Stop AutoDrive if active
         /// </summary>
         public void StopAutoDrive()
@@ -341,6 +356,34 @@ namespace GrandTheftAccessibility.Menus
         public void UpdateClockSync(long currentTick)
         {
             _timeMenu.Update(currentTick);
+        }
+
+        /// <summary>
+        /// Per-frame upkeep for the ballistic suit - the blocked actions only
+        /// hold for the frame they are asked for. Does nothing when the suit
+        /// is off.
+        /// </summary>
+        public void UpdatePlayerModel()
+        {
+            _playerModel?.Update();
+        }
+
+        /// <summary>
+        /// Advances a running map survey. Does nothing when none is running.
+        /// </summary>
+        public void UpdateRoadSurvey(long currentTick)
+        {
+            _roadSurveyor?.Update(currentTick);
+        }
+
+        /// <summary>
+        /// Starts a road-trip drive once its teleport has settled. Must run
+        /// every tick regardless of whether autodrive is active, since the
+        /// whole point is that the drive has not started yet.
+        /// </summary>
+        public void UpdateRoadTrips(long currentTick)
+        {
+            _roadTripsMenu?.Update(currentTick);
         }
 
         /// <summary>

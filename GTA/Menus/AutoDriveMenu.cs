@@ -15,12 +15,13 @@ namespace GrandTheftAccessibility.Menus
         private const int ITEM_WANDER = 0;
         private const int ITEM_WAYPOINT = 1;
         private const int ITEM_SEEK_ROAD = 2;
-        private const int ITEM_DRIVING_STYLE = 3;
-        private const int ITEM_CURRENT_ROAD = 4;
-        private const int ITEM_STOP = 5;
-        private const int ITEM_INCREASE_SPEED = 6;
-        private const int ITEM_DECREASE_SPEED = 7;
-        private const int ITEM_STATUS = 8;
+        private const int ITEM_HOLD_ROAD = 3;
+        private const int ITEM_DRIVING_STYLE = 4;
+        private const int ITEM_CURRENT_ROAD = 5;
+        private const int ITEM_STOP = 6;
+        private const int ITEM_INCREASE_SPEED = 7;
+        private const int ITEM_DECREASE_SPEED = 8;
+        private const int ITEM_STATUS = 9;
 
         #endregion
 
@@ -48,6 +49,7 @@ namespace GrandTheftAccessibility.Menus
                 "Start Wander Mode",
                 "Drive to Waypoint",
                 "Seek Road Type",
+                "Stay On This Road Type",
                 "Driving Style",
                 "Current Road Type",
                 "Stop AutoDrive",
@@ -70,6 +72,13 @@ namespace GrandTheftAccessibility.Menus
             {
                 string styleName = Constants.GetDrivingStyleName(_manager.CurrentDrivingStyleMode);
                 return $"Driving Style: {styleName}";
+            }
+
+            // The hold item reads as what pressing it will do
+            if (index == ITEM_HOLD_ROAD && _manager.IsRoadTypeLockActive)
+            {
+                string heldName = Constants.GetRoadTypeName(_manager.LockedRoadType);
+                return $"Stop Holding To {heldName}";
             }
 
             return _menuItems[index];
@@ -97,6 +106,9 @@ namespace GrandTheftAccessibility.Menus
                     break;
                 case ITEM_SEEK_ROAD:
                     EnterSubmenu();
+                    break;
+                case ITEM_HOLD_ROAD:
+                    _manager.ToggleRoadTypeLock();
                     break;
                 case ITEM_DRIVING_STYLE:
                     _manager.CycleDrivingStyle();

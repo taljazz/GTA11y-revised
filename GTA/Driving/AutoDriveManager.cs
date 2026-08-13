@@ -120,6 +120,52 @@ internal struct OvertakeTrackingInfo
         private int _seekAttempts;    // Track number of scan attempts
         private bool _onDesiredRoadType;
 
+        // Road type lock - hold the wander to one road type. The wander AI
+        // cannot be told to prefer a surface, so the lock watches the
+        // classifier and drives back to the last on-type position when the
+        // wander strays. Tunnel and Unknown are neutral: a highway passes
+        // through tunnels, and a car park should not trigger a turn-back.
+        // Crash hunting. A native crash takes the process down without an
+        // exception, so nothing can catch it and no stack survives - the only
+        // way to find out which subsystem ran last is to write each one's name
+        // out as it starts. Armed for a short burst when a drive begins and
+        // disarmed afterwards, so it pinpoints a crash without filling the log
+        // for the rest of the journey.
+        private int _breadcrumbUpdatesLeft;
+        private string _lastPhase;
+
+        // Task re-issue rate limiting - see the call site for why this exists
+        private long _lastTaskReissueTick;
+        private int _consecutiveReissues;
+
+        // When the current legitimate reason for not progressing began, so the
+        // excuse can expire. See IsLegitimatelyWaiting.
+        private long _legitimateWaitStartTick;
+
+        // Style changes apply instantly in place; a single task rebuild follows
+        // once the player stops cycling. See ReissueTaskWithNewStyle.
+        private long _styleSettleTick;
+        private bool _pendingStyleReissue;
+
+        // Per-update synchronous trace, on only for the curated road trips -
+        // the drives that have been crashing. Off for ordinary driving.
+        private bool _heartbeat;
+
+        // A destination supplied directly instead of read off the map waypoint,
+        // which carries no height. Consumed by the next StartWaypointInternal.
+        private Vector3 _explicitDestination;
+        private bool _hasExplicitDestination;
+
+        private bool _roadTypeLockActive;
+        private RoadType _lockedRoadType;
+        private Vector3 _lockLastOnTypePosition;
+        private long _lockOffTypeSinceTick;
+        private bool _lockReturning;
+        private long _lockReturnStartTick;
+        private long _lastLockCheckTick;
+        private int _lockCorrectionCount;
+        private long _lockCorrectionWindowStart;
+
         // Task spam prevention - track last issued task
         private Vector3 _lastIssuedSeekTarget;  // Last target we issued a drive task for
         private bool _lastIssuedTaskWasWander;  // True if last task was wander, false if drive-to-coord
@@ -162,7 +208,6 @@ internal struct OvertakeTrackingInfo
         private static readonly Hash _isWaypointActiveHash = Hash.IS_WAYPOINT_ACTIVE;
         private static readonly Hash _setCruiseSpeedHash = (Hash)Constants.NATIVE_SET_DRIVE_TASK_CRUISE_SPEED;
         private static readonly Hash _clearPedTasksHash = (Hash)Constants.NATIVE_CLEAR_PED_TASKS;
-        private static readonly Hash _clearPedTasksImmediatelyHash = (Hash)Constants.NATIVE_CLEAR_PED_TASKS_IMMEDIATELY;
         private static readonly Hash _setHandbrakeHash = (Hash)Constants.NATIVE_SET_VEHICLE_HANDBRAKE;
         private static readonly Hash _getVehicleNodePropsHash = (Hash)Constants.NATIVE_GET_VEHICLE_NODE_PROPERTIES;
         private static readonly Hash _taskVehicleDriveWanderHash = (Hash)Constants.NATIVE_TASK_VEHICLE_DRIVE_WANDER;
@@ -193,6 +238,26 @@ internal struct OvertakeTrackingInfo
 
         public bool IsActive => _autoDriveActive;
         public bool IsSeeking => _seekingRoad;
+        public bool IsRoadTypeLockActive => _roadTypeLockActive;
+        public RoadType LockedRoadType => _lockedRoadType;
+
+        /// <summary>
+        /// The road classifier, shared so the map survey classifies road nodes
+        /// with exactly the same rules the live announcements use. Two copies
+        /// of this logic would be two things to keep in agreement.
+        /// </summary>
+        public RoadTypeManager RoadTypes => _roadTypeManager;
+
+        /// <summary>
+        /// Whether a drive is queued to begin on a later frame.
+        ///
+        /// This matters because Update is only pumped while autodrive is
+        /// ACTIVE, and the deferred starts are set immediately after Stop() has
+        /// made it inactive - so without asking this too, a deferred start is
+        /// queued and then never runs. That silently broke starting a new drive
+        /// while one was already going, road trips included.
+        /// </summary>
+        public bool HasPendingStart => _pendingWaypointStart || _pendingRestart;
         public RoadType CurrentRoadType => _currentRoadType;
         public RoadSeekMode SeekMode => _seekMode;
         public DrivingStyleMode CurrentDrivingStyleMode => _currentDrivingStyleMode;
@@ -369,6 +434,17 @@ internal struct OvertakeTrackingInfo
         {
             Logger.Info($"StartWaypoint called, _autoDriveActive={_autoDriveActive}, _wanderMode={_wanderMode}, _pendingWaypointStart={_pendingWaypointStart}");
 
+            // A waypoint drive has a destination; holding a road type would
+            // fight the route. Let go of the lock out loud rather than let it
+            // silently vanish.
+            if (_roadTypeLockActive)
+            {
+                string heldName = Constants.GetRoadTypeName(_lockedRoadType);
+                ClearRoadTypeLock();
+                _audio.Speak($"Letting go of the {heldName} hold to drive to the waypoint.");
+                Logger.Info("DRIVE|lock|off|reason=waypoint");
+            }
+
             // FIX: Clear any stale pending flag from previous attempts
             // This prevents double-start when user calls StartWaypoint multiple times
             if (_pendingWaypointStart)
@@ -459,9 +535,35 @@ internal struct OvertakeTrackingInfo
                 return;
             }
 
-            // Get waypoint position
-            Vector3 waypointPos = World.WaypointPosition;
-            Logger.Info($"StartWaypointInternal: waypointPos={waypointPos}");
+            // Get the destination. A map waypoint is a flat marker and reports
+            // Z as zero, which asks the vehicle AI to path to a point under the
+            // ground; a curated road drive supplies the real height instead.
+            Vector3 waypointPos;
+            if (_hasExplicitDestination)
+            {
+                waypointPos = _explicitDestination;
+                _hasExplicitDestination = false;
+                Logger.Info($"StartWaypointInternal: explicit destination={waypointPos}");
+            }
+            else
+            {
+                waypointPos = World.WaypointPosition;
+
+                // Recover a height for a hand-placed map waypoint where we can.
+                // Only works once the area has streamed, so a failure is normal
+                // for a distant marker and simply leaves it as it was.
+                if (Math.Abs(waypointPos.Z) < 0.01f)
+                {
+                    float groundZ;
+                    if (World.GetGroundHeight(waypointPos, out groundZ) && groundZ > 0.01f)
+                    {
+                        waypointPos = new Vector3(waypointPos.X, waypointPos.Y, groundZ);
+                        Logger.Info($"StartWaypointInternal: waypoint had no height, ground gave {groundZ:F1}");
+                    }
+                }
+
+                Logger.Info($"StartWaypointInternal: waypointPos={waypointPos}");
+            }
 
             try
             {
@@ -663,7 +765,17 @@ internal struct OvertakeTrackingInfo
                 // Re-issue driving task
                 if (_wanderMode)
                 {
-                    IssueWanderTask(player, vehicle, _targetSpeed);
+                    // Mid-correction, resume the turn-back rather than wander
+                    // off in a new direction
+                    if (_lockReturning)
+                    {
+                        IssueDriveToCoordTask(player, vehicle, _lockLastOnTypePosition,
+                            _targetSpeed, Constants.ROAD_LOCK_ARRIVAL_RADIUS);
+                    }
+                    else
+                    {
+                        IssueWanderTask(player, vehicle, _targetSpeed);
+                    }
                 }
                 else
                 {
@@ -692,15 +804,46 @@ internal struct OvertakeTrackingInfo
                 try
                 {
                     Ped player = Game.Player.Character;
-                    // Use CLEAR_PED_TASKS_IMMEDIATELY to force-stop the driving task
-                    // CLEAR_PED_TASKS only fades out gracefully, so the AI keeps driving
-                    Function.Call(_clearPedTasksImmediatelyHash, player.Handle);
 
-                    // Apply handbrake so the vehicle actually stops instead of coasting
-                    Vehicle vehicle = player.CurrentVehicle;
+                    // Capture the vehicle BEFORE clearing anything, so the
+                    // vehicle-side release below still reaches it
+                    Vehicle vehicle = player != null && player.Exists()
+                        ? player.CurrentVehicle
+                        : null;
+                    bool wasSeated = vehicle != null && vehicle.Exists() &&
+                                     player.IsSittingInVehicle(vehicle);
+
+                    // CLEAR_PED_TASKS only - NEVER the immediate variant. Per the
+                    // native docs CLEAR_PED_TASKS_IMMEDIATELY "teleports the ped":
+                    // it rebuilds the ped on the spot, which warps the driver out
+                    // of the seat - every stop threw the player from the vehicle.
+                    // It was being used to keep the AI from driving on, but that
+                    // is the VEHICLE-side task's doing, so clear that on the
+                    // vehicle instead - the same recipe the aircraft autopilot
+                    // release uses, proven in game.
+                    if (player != null && player.Exists())
+                    {
+                        player.Task.ClearAll();
+                    }
+
                     if (vehicle != null && vehicle.Exists())
                     {
+                        Function.Call(Hash.CLEAR_PRIMARY_VEHICLE_TASK, vehicle.Handle);
+
+                        // Handbrake so the vehicle actually stops instead of coasting
                         Function.Call(_setHandbrakeHash, vehicle.Handle, true);
+
+                        // Any eject here is a bug in the stop path - put the
+                        // driver straight back in the seat
+                        if (wasSeated && player != null && player.Exists() &&
+                            !player.IsSittingInVehicle(vehicle))
+                        {
+                            player.SetIntoVehicle(vehicle, VehicleSeat.Driver);
+                            Logger.Warning("DRIVE|STOP|re-seated driver after unexpected ejection");
+                        }
+
+                        Logger.Info($"DRIVE|STOP|mission={vehicle.GetActiveMissionType()}" +
+                                    $"|spd={vehicle.Speed:F1}|seated={(wasSeated ? 1 : 0)}");
                     }
                 }
                 catch { /* Expected during stop - player state may be invalid */ }
@@ -717,6 +860,17 @@ internal struct OvertakeTrackingInfo
             _seekMode = RoadSeekMode.Any;
             _onDesiredRoadType = false;
             _seekTargetPosition = Vector3.Zero;
+
+            // Forget the re-issue streak so a new drive starts unthrottled
+            _lastTaskReissueTick = 0;
+            _consecutiveReissues = 0;
+            _legitimateWaitStartTick = 0;
+            _heartbeat = false;
+            _pendingStyleReissue = false;
+
+            // Clear the road type lock - silently, like the seek state above;
+            // AnnounceStatus reports it and Stop's own announcement covers the rest
+            ClearRoadTypeLock();
 
             // FIX: Clear task tracking state (prevents crash when switching modes)
             _lastIssuedSeekTarget = Vector3.Zero;
@@ -821,6 +975,15 @@ internal struct OvertakeTrackingInfo
                 }
             }
 
+            // Include the road type hold if active
+            if (_roadTypeLockActive)
+            {
+                string heldName = Constants.GetRoadTypeName(_lockedRoadType);
+                seekInfo += _lockReturning
+                    ? $", turning back to the {heldName}"
+                    : $", holding to {heldName}";
+            }
+
             if (_wanderMode)
             {
                 _audio.Speak($"AutoDrive active, {mode}, {styleName} style{seekInfo}, at {mph} miles per hour");
@@ -847,6 +1010,19 @@ internal struct OvertakeTrackingInfo
         #endregion
 
         #region Update Loop
+
+        /// <summary>
+        /// Note which part of the update is about to run. Silent unless a
+        /// drive has just started. See _breadcrumbUpdatesLeft.
+        /// </summary>
+        private void Phase(string phase)
+        {
+            if (_breadcrumbUpdatesLeft <= 0)
+                return;
+
+            _lastPhase = phase;
+            Logger.InfoImmediate($"DRIVE|phase|{phase}");
+        }
 
         /// <summary>
         /// Update autodrive state - called from OnTick
@@ -892,6 +1068,24 @@ internal struct OvertakeTrackingInfo
                 return;
             }
 
+            if (_breadcrumbUpdatesLeft > 0)
+            {
+                _breadcrumbUpdatesLeft--;
+                Logger.InfoImmediate($"DRIVE|phase|=== update start, {_breadcrumbUpdatesLeft} left ===");
+            }
+            else if (_heartbeat)
+            {
+                // One synchronous line per update for the whole drive. The
+                // per-phase breadcrumbs only cover the first few seconds, and
+                // the last crash happened long after they ran out - leaving the
+                // final moments in the log queue, which dies with the process.
+                // Cheap enough at roughly four writes a second, and it means
+                // the log can never again simply stop without saying where.
+                Logger.InfoImmediate($"DRIVE|hb|spd={vehicle.Speed:F1}" +
+                                     $"|pos={position.X:F0},{position.Y:F0}" +
+                                     $"|road={_currentRoadType}|recovery={_recoveryActive}");
+            }
+
             // Defensive: Guard against invalid tick values
             if (currentTick < 0)
                 return;
@@ -918,6 +1112,7 @@ internal struct OvertakeTrackingInfo
 
             // === VEHICLE STATE & STUCK DETECTION ===
 
+            Phase("vehicle-state");
             // Check vehicle state (flipped, water, fire, damage)
             if (CheckVehicleState(vehicle, currentTick))
             {
@@ -926,6 +1121,7 @@ internal struct OvertakeTrackingInfo
             }
 
             // If cooperative recovery is active, check progress toward escape node
+            Phase("recovery");
             if (UpdateRecovery(vehicle, position, currentTick))
             {
                 _speedArbiter.ApplySpeed(player);
@@ -933,6 +1129,16 @@ internal struct OvertakeTrackingInfo
             }
 
             // Check if stuck — triggers cooperative recovery
+            // The player has settled on a driving style - rebuild the task once
+            // so its pathfinding flags are definitely applied
+            if (_pendingStyleReissue && currentTick >= _styleSettleTick)
+            {
+                _pendingStyleReissue = false;
+                Phase("style-settle");
+                RebuildTaskWithCurrentStyle();
+            }
+
+            Phase("stuck");
             CheckIfStuck(vehicle, position, currentTick);
 
             // Check progress timeout (waypoint mode only) — triggers cooperative recovery
@@ -944,17 +1150,21 @@ internal struct OvertakeTrackingInfo
             // === ADVANCED DRIVING FEATURES (using extracted managers) ===
 
             // Check traffic light state (still inline - consider extracting to RoadFeatureDetector)
+            Phase("traffic-light");
             CheckTrafficLightState(vehicle, position, currentTick);
 
             // Check for U-turns (delegated to StructureDetector)
+            Phase("uturn");
             _structureDetector.CheckUturn(vehicle, position, currentTick);
 
             // Check hill/gradient (delegated to StructureDetector)
+            Phase("hill");
             _structureDetector.CheckHillGradient(vehicle, position, currentTick);
 
             // === ENVIRONMENTAL AWARENESS (using extracted managers) ===
 
             // Check weather conditions (delegated to WeatherManager)
+            Phase("weather");
             {
                 string weatherName;
                 bool shouldAnnounce;
@@ -981,6 +1191,7 @@ internal struct OvertakeTrackingInfo
             }
 
             // Check time of day (delegated to EnvironmentalManager)
+            Phase("time-of-day");
             _environmentalManager.CheckTimeOfDay(vehicle, currentTick);
             // Reckless mode: no night-time speed reduction
             {
@@ -989,6 +1200,7 @@ internal struct OvertakeTrackingInfo
             }
 
             // Check for vehicles ahead (collision warning - delegated to CollisionDetector)
+            Phase("collision");
             {
                 string warningMessage;
                 int warningPriority;
@@ -1012,32 +1224,39 @@ internal struct OvertakeTrackingInfo
             // Detection and announcements only — AI handles braking/swerving via driving flags:
             //   Cautious/Normal: DF_STOP_FOR_CARS makes the AI brake for traffic natively.
             //   Aggressive/Reckless: SwerveAroundAllVehicles makes the AI dodge traffic.
+            Phase("following-distance");
             _trafficAwarenessManager.CheckFollowingDistance(vehicle, currentTick);
 
             // Check for emergency vehicles (delegated to EmergencyVehicleHandler)
+            Phase("emergency");
             _yieldingToEmergency = _emergencyVehicleHandler.CheckEmergencyVehicles(vehicle, position, currentTick,
                 _currentDrivingStyleMode, ResumeFromEmergencyYield);
 
             // Check for tunnels/bridges (delegated to StructureDetector)
+            Phase("structures");
             _structureDetector.CheckStructures(vehicle, position, currentTick, _currentRoadType);
 
             // Update ETA (waypoint mode only, delegated to ETACalculator)
             if (!_wanderMode)
             {
+                Phase("eta");
                 _etaCalculator.UpdateETA(vehicle, position, _lastWaypointPos, currentTick, _wanderMode);
             }
 
             // === LANE CHANGE AND OVERTAKING (using extracted managers) ===
 
             // Check for lane changes (delegated to TrafficAwarenessManager)
+            Phase("lane-change");
             _trafficAwarenessManager.CheckLaneChange(vehicle, position, currentTick);
 
             // Check for overtaking maneuvers (delegated to TrafficAwarenessManager)
+            Phase("overtaking");
             _trafficAwarenessManager.CheckOvertaking(vehicle, position, currentTick);
 
             // === ROAD FEATURES (using extracted managers) ===
 
             // Check road features - curves, intersections, traffic lights (delegated to RoadFeatureDetector)
+            Phase("road-features");
             _roadFeatureDetector.Update(vehicle, position, currentTick, _targetSpeed,
                 _currentDrivingStyleMode, _autoDriveActive);
 
@@ -1061,6 +1280,7 @@ internal struct OvertakeTrackingInfo
             // === ROAD TYPE MANAGEMENT (using extracted managers) ===
 
             // Check road type changes (delegated to RoadTypeManager)
+            Phase("road-type");
             _roadTypeManager.CheckRoadTypeChange(position, currentTick, true);
             _currentRoadType = _roadTypeManager.CurrentRoadType;
 
@@ -1082,12 +1302,17 @@ internal struct OvertakeTrackingInfo
                     _currentDrivingStyleMode, _wanderMode, _targetSpeed);
             }
 
+            // Hold the wander to the locked road type, turning back when it strays
+            Phase("road-lock");
+            UpdateRoadTypeLock(vehicle, position, currentTick);
+
             // === NORMAL OPERATION ===
 
             // Waypoint mode: check for arrival and distance updates (delegated to NavigationManager)
             if (!_wanderMode)
             {
                 bool shouldStop, shouldRestart;
+                Phase("navigation");
                 bool stillNavigating = _navigationManager.UpdateProgress(position, currentTick,
                     out shouldStop, out shouldRestart);
 
@@ -1113,17 +1338,50 @@ internal struct OvertakeTrackingInfo
                     return;
                 }
 
-                // Check if task needs re-issuing due to deviation from path
+                // Check if task needs re-issuing due to deviation from path.
+                //
+                // Throttled hard, and deliberately. Re-issuing is a nudge for a
+                // confused driver, not a control loop: each one asks the game to
+                // pathfind the whole remaining route, and the deviation test
+                // stays true until the car actually turns, so an untimed check
+                // fires again on every update. The log showed it going off every
+                // 224 ms - fourteen times in a row on one occasion, three times
+                // immediately before the game died. Nothing survives being asked
+                // to replan a cross-map route four times a second.
                 if (!_recoveryActive && NeedsTaskReissue(vehicle, _safeArrivalPosition))
                 {
-                    Ped reissuePlayer = Game.Player.Character;
-                    if (reissuePlayer != null && reissuePlayer.IsInVehicle())
+                    if (currentTick - _lastTaskReissueTick >= Constants.TASK_REISSUE_COOLDOWN)
                     {
-                        IssueDriveToCoordTask(reissuePlayer, vehicle, _safeArrivalPosition, _targetSpeed,
-                            Constants.AUTODRIVE_WAYPOINT_ARRIVAL_RADIUS);
-                        _taskIssued = true;
-                        Logger.Info("Task re-issued due to path deviation");
+                        Ped reissuePlayer = Game.Player.Character;
+                        if (reissuePlayer != null && reissuePlayer.IsInVehicle())
+                        {
+                            IssueDriveToCoordTask(reissuePlayer, vehicle, _safeArrivalPosition, _targetSpeed,
+                                Constants.AUTODRIVE_WAYPOINT_ARRIVAL_RADIUS);
+                            _taskIssued = true;
+                            _lastTaskReissueTick = currentTick;
+                            _consecutiveReissues++;
+
+                            Logger.Info($"Task re-issued due to path deviation " +
+                                        $"(re-issue {_consecutiveReissues})");
+
+                            // Re-issuing repeatedly is not working. The progress
+                            // timeout and cooperative recovery already exist for
+                            // a car that cannot make headway - let them have it
+                            // rather than keep flinging tasks at the engine.
+                            if (_consecutiveReissues >= Constants.TASK_REISSUE_MAX_CONSECUTIVE)
+                            {
+                                Logger.Warning($"Task re-issue is not helping after " +
+                                               $"{_consecutiveReissues} tries - leaving it to recovery");
+                                _lastTaskReissueTick = currentTick + Constants.TASK_REISSUE_BACKOFF;
+                                _consecutiveReissues = 0;
+                            }
+                        }
                     }
+                }
+                else
+                {
+                    // Back on course - forget the streak
+                    _consecutiveReissues = 0;
                 }
             }
 
@@ -2012,6 +2270,260 @@ internal struct OvertakeTrackingInfo
 
         #endregion
 
+        #region Road Type Lock
+
+        /// <summary>
+        /// Start or stop holding the wander to the road type under the car.
+        /// The type is read from the road itself rather than asked for, so a
+        /// blind player never has to know or name it in advance: drive (or
+        /// teleport) onto the surface you want, then say "stay here".
+        /// </summary>
+        public void ToggleRoadTypeLock()
+        {
+            try
+            {
+                if (_roadTypeLockActive)
+                {
+                    string heldName = Constants.GetRoadTypeName(_lockedRoadType);
+                    ClearRoadTypeLock();
+                    _audio.Speak($"No longer holding to {heldName}. Wandering freely.");
+                    Logger.Info("DRIVE|lock|off");
+                    return;
+                }
+
+                Ped player = Game.Player.Character;
+                if (player == null || !player.Exists() || !player.IsInVehicle())
+                {
+                    _audio.Speak("Get in a vehicle on the road you want to hold, then try again.");
+                    return;
+                }
+
+                RoadType current = _roadTypeManager.GetRoadTypeAtPosition(player.Position);
+                if (current == RoadType.Unknown || current == RoadType.Tunnel)
+                {
+                    _audio.Speak("Not on a recognisable road here. Drive onto the road " +
+                                 "type you want to hold and try again.");
+                    return;
+                }
+
+                // Locking without driving does nothing, so start the wander
+                // first. Order matters: StartWander calls Stop internally,
+                // and Stop forgets the lock - so the lock is set only AFTER
+                // the wander is up, or it would be wiped in the same breath.
+                if (!_autoDriveActive || !_wanderMode)
+                {
+                    StartWander();
+                    if (!_autoDriveActive || !_wanderMode)
+                        return; // StartWander announced its own refusal
+                }
+
+                _roadTypeLockActive = true;
+                _lockedRoadType = current;
+                _lockLastOnTypePosition = player.Position;
+                _lockOffTypeSinceTick = 0;
+                _lockReturning = false;
+                _lockCorrectionCount = 0;
+                _lockCorrectionWindowStart = 0;
+
+                string name = Constants.GetRoadTypeName(current);
+                Logger.Info($"DRIVE|lock|on|type={current}");
+                _audio.Speak($"Holding to {name}. If the wander strays, I will turn back.");
+            }
+            catch (Exception ex)
+            {
+                Logger.Exception(ex, "ToggleRoadTypeLock");
+                _audio.Speak("Failed to change the road type hold.");
+            }
+        }
+
+        /// <summary>
+        /// Drive a curated road: put the game's own waypoint at the far end for
+        /// the GPS route, then run the ordinary waypoint drive, which brings all
+        /// its validation, announcements and arrival handling with it.
+        ///
+        /// The destination is passed through explicitly rather than read back
+        /// from the map waypoint. A map waypoint is a flat marker and reports
+        /// Z as ZERO - the first version drove to sea level under the coast
+        /// road, which is both wrong and asks the vehicle AI to path to a point
+        /// inside the ground. We already know the real height, so use it.
+        ///
+        /// MUST NOT be called in the same frame as a teleport - see the caller.
+        /// </summary>
+        public void StartRouteDrive(Vector3 destination, string driveName)
+        {
+            try
+            {
+                Function.Call(Hash.SET_NEW_WAYPOINT, destination.X, destination.Y);
+
+                _explicitDestination = destination;
+                _hasExplicitDestination = true;
+
+                // Arm the breadcrumbs: a road trip is where the game has been
+                // dying, and this is the run that has to say where
+                _breadcrumbUpdatesLeft = Constants.DRIVE_BREADCRUMB_UPDATES;
+                _lastPhase = null;
+
+                // The per-update heartbeat found the crash - the log stopped at
+                // the ETA phase and named it. That job is done, and it wrote
+                // over three thousand lines synchronously in a single drive, so
+                // it is off again. The phase breadcrumbs stay: they cost only a
+                // few seconds at the start of a drive and around recovery, and
+                // they are what makes a crash tell us where it happened.
+                _heartbeat = false;
+
+                Logger.Info($"DRIVE|route|{driveName}" +
+                            $"|end={destination.X:F0},{destination.Y:F0},{destination.Z:F1}");
+                StartWaypoint();
+            }
+            catch (Exception ex)
+            {
+                Logger.Exception(ex, "StartRouteDrive");
+                _hasExplicitDestination = false;
+                _audio.Speak("Failed to start the drive.");
+            }
+        }
+
+        /// <summary>Forget the lock without announcing - for Stop and mode changes.</summary>
+        private void ClearRoadTypeLock()
+        {
+            _roadTypeLockActive = false;
+            _lockReturning = false;
+            _lockOffTypeSinceTick = 0;
+            _lockLastOnTypePosition = Vector3.Zero;
+        }
+
+        /// <summary>
+        /// The lock's tick: remember where the road was right, notice when the
+        /// wander has strayed onto another type for longer than the grace
+        /// period, and drive back to the last good spot before resuming.
+        /// Runs only in wander mode and stays out of the way of dead-end
+        /// recovery, which has its own ideas about where to drive.
+        /// </summary>
+        private void UpdateRoadTypeLock(Vehicle vehicle, Vector3 position, long currentTick)
+        {
+            if (!_roadTypeLockActive || !_wanderMode || _recoveryActive)
+                return;
+
+            if (currentTick - _lastLockCheckTick < Constants.ROAD_LOCK_CHECK_INTERVAL)
+                return;
+            _lastLockCheckTick = currentTick;
+
+            try
+            {
+                RoadType current = _currentRoadType;
+
+                if (_lockReturning)
+                {
+                    bool arrived = position.DistanceTo(_lockLastOnTypePosition) <
+                                   Constants.ROAD_LOCK_ARRIVAL_RADIUS * 1.5f;
+                    bool backOnType = current == _lockedRoadType;
+                    bool timedOut = currentTick - _lockReturnStartTick >
+                                    Constants.ROAD_LOCK_RETURN_TIMEOUT_MS;
+
+                    if (!arrived && !backOnType && !timedOut)
+                        return;
+
+                    _lockReturning = false;
+                    _lockOffTypeSinceTick = 0;
+
+                    Ped player = Game.Player.Character;
+                    if (player != null && player.Exists() && player.IsInVehicle())
+                    {
+                        IssueWanderTask(player, vehicle, _targetSpeed);
+                    }
+
+                    string typeName = Constants.GetRoadTypeName(_lockedRoadType);
+                    if (timedOut)
+                    {
+                        _audio.Speak($"Could not find my way back to the {typeName} cleanly. Wandering on.");
+                        Logger.Info($"DRIVE|lock|return-timeout|type={_lockedRoadType}");
+                    }
+                    else
+                    {
+                        _audio.Speak($"Back on the {typeName}.");
+                        Logger.Info($"DRIVE|lock|returned|type={_lockedRoadType}|arrived={arrived}");
+                    }
+                    return;
+                }
+
+                // On the held type: remember the spot and stay quiet
+                if (current == _lockedRoadType)
+                {
+                    _lockLastOnTypePosition = position;
+                    _lockOffTypeSinceTick = 0;
+                    return;
+                }
+
+                // Tunnels and unclassified ground are neutral - a highway runs
+                // through tunnels, and briefly unreadable pavement is not a
+                // reason to turn round
+                if (current == RoadType.Unknown || current == RoadType.Tunnel)
+                    return;
+
+                // Off-type: give it the grace period before acting
+                if (_lockOffTypeSinceTick == 0)
+                {
+                    _lockOffTypeSinceTick = currentTick;
+                    return;
+                }
+
+                if (currentTick - _lockOffTypeSinceTick < Constants.ROAD_LOCK_OFF_TYPE_GRACE_MS)
+                    return;
+
+                if (_lockLastOnTypePosition == Vector3.Zero)
+                {
+                    // Never actually seen the held type since locking - nothing
+                    // to return to, keep wandering and keep watching
+                    _lockOffTypeSinceTick = 0;
+                    return;
+                }
+
+                Ped driver = Game.Player.Character;
+                if (driver == null || !driver.Exists() || !driver.IsInVehicle())
+                    return;
+
+                // Track how often this is happening - constant corrections mean
+                // the area cannot hold this road type and the player should know
+                if (_lockCorrectionWindowStart == 0 ||
+                    currentTick - _lockCorrectionWindowStart > Constants.ROAD_LOCK_STRUGGLE_WINDOW_MS)
+                {
+                    _lockCorrectionWindowStart = currentTick;
+                    _lockCorrectionCount = 0;
+                }
+                _lockCorrectionCount++;
+
+                IssueDriveToCoordTask(driver, vehicle, _lockLastOnTypePosition,
+                                      _targetSpeed, Constants.ROAD_LOCK_ARRIVAL_RADIUS);
+                _lockReturning = true;
+                _lockReturnStartTick = currentTick;
+                _lockOffTypeSinceTick = 0;
+
+                string held = Constants.GetRoadTypeName(_lockedRoadType);
+                string strayed = Constants.GetRoadTypeName(current);
+                Logger.Info($"DRIVE|lock|correcting|held={_lockedRoadType}|on={current}" +
+                            $"|dist={position.DistanceTo(_lockLastOnTypePosition):F0}" +
+                            $"|count={_lockCorrectionCount}");
+
+                if (_lockCorrectionCount >= Constants.ROAD_LOCK_STRUGGLE_COUNT)
+                {
+                    _audio.Speak($"This area keeps pulling me off the {held}. " +
+                                 "Consider teleporting to a longer stretch, or letting go of the hold.");
+                    _lockCorrectionWindowStart = 0;
+                    _lockCorrectionCount = 0;
+                }
+                else
+                {
+                    _audio.Speak($"Strayed onto a {strayed}. Turning back to the {held}.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Exception(ex, "UpdateRoadTypeLock");
+            }
+        }
+
+        #endregion
+
         #region Driving Styles
 
         /// <summary>
@@ -2021,9 +2533,10 @@ internal struct OvertakeTrackingInfo
         {
             _currentDrivingStyleMode = (DrivingStyleMode)(((int)_currentDrivingStyleMode + 1) % 4);
 
-            // Re-issue driving task with new style if currently driving
-            // Research shows SET_DRIVE_TASK_DRIVING_STYLE alone may not update all flags
-            // (especially pathfinding flags like StopAtTrafficLights, TakeShortestPath)
+            // Apply to the running task rather than rebuilding it. The old note
+            // here - that SET_DRIVE_TASK_DRIVING_STYLE may not refresh every
+            // flag - is respected rather than dismissed: a single rebuild
+            // follows once the player settles. See ReissueTaskWithNewStyle.
             if (_autoDriveActive)
             {
                 ReissueTaskWithNewStyle();
@@ -2036,10 +2549,54 @@ internal struct OvertakeTrackingInfo
         }
 
         /// <summary>
-        /// Re-issue the current driving task with the new style.
-        /// This is necessary because SET_DRIVE_TASK_DRIVING_STYLE may not update
-        /// all flag-based behaviors (like traffic light stopping) mid-task.
+        /// Apply the current driving style to the drive task already running.
+        /// Cheap and immediate; queues one rebuild for after the player settles.
         /// </summary>
+        /// <summary>
+        /// Rebuild the drive task so the style's pathfinding flags are applied
+        /// from scratch. Expensive - the game re-plans the route - so this runs
+        /// once after the player settles on a style, never per keypress.
+        /// </summary>
+        private void RebuildTaskWithCurrentStyle()
+        {
+            try
+            {
+                if (!_autoDriveActive || !_taskIssued || _recoveryActive)
+                    return;
+
+                Ped player = Game.Player.Character;
+                Vehicle vehicle = player?.CurrentVehicle;
+
+                if (player == null || vehicle == null || !player.IsInVehicle())
+                    return;
+
+                if (_wanderMode)
+                {
+                    IssueWanderTask(player, vehicle, _targetSpeed);
+                }
+                else
+                {
+                    Vector3 destination = _navigationManager.SafeArrivalPosition != Vector3.Zero
+                        ? _navigationManager.SafeArrivalPosition
+                        : _safeArrivalPosition;
+
+                    if (destination == Vector3.Zero)
+                        return;
+
+                    IssueDriveToCoordTask(player, vehicle, destination, _targetSpeed,
+                        Constants.AUTODRIVE_WAYPOINT_ARRIVAL_RADIUS);
+                }
+
+                _taskIssued = true;
+                Logger.Info($"DrivingStyle settled - task rebuilt as " +
+                            $"{Constants.GetDrivingStyleName(_currentDrivingStyleMode)}");
+            }
+            catch (Exception ex)
+            {
+                Logger.Exception(ex, "RebuildTaskWithCurrentStyle");
+            }
+        }
+
         private void ReissueTaskWithNewStyle()
         {
             try
@@ -2050,79 +2607,53 @@ internal struct OvertakeTrackingInfo
                 if (player == null || vehicle == null || !player.IsInVehicle())
                     return;
 
+                // Nothing to adjust when no drive task is running. The chosen
+                // style is already stored and whichever drive starts next will
+                // be issued with it.
+                if (!_autoDriveActive || !_taskIssued)
+                    return;
+
                 int styleValue = Constants.GetDrivingStyleValue(_currentDrivingStyleMode);
                 float ability = Constants.GetDrivingStyleAbility(_currentDrivingStyleMode);
                 float aggressiveness = Constants.GetDrivingStyleAggressiveness(_currentDrivingStyleMode);
-                float speedMultiplier = Constants.GetDrivingStyleSpeedMultiplier(_currentDrivingStyleMode);
 
-                // Apply speed multiplier - THIS is the primary differentiator between styles
-                float adjustedSpeed = _targetSpeed * speedMultiplier;
-
-                if (Logger.IsDebugEnabled) Logger.Debug($"ReissueTaskWithNewStyle: style={styleValue}, speedMult={speedMultiplier}, adjustedSpeed={adjustedSpeed}, wanderMode={_wanderMode}");
-
-                // Clear current task
-                Function.Call(_clearPedTasksHash, player.Handle);
-
-                if (_wanderMode)
-                {
-                    // Re-issue wander task with new style
-                    Function.Call(
-                        _taskVehicleDriveWanderHash,
-                        player.Handle,
-                        vehicle.Handle,
-                        adjustedSpeed,
-                        styleValue);
-                }
-                else if (_safeArrivalPosition != Vector3.Zero)
-                {
-                    // Re-issue waypoint task with new style
-                    // Read from NavigationManager for authoritative position
-                    Vector3 safePos = _navigationManager.SafeArrivalPosition != Vector3.Zero
-                        ? _navigationManager.SafeArrivalPosition
-                        : _safeArrivalPosition;
-                    float distance = Vector3.Distance(player.Position, safePos);
-                    bool useLongRange = distance > Constants.AUTODRIVE_LONGRANGE_THRESHOLD;
-
-                    if (useLongRange)
-                    {
-                        Function.Call(
-                            _taskDriveToCoordLongrangeHash,
-                            player.Handle,
-                            vehicle.Handle,
-                            safePos.X,
-                            safePos.Y,
-                            safePos.Z,
-                            adjustedSpeed,
-                            styleValue,
-                            Constants.AUTODRIVE_WAYPOINT_ARRIVAL_RADIUS);
-                    }
-                    else
-                    {
-                        Function.Call(
-                            _taskDriveToCoordHash,
-                            player.Handle,
-                            vehicle.Handle,
-                            safePos.X,
-                            safePos.Y,
-                            safePos.Z,
-                            adjustedSpeed,
-                            0,
-                            vehicle.Model.Hash,
-                            styleValue,
-                            Constants.AUTODRIVE_WAYPOINT_ARRIVAL_RADIUS,
-                            0f);
-                    }
-                }
-
-                // CRITICAL: Set cruise speed AFTER issuing task (reference: AutoDriveScript2.cs)
-                Function.Call(_setCruiseSpeedHash, player.Handle, adjustedSpeed);
-
-                // Apply ability and aggressiveness
+                // Change the RUNNING task instead of building a new one.
+                //
+                // This used to clear the ped's tasks and issue a fresh drive,
+                // which meant every style change asked the game to path the
+                // whole remaining route again - and stepping through the styles
+                // to hear them did that three times in 1.4 seconds. Rockstar
+                // provide SET_DRIVE_TASK_DRIVING_STYLE for exactly this, noting
+                // only that a drive task must already be running, which is what
+                // the check above is for. Ability and aggressiveness live on the
+                // driver rather than the task and never needed a rebuild at all.
+                //
+                // Speed needs no attention here either: the speed arbiter reads
+                // the style's multiplier and applies it every update.
+                //
+                // So a style change is now three cheap sets and takes effect at
+                // once - which also matters for hearing the difference, since
+                // rebuilding the task made the car pause before resuming.
+                Function.Call(Hash.SET_DRIVE_TASK_DRIVING_STYLE, player.Handle, styleValue);
                 Function.Call(_setDriverAbilityHash, player.Handle, ability);
                 Function.Call(_setDriverAggressivenessHash, player.Handle, aggressiveness);
 
-                _taskIssued = true;
-                Logger.Info($"ReissueTaskWithNewStyle: style={styleValue} ({Constants.GetDrivingStyleName(_currentDrivingStyleMode)}), speedMult={speedMultiplier:F1}, adjustedSpeed={adjustedSpeed:F1}");
+                // One rebuild AFTER the player stops cycling, and only one.
+                //
+                // The note this method used to carry - that the native may not
+                // refresh every flag-based behaviour mid-task, traffic-light
+                // stopping among them - is plausible and cannot be disproved
+                // from Rockstar's source, where the one live example sets the
+                // style just BEFORE issuing its task rather than during one.
+                // So rather than bet either way: the change is heard at once
+                // from the in-place set above, and a single rebuild once the
+                // cycling settles guarantees the flags actually land. One
+                // rebuild per visit to the style menu instead of one per press.
+                _pendingStyleReissue = true;
+                _styleSettleTick = Game.GameTime + Constants.STYLE_SETTLE_DELAY;
+
+                Logger.Info($"DrivingStyle applied in place: {Constants.GetDrivingStyleName(_currentDrivingStyleMode)}" +
+                            $" (style={styleValue}, ability={ability:F1}, aggression={aggressiveness:F1})");
             }
             catch (Exception ex)
             {
@@ -2278,10 +2809,21 @@ internal struct OvertakeTrackingInfo
             // If very close to target, no need to re-issue
             if (distanceToTarget < Constants.AUTODRIVE_WAYPOINT_ARRIVAL_RADIUS) return false;
 
-            // Check if we've deviated significantly from the path to target
-            // Calculate how far off course we are based on heading vs target direction
-            // PERFORMANCE: Use pre-calculated RAD_TO_DEG constant
-            float targetHeading = (float)(Math.Atan2(toTarget.Y, toTarget.X) * Constants.RAD_TO_DEG);
+            // Check if we've deviated significantly from the path to target.
+            //
+            // The bearing MUST be worked out in GTA's own convention to be
+            // comparable with Vehicle.Heading: headings run COUNTERCLOCKWISE
+            // from north, so 0 = north (+Y) and 90 = WEST (-X), and the forward
+            // vector is (-sin h, cos h). The previous atan2(y, x) produced a
+            // standard mathematical angle measured counterclockwise from EAST -
+            // a different reference frame entirely, so the comparison against
+            // Vehicle.Heading was meaningless and reported huge deviations on
+            // a car driving perfectly straight. That is what set off the bursts
+            // of task re-issues.
+            float targetHeading = (float)(Math.Atan2(-toTarget.X, toTarget.Y) * Constants.RAD_TO_DEG);
+            if (targetHeading < 0f)
+                targetHeading += 360f;
+
             float currentHeading = vehicle.Heading;
 
             // Normalize heading difference to -180 to 180
@@ -2416,6 +2958,104 @@ internal struct OvertakeTrackingInfo
         /// <summary>
         /// Check if the vehicle is stuck (not making progress)
         /// </summary>
+        /// <summary>
+        /// Whether the vehicle is not moving for a reason that recovery would
+        /// only make worse, and how long that has been true.
+        ///
+        /// Four honest reasons a car sits still or stops closing on the
+        /// destination, none of which mean it is stuck:
+        ///
+        ///  - It is at a red light. Asked of the game itself through
+        ///    IsStoppedAtTrafficLights, backed up by the mod's own detection.
+        ///  - It is queued behind traffic.
+        ///  - It is in a tunnel, where the way out runs under and around things
+        ///    and the crow-flies distance to the destination is meaningless.
+        ///  - It is simply driving. On a route like the coast road, which wraps
+        ///    the whole map, heading north for several minutes to reach a place
+        ///    in the south-west is CORRECT - and straight-line progress goes
+        ///    backwards the whole time. A moving car is never stuck.
+        ///
+        /// Capped by MAX_LEGITIMATE_WAIT so a car wedged against scenery that
+        /// happens to read as traffic is not excused indefinitely.
+        /// </summary>
+        private bool IsLegitimatelyWaiting(Vehicle vehicle, long currentTick, out string reason)
+        {
+            reason = null;
+
+            try
+            {
+                if (vehicle == null || !vehicle.Exists())
+                    return false;
+
+                // Driving is not waiting. It gets no timer and never expires:
+                // capping it said "moving for over 45s - treating as stuck
+                // after all", which is exactly backwards - three quarters of a
+                // minute of driving is the strongest possible evidence that
+                // nothing is wrong. Only the STATIONARY excuses below can run
+                // out, because only they can hide a car that is truly wedged.
+                if (vehicle.Speed >= Constants.PROGRESS_MOVING_SPEED)
+                {
+                    _legitimateWaitStartTick = 0;
+                    reason = "moving";
+                    return true;
+                }
+
+                if (SafeStoppedAtLights(vehicle) || _stoppedAtLight)
+                    reason = "at a traffic light";
+                else if (_currentRoadType == RoadType.Tunnel)
+                    reason = "in a tunnel";
+                else if (_collisionDetector != null &&
+                         _collisionDetector.VehicleAheadDistance > 0f &&
+                         _collisionDetector.VehicleAheadDistance < Constants.BLOCKED_BY_TRAFFIC_DISTANCE)
+                    reason = "queued behind traffic";
+
+                if (reason == null)
+                {
+                    // Nothing excusing it - clear the grace period
+                    _legitimateWaitStartTick = 0;
+                    return false;
+                }
+
+                if (_legitimateWaitStartTick == 0)
+                    _legitimateWaitStartTick = currentTick;
+
+                // Waiting far too long is its own kind of stuck
+                if (currentTick - _legitimateWaitStartTick > Constants.MAX_LEGITIMATE_WAIT)
+                {
+                    // Written straight to disk and the breadcrumbs re-armed:
+                    // this is the moment the mod stops excusing the car, so
+                    // whatever happens next is worth capturing
+                    Logger.InfoImmediate($"DRIVE|wait|{reason} for over " +
+                                         $"{Constants.MAX_LEGITIMATE_WAIT / 1000}s - treating as stuck after all");
+                    _breadcrumbUpdatesLeft = Constants.DRIVE_BREADCRUMB_UPDATES;
+                    _legitimateWaitStartTick = 0;
+                    reason = null;
+                    return false;
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Logger.Exception(ex, "IsLegitimatelyWaiting");
+                return false;
+            }
+        }
+
+        /// <summary>The game's own view of whether we are held at a red light.</summary>
+        private static bool SafeStoppedAtLights(Vehicle vehicle)
+        {
+            try { return vehicle.IsStoppedAtTrafficLights; }
+            catch { return false; }
+        }
+
+        /// <summary>Distance to the vehicle ahead, or -1 when nothing is ahead.</summary>
+        private float SafeAheadDistance()
+        {
+            try { return _collisionDetector?.VehicleAheadDistance ?? -1f; }
+            catch { return -1f; }
+        }
+
         private void CheckIfStuck(Vehicle vehicle, Vector3 position, long currentTick)
         {
             // Throttle checks
@@ -2426,6 +3066,18 @@ internal struct OvertakeTrackingInfo
 
             try
             {
+                // Waiting for a red light or a queue is not being stuck, and
+                // reversing out of it is actively wrong
+                string waitReason;
+                if (IsLegitimatelyWaiting(vehicle, currentTick, out waitReason))
+                {
+                    _stuckCheckCount = 0;
+                    _isStuck = false;
+                    _lastStuckCheckPosition = position;
+                    _lastStuckCheckHeading = vehicle.Heading;
+                    return;
+                }
+
                 float speed = vehicle.Speed;
                 float heading = vehicle.Heading;
 
@@ -2489,6 +3141,20 @@ internal struct OvertakeTrackingInfo
                 return;
             }
 
+            // A car that is driving, waiting at a light, queued in traffic or
+            // in a tunnel is not failing to make progress - it is making it in
+            // a way that straight-line distance cannot see. This matters most
+            // on the long curated drives: the coast road wraps the whole map,
+            // so heading north for minutes to reach the south-west is right,
+            // and the crow-flies distance grows the entire time.
+            string waitReason;
+            if (IsLegitimatelyWaiting(vehicle, currentTick, out waitReason))
+            {
+                _lastProgressDistance = (_lastWaypointPos - position).Length();
+                _lastProgressTick = currentTick;
+                return;
+            }
+
             float currentDistance = (_lastWaypointPos - position).Length();
 
             // Check if we've made progress
@@ -2503,7 +3169,12 @@ internal struct OvertakeTrackingInfo
             // Check for timeout
             if (currentTick - _lastProgressTick > Constants.PROGRESS_TIMEOUT_TICKS)
             {
-                Logger.Info($"Progress timeout: no progress toward waypoint for 30 seconds");
+                // Record the state that justified this, so a false positive
+                // says why rather than leaving it to be guessed at again
+                Logger.Info($"Progress timeout: no progress for 30s" +
+                            $"|spd={vehicle.Speed:F1}|dist={currentDistance:F0}m" +
+                            $"|was={_lastProgressDistance:F0}m|road={_currentRoadType}" +
+                            $"|lights={SafeStoppedAtLights(vehicle)}|ahead={SafeAheadDistance():F0}m");
 
                 // Reset progress tracking so we don't spam
                 _lastProgressTick = currentTick;
@@ -2605,9 +3276,20 @@ internal struct OvertakeTrackingInfo
         /// </summary>
         private void StartCooperativeRecovery(Vehicle vehicle, Vector3 position, long currentTick)
         {
+            // Recovery clears the ped's tasks and issues a fresh drive, which
+            // is the riskiest thing this class does. Re-arm the breadcrumbs and
+            // write synchronously so that if the game dies here, the log says
+            // so instead of ending mid-sentence.
+            Logger.InfoImmediate($"DRIVE|recovery|considering|spd={vehicle.Speed:F1}" +
+                                 $"|road={_currentRoadType}|attempt={_recoveryAttemptCount + 1}");
+            _breadcrumbUpdatesLeft = Constants.DRIVE_BREADCRUMB_UPDATES;
+
             // Check cooldown
             if (currentTick - _recoveryLastCompleteTick < Constants.RECOVERY_COOLDOWN)
+            {
+                Logger.InfoImmediate("DRIVE|recovery|skipped, still in cooldown");
                 return;
+            }
 
             // Check max attempts
             _recoveryAttemptCount++;
@@ -2650,10 +3332,15 @@ internal struct OvertakeTrackingInfo
 
             try
             {
+                Logger.InfoImmediate($"DRIVE|recovery|clearing tasks, escape={escapeNode.X:F0}," +
+                                     $"{escapeNode.Y:F0},{escapeNode.Z:F0} at {escapeDistance:F0}m");
                 Function.Call(_clearPedTasksHash, player.Handle);
 
+                Logger.InfoImmediate("DRIVE|recovery|issuing escape drive");
                 IssueDriveToCoordTask(player, vehicle, escapeNode, Constants.RECOVERY_ESCAPE_SPEED,
                     Constants.RECOVERY_ESCAPE_ARRIVAL_RADIUS);
+
+                Logger.InfoImmediate("DRIVE|recovery|escape drive issued");
 
                 _recoveryActive = true;
                 _recoveryEscapeTarget = escapeNode;
