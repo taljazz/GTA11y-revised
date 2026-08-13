@@ -43,6 +43,9 @@ namespace GrandTheftAccessibility.Menus
         private const int ITEM_RAISE_WANTED = 5;
         private const int ITEM_CLEAR_WANTED = 6;
         private const int ITEM_JUGGERNAUT_SUIT = 7;
+        private const int ITEM_FIX_VEHICLE = 8;
+        private const int ITEM_CLEAN_VEHICLE = 9;
+        private const int ITEM_FLIP_VEHICLE = 10;
 
         #endregion
 
@@ -76,7 +79,10 @@ namespace GrandTheftAccessibility.Menus
                 "Instantly kill all nearby pedestrians",
                 "Raise Wanted Level",
                 "Clear Wanted Level",
-                "Toggle Juggernaut suit (online armoured suit)"
+                "Toggle Juggernaut suit (online armoured suit)",
+                "Fix my vehicle: full repair, engine, body and tyres",
+                "Clean my vehicle: wash off dirt and damage marks",
+                "Flip my vehicle back onto its wheels"
             };
         }
 
@@ -131,6 +137,15 @@ namespace GrandTheftAccessibility.Menus
                     break;
                 case ITEM_JUGGERNAUT_SUIT:
                     ToggleJuggernautSuit();
+                    break;
+                case ITEM_FIX_VEHICLE:
+                    FixVehicle();
+                    break;
+                case ITEM_CLEAN_VEHICLE:
+                    CleanVehicle();
+                    break;
+                case ITEM_FLIP_VEHICLE:
+                    FlipVehicle();
                     break;
             }
         }
@@ -262,6 +277,203 @@ namespace GrandTheftAccessibility.Menus
             wanted.ApplyWantedLevelChangeNow(false);
             Speak("Wanted level cleared");
         }
+
+        #region Vehicle Repair
+
+        /// <summary>
+        /// Repair the vehicle completely.
+        ///
+        /// Damage is mostly a visual language - a bent wing, a smoking bonnet,
+        /// a flat tyre - and none of it is legible here. What IS noticeable is
+        /// the consequence: a car that pulls to one side, an engine that cuts
+        /// out, a top speed that quietly drops. So the readout says what was
+        /// actually wrong before fixing it, rather than just confirming a
+        /// keypress. Tyres are burst separately from body damage and have to
+        /// be mended one wheel at a time.
+        /// </summary>
+        private void FixVehicle()
+        {
+            Vehicle vehicle = CurrentVehicle;
+            if (vehicle == null)
+            {
+                Speak("You are not in a vehicle.");
+                return;
+            }
+
+            try
+            {
+                // Note the state first - after the repair there is nothing left
+                // to report, and "what was wrong with it" is the useful part
+                int bodyPercent = (int)((vehicle.BodyHealth / 1000f) * 100f);
+                int enginePercent = (int)((vehicle.EngineHealth / 1000f) * 100f);
+                int burstTyres = CountBurstTyres(vehicle);
+
+                vehicle.Repair();
+
+                // Repair leaves burst tyres burst on some vehicles, so mend
+                // each wheel explicitly. Eight covers every road vehicle.
+                for (int wheel = 0; wheel < 8; wheel++)
+                {
+                    try { Function.Call(Hash.SET_VEHICLE_TYRE_FIXED, vehicle.Handle, wheel); }
+                    catch { }
+                }
+
+                Logger.Info($"FUNC|fix|body={bodyPercent}%|engine={enginePercent}%|tyres={burstTyres}");
+
+                if (bodyPercent >= 99 && enginePercent >= 99 && burstTyres == 0)
+                {
+                    Speak("Vehicle repaired. It was not damaged.");
+                    return;
+                }
+
+                string tyreText = burstTyres == 0
+                    ? "no burst tyres"
+                    : burstTyres == 1 ? "one burst tyre" : $"{burstTyres} burst tyres";
+
+                Speak($"Vehicle repaired. It was on {bodyPercent} percent bodywork, " +
+                      $"{enginePercent} percent engine, with {tyreText}.");
+            }
+            catch (Exception ex)
+            {
+                Logger.Exception(ex, "FunctionsMenu.FixVehicle");
+                Speak("Failed to repair the vehicle.");
+            }
+        }
+
+        /// <summary>
+        /// Wash the vehicle. Purely cosmetic, and worth having precisely
+        /// because a blind player has no way to know the car has gone filthy -
+        /// which it does, quickly, off road.
+        /// </summary>
+        private void CleanVehicle()
+        {
+            Vehicle vehicle = CurrentVehicle;
+            if (vehicle == null)
+            {
+                Speak("You are not in a vehicle.");
+                return;
+            }
+
+            try
+            {
+                float dirt = vehicle.DirtLevel;
+                vehicle.Wash();
+
+                Logger.Info($"FUNC|clean|dirt was {dirt:F1}");
+
+                // Dirt runs 0 to 15
+                if (dirt < 1f)
+                    Speak("Vehicle cleaned. It was already clean.");
+                else if (dirt < 5f)
+                    Speak("Vehicle cleaned. It was lightly dusty.");
+                else if (dirt < 10f)
+                    Speak("Vehicle cleaned. It was dirty.");
+                else
+                    Speak("Vehicle cleaned. It was filthy.");
+            }
+            catch (Exception ex)
+            {
+                Logger.Exception(ex, "FunctionsMenu.CleanVehicle");
+                Speak("Failed to clean the vehicle.");
+            }
+        }
+
+        /// <summary>
+        /// Set the vehicle back on its wheels.
+        ///
+        /// Rolling onto the roof is the one situation with no way out from the
+        /// driver's seat: you cannot see which way up you are, the engine still
+        /// runs, and the car simply will not respond. The game's own upright
+        /// check settles it rather than the player having to judge, and the
+        /// heading is preserved so the car ends up pointing where it was going.
+        /// </summary>
+        private void FlipVehicle()
+        {
+            Vehicle vehicle = CurrentVehicle;
+            if (vehicle == null)
+            {
+                Speak("You are not in a vehicle.");
+                return;
+            }
+
+            try
+            {
+                // UpVector.Z is 1 upright, 0 on its side, -1 fully inverted
+                float upright = vehicle.UpVector.Z;
+                bool wasUpsideDown = vehicle.IsUpsideDown;
+
+                if (upright > 0.9f && !wasUpsideDown)
+                {
+                    Speak("The vehicle is already the right way up.");
+                    return;
+                }
+
+                // Keep the heading, discard the pitch and roll
+                float heading = vehicle.Heading;
+                vehicle.Rotation = new GTA.Math.Vector3(0f, 0f, heading);
+                vehicle.PlaceOnGround();
+
+                // Kill any tumble still in it, or it rolls straight back over
+                vehicle.Velocity = GTA.Math.Vector3.Zero;
+                try { Function.Call(Hash.SET_VEHICLE_ON_GROUND_PROPERLY, vehicle.Handle, 5f); }
+                catch { }
+
+                Logger.Info($"FUNC|flip|up={upright:F2}|upsideDown={wasUpsideDown}");
+
+                Speak(wasUpsideDown
+                    ? "Vehicle flipped back onto its wheels."
+                    : "Vehicle set upright.");
+            }
+            catch (Exception ex)
+            {
+                Logger.Exception(ex, "FunctionsMenu.FlipVehicle");
+                Speak("Failed to flip the vehicle.");
+            }
+        }
+
+        /// <summary>How many tyres are burst, across every wheel a vehicle may have.</summary>
+        private static int CountBurstTyres(Vehicle vehicle)
+        {
+            int burst = 0;
+
+            try
+            {
+                for (int wheel = 0; wheel < 8; wheel++)
+                {
+                    if (Function.Call<bool>(Hash.IS_VEHICLE_TYRE_BURST, vehicle.Handle, wheel, false))
+                        burst++;
+                }
+            }
+            catch
+            {
+                return burst;
+            }
+
+            return burst;
+        }
+
+        /// <summary>The vehicle the player is sitting in, or null.</summary>
+        private static Vehicle CurrentVehicle
+        {
+            get
+            {
+                try
+                {
+                    Ped player = Game.Player?.Character;
+                    if (player == null || !player.Exists() || !player.IsInVehicle())
+                        return null;
+
+                    Vehicle vehicle = player.CurrentVehicle;
+                    return vehicle != null && vehicle.Exists() ? vehicle : null;
+                }
+                catch
+                {
+                    return null;
+                }
+            }
+        }
+
+        #endregion
 
         /// <summary>
         /// Put on or take off the online Juggernaut suit. This replaces the whole
